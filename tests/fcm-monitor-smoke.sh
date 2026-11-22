@@ -136,7 +136,7 @@ echo "PASS: daemon and WebUI share a single lock"
 # A manager-provided BusyBox can exist while omitting the flock applet.
 # With no system flock on PATH, the same monitor must still read GMS.
 mkdir -p "$TMP/compatible"
-for bin in awk cat cp cut grep head mkdir mv rmdir tail tr wc; do
+for bin in awk cat cp cut grep head mkdir mv rm rmdir sed tail tr wc; do
     ln -s "$(command -v "$bin")" "$TMP/compatible/$bin"
 done
 cat > "$TMP/bin/busybox-minimal" <<'MOCK'
@@ -151,6 +151,15 @@ j="$(PATH="$TMP/bin:$TMP/compatible" /bin/sh "$MON" status)"
 assert_json "$j" fcm_state=connected
 [ ! -e "$BERRY_FCM_DATA/mcs-monitor-test-boot.lockdir" ]
 echo "PASS: native reading works with a KernelSU BusyBox lacking flock"
+# Reclaim stale no-flock lock directory after owner process was killed.
+lockdir="$BERRY_FCM_DATA/mcs-monitor-test-boot.lockdir"
+mkdir -p "$lockdir"
+echo 999999 > "$lockdir/pid"
+echo 1 > "$lockdir/starttime"
+j="$(PATH="$TMP/bin:$TMP/compatible" /bin/sh "$MON" status)"
+assert_json "$j" fcm_state=connected
+[ ! -e "$lockdir" ]
+echo "PASS: stale lockdir owner is reclaimed"
 
 # ActivityManager can return only wrapper lines with exit code zero.
 export MCS_NEXT_FIXTURE="$TMP/next-state-dump"

@@ -10,7 +10,9 @@ trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/data" "$TMP/module/bin" "$TMP/bin"
 export TEST_DIR="$TMP"
 export PATH="$TMP/bin:$PATH"
+export BERRY_TOYBOX_BIN="$TMP/bin/toybox" BERRY_MONITOR_TIMEOUT_SECONDS=1 BERRY_MONITOR_KILL_GRACE=1 BERRY_PATROL_RESTART_DELAY_SECONDS=0
 sed 's|^DATA=/data/adb/berry_fcm_ksu$|DATA="$TEST_DIR/data"|' "$ROOT/module/service.sh" > "$TMP/module/service.sh"
+sed 's|^DATA=/data/adb/berry_fcm_ksu$|DATA="$TEST_DIR/data"|' "$ROOT/module/bin/patrol.sh" > "$TMP/module/bin/patrol.sh"
 cat > "$TMP/bin/id" <<'MOCK'
 #!/bin/sh
 echo 0
@@ -23,6 +25,12 @@ cat > "$TMP/bin/sleep" <<'MOCK'
 #!/bin/sh
 echo "$1" >> "$TEST_DIR/sleeps"
 /bin/sleep 0.15
+if [ "${TEST_KILL_PATROL:-0}" = 1 ] && [ ! -e "$TEST_DIR/kill.done" ] && [ -s "$TEST_DIR/data/service.lock/patrol" ]; then
+    p="$(awk '{print $1}' "$TEST_DIR/data/service.lock/patrol")"
+    kill -KILL "$p" 2>/dev/null || :
+    touch "$TEST_DIR/kill.done"
+fi
+if [ "${TEST_KILL_PATROL:-0}" = 1 ] && [ "$(grep -c patrol_supervisor_start "$TEST_DIR/data/guard.log" 2>/dev/null || true)" -ge 2 ]; then rm -f "$TEST_DIR/module/module.prop"; fi
 if [ "$(wc -l < "$TEST_DIR/samples")" -ge 3 ]; then
     [ -e "$TEST_DIR/fix.done" ] || touch "$TEST_DIR/samples_during_fix"
     rm -f "$TEST_DIR/module/module.prop"
@@ -48,8 +56,23 @@ cat > "$TMP/module/bin/fcm-monitor.sh" <<'MOCK'
 if [ "$1" = snapshot ]; then
     echo '{"fcm_state":"connected","fcm_sample_time":1234,"fcm_recovery_decision":"not_disconnected"}'
 else
+    before="$(wc -l < "$TEST_DIR/samples")"
     echo "$1" >> "$TEST_DIR/samples"
+    if [ "${TEST_HANG_FIRST:-0}" = 1 ] && [ "$before" = 0 ]; then
+        echo "$" > "$TEST_DIR/hung-pid"
+        exec /bin/sleep 30
+    fi
 fi
+MOCK
+cat > "$TMP/bin/toybox" <<'MOCK'
+#!/bin/sh
+if [ "$1" = --list ]; then echo timeout; exit 0; fi
+[ "$1" = timeout ] || exit 2
+shift
+grace=5
+if [ "$1" = -k ]; then grace="$2"; shift 2; fi
+duration="$1"; shift
+exec /usr/bin/timeout -k "$grace" "$duration" "$@"
 MOCK
 cat > "$TMP/module/bin/ctl.sh" <<'MOCK'
 #!/bin/sh
@@ -100,3 +123,30 @@ test "$(cat "$TMP/timer")" = 10
 ! kill -0 "$(cat "$TMP/alarm-pid")" 2>/dev/null
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: timer signals GMS checks; failed or blocked timer leaves passive polling active'
+# A hung monitor is bounded and its child process group is terminated.
+touch "$TMP/module/module.prop"
+echo 1 > "$TMP/data/enabled"
+echo passive > "$TMP/data/wake-mode"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+export TEST_HANG_FIRST=1
+timeout 8 sh "$TMP/module/service.sh"
+unset TEST_HANG_FIRST
+test "$(wc -l < "$TMP/samples")" -ge 3
+grep -q "fcm_check_end rc=124" "$TMP/data/guard.log"
+hung="$(cat "$TMP/hung-pid")"
+! kill -0 "$hung" 2>/dev/null
+test ! -d "$TMP/data/service.lock"
+
+# A killed patrol is restarted by the independent supervisor.
+touch "$TMP/module/module.prop"
+echo 1 > "$TMP/data/enabled"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+export TEST_KILL_PATROL=1
+timeout 8 sh "$TMP/module/service.sh"
+unset TEST_KILL_PATROL
+test -e "$TMP/kill.done"
+test "$(grep -c patrol_supervisor_start "$TMP/data/guard.log")" -ge 2
+test ! -d "$TMP/data/service.lock"
+echo "PASS: independent patrol, bounded timeout, process-group cleanup and patrol restart"

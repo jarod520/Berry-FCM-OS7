@@ -6,14 +6,29 @@ mkdir -p "$DATA" || exit 0
 [ "$(id -u)" = 0 ] || exit 0
 LOCK="$DATA/service.lock"
 MAINTENANCE_LOCK="$DATA/maintenance.lock"
+proc_start_time() {
+    [ -r "/proc/$1/stat" ] || return 1
+    tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $20}'
+}
+service_identity() {
+    pid="$1"; stamp="$2"
+    case "$pid:$stamp" in *[!0-9:]*|:*) return 1;; esac
+    [ "$pid" -gt 1 ] && kill -0 "$pid" 2>/dev/null || return 1
+    [ "$(proc_start_time "$pid")" = "$stamp" ] || return 1
+    tr "\000" " " < "/proc/$pid/cmdline" 2>/dev/null | grep -Fq "service.sh"
+}
 if ! mkdir "$LOCK" 2>/dev/null; then
     old="$(cat "$LOCK/pid" 2>/dev/null)"
-    case "$old" in ''|*[!0-9]*) old=0 ;; esac
-    [ "$old" -gt 1 ] && kill -0 "$old" 2>/dev/null && exit 0
-    rm -rf "$LOCK"
+    stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
+    if [ -n "$old" ] && [ -z "$stamp" ]; then sleep 1; stamp="$(cat "$LOCK/starttime" 2>/dev/null)"; fi
+    service_identity "$old" "$stamp" && exit 0
+    stale="$DATA/service.lock.stale.$$"
+    if mv "$LOCK" "$stale" 2>/dev/null; then rm -rf "$stale"; fi
     mkdir "$LOCK" 2>/dev/null || exit 0
 fi
 echo $$ > "$LOCK/pid"
+proc_start_time "$$" > "$LOCK/starttime"
+echo $$ > "$LOCK/wake-pid"
 cgroup_path() {
     while IFS=: read -r hierarchy controllers group; do
         if [ "$hierarchy" = 0 ] && [ -z "$controllers" ]; then
@@ -40,37 +55,13 @@ esac
 wait_pid=
 timer_pid=
 service_pid=$$
-mode_changed=0
-wake_count=0
-wake_seen=0
-stop_wait() {
-    [ -z "$wait_pid" ] || kill "$wait_pid" 2>/dev/null || :
-}
+stop_wait() { [ -z "$wait_pid" ] || kill "$wait_pid" 2>/dev/null || :; }
 stop_timer() {
     [ -n "$timer_pid" ] || return 0
     kill "$timer_pid" 2>/dev/null || :
     wait "$timer_pid" 2>/dev/null || :
     timer_pid=
 }
-stop_service() {
-    stop_wait
-    stop_timer
-    exit 0
-}
-refresh_mode() {
-    mode_changed=1
-    stop_wait
-}
-on_timer() {
-    wake_count=$((wake_count + 1))
-    stop_wait
-}
-trap 'rm -rf "$LOCK"' EXIT
-trap stop_service HUP INT TERM
-trap refresh_mode USR1
-trap on_timer USR2
-echo $$ > "$LOCK/wake-pid"
-
 timer_worker() {
     # The parent owns the service lock. This worker only owns the native timer.
     trap - EXIT USR1 USR2
@@ -130,94 +121,80 @@ done
 printf '[%s] service_started pid=%s wake_mode=%s enabled=%s cgroup_ready=%s\n' \
     "$(date '+%F %T')" "$$" "$(cat "$DATA/wake-mode" 2>/dev/null || echo passive)" \
     "$(cat "$DATA/enabled" 2>/dev/null || echo 0)" "$cgroup_ready" >> "$DATA/guard.log"
-# The 30s sleep does not wake a suspended CPU. Resume with a fresh GMS read.
-last_fix=0
+PATROL_RESTART_DELAY="${BERRY_PATROL_RESTART_DELAY_SECONDS:-5}"
+case "$PATROL_RESTART_DELAY" in ""|*[!0-9]*) PATROL_RESTART_DELAY=5;; esac
+patrol_pid=
+patrol_stamp=
+patrol_started=0
+patrol_alive() {
+    [ -n "$patrol_pid" ] || return 1
+    kill -0 "$patrol_pid" 2>/dev/null || return 1
+    [ -n "$patrol_stamp" ] && [ "$(proc_start_time "$patrol_pid")" = "$patrol_stamp" ] || return 1
+    tr "\000" " " < "/proc/$patrol_pid/cmdline" 2>/dev/null | grep -Fq "patrol.sh"
+}
+start_patrol() {
+    sh "$MODDIR/bin/patrol.sh" </dev/null >> "$DATA/patrol.log" 2>&1 &
+    patrol_pid=$!
+    patrol_stamp=
+    n=0
+    while [ -z "$patrol_stamp" ] && [ "$n" -lt 5 ]; do
+        patrol_stamp="$(proc_start_time "$patrol_pid")"
+        [ -n "$patrol_stamp" ] || sleep 1
+        n=$((n + 1))
+    done
+    if [ -z "$patrol_stamp" ]; then kill "$patrol_pid" 2>/dev/null || :; wait "$patrol_pid" 2>/dev/null || :; patrol_pid=; return 1; fi
+    patrol_started="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
+    case "$patrol_started" in ""|*[!0-9]*) patrol_started=0;; esac
+    printf "%s %s\n" "$patrol_pid" "$patrol_stamp" > "$LOCK/patrol"
+    printf '[%s] patrol_supervisor_start pid=%s start=%s\n' "$(date '+%F %T')" "$patrol_pid" "$patrol_stamp" >> "$DATA/guard.log"
+}
+stop_patrol() {
+    [ -n "$patrol_pid" ] || return 0
+    if patrol_alive; then
+        kill -TERM "$patrol_pid" 2>/dev/null || :
+        n=0
+        while patrol_alive && [ "$n" -lt 4 ]; do sleep 1; n=$((n + 1)); done
+        patrol_alive && kill -KILL "$patrol_pid" 2>/dev/null || :
+    fi
+    wait "$patrol_pid" 2>/dev/null || :
+    patrol_pid=; patrol_stamp=
+    rm -f "$LOCK/patrol"
+}
+service_cleanup() { stop_timer; stop_patrol; rm -rf "$LOCK"; }
+stop_service() { stop_wait; exit 0; }
+refresh_mode() {
+    mode_changed=1
+    stop_wait
+    [ -z "$patrol_pid" ] || kill -USR1 "$patrol_pid" 2>/dev/null || :
+}
+on_timer() { [ -z "$patrol_pid" ] || kill -USR2 "$patrol_pid" 2>/dev/null || :; }
+trap service_cleanup EXIT
+trap stop_service HUP INT TERM
+trap refresh_mode USR1
+trap on_timer USR2
+
 mode_changed=1
 while [ -e "$MODDIR/module.prop" ]; do
-    if [ "$mode_changed" = 1 ]; then
-        mode_changed=0
-        sync_timer
-    fi
-    wake_event=0
-    pending="$wake_count"
-    if [ "$pending" != "$wake_seen" ]; then
-        wake_event=1
-        wake_seen="$pending"
-    fi
-    if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]; then
-        now="$(awk '{print int($1)}' /proc/uptime)"
-        case "$now" in ''|*[!0-9]*) now=0 ;; esac
-        # Read the native GMS state; TCP sockets are auxiliary evidence.
-        # It never restarts/kills GMS and never changes DNS/VPN/proxy/routing.
-        if [ "$wake_event" = 1 ]; then
-            printf '[%s] 定时器触发，检查 GMS 原生状态\n' "$(date '+%F %T')" >> "$DATA/guard.log"
-        fi
-        check_started_epoch="$(date +%s 2>/dev/null)"
-        case "$check_started_epoch" in ''|*[!0-9]*) check_started_epoch=0;; esac
-        check_wake_mode="$(cat "$DATA/wake-mode" 2>/dev/null || echo passive)"
-        printf '[%s] fcm_check_start pid=%s uptime=%s wake=%s mode=%s\n' \
-            "$(date '+%F %T')" "$$" "$now" "$wake_event" "$check_wake_mode" >> "$DATA/guard.log"
-        result="$(sh "$MODDIR/bin/fcm-monitor.sh" monitor 2>&1)"
-        monitor_rc=$?
-        sample="$(sh "$MODDIR/bin/fcm-monitor.sh" snapshot 2>/dev/null)"
-        summary="$(printf '%s\n' "$sample" | sed -n 's/.*"fcm_state":"\([a-z_]*\)".*"fcm_sample_time":\([0-9]*\).*"fcm_recovery_decision":"\([a-z_]*\)".*/state=\1 sample_epoch=\2 recovery=\3/p')"
-        if [ "$wake_event" = 1 ]; then
-            printf '[%s] wake_gms_check_finished rc=%s %s\n' "$(date '+%F %T')" "$monitor_rc" "${summary:-snapshot=unavailable}" >> "$DATA/guard.log"
-        fi
-        check_finished_epoch="$(date +%s 2>/dev/null)"
-        case "$check_finished_epoch" in ''|*[!0-9]*) check_finished_epoch=0;; esac
-        check_elapsed=unknown
-        if [ "$check_started_epoch" -gt 0 ] && [ "$check_finished_epoch" -ge "$check_started_epoch" ]; then
-            check_elapsed=$((check_finished_epoch-check_started_epoch))
-        fi
-        printf '[%s] fcm_check_end rc=%s elapsed_s=%s %s\n' \
-            "$(date '+%F %T')" "$monitor_rc" "$check_elapsed" "${summary:-snapshot=unavailable}" >> "$DATA/guard.log"
-        [ -z "$result" ] || printf '[%s] %s\n' "$(date '+%F %T')" "$result" >> "$DATA/guard.log"
-        if [ "$last_fix" = 0 ] || [ "$now" -lt "$last_fix" ] || [ $((now - last_fix)) -ge 300 ]; then
-            if [ -d "$MAINTENANCE_LOCK" ]; then
-                old="$(cat "$MAINTENANCE_LOCK/pid" 2>/dev/null)"
-                case "$old" in ''|*[!0-9]*) old=0;; esac
-                if [ "$old" -gt 1 ] && kill -0 "$old" 2>/dev/null; then
-                    printf '[%s] maintenance_skip pid=%s reason=already_running\n' "$(date '+%F %T')" "$old" >> "$DATA/guard.log"
-                else
-                    rm -rf "$MAINTENANCE_LOCK"
-                fi
-            fi
-            if [ ! -d "$MAINTENANCE_LOCK" ] && mkdir "$MAINTENANCE_LOCK" 2>/dev/null; then
-                (
-                    trap 'rm -rf "$MAINTENANCE_LOCK"' EXIT
-                    fix_started_epoch="$(date +%s 2>/dev/null)"
-                    case "$fix_started_epoch" in ''|*[!0-9]*) fix_started_epoch=0;; esac
-                    printf '[%s] maintenance_start pid=%s uptime=%s operation=guard_fix\n' \
-                        "$(date '+%F %T')" "$service_pid" "$now" >> "$DATA/guard.log"
-                    HEARTBEAT_MODE=auto sh "$MODDIR/bin/ctl.sh" fix >> "$DATA/guard.log" 2>&1
-                    fix_rc=$?
-                    fix_finished_epoch="$(date +%s 2>/dev/null)"
-                    case "$fix_finished_epoch" in ''|*[!0-9]*) fix_finished_epoch=0;; esac
-                    fix_elapsed=unknown
-                    if [ "$fix_started_epoch" -gt 0 ] && [ "$fix_finished_epoch" -ge "$fix_started_epoch" ]; then
-                        fix_elapsed=$((fix_finished_epoch-fix_started_epoch))
-                    fi
-                    printf '[%s] maintenance_end pid=%s operation=guard_fix rc=%s elapsed_s=%s\n' \
-                        "$(date '+%F %T')" "$service_pid" "$fix_rc" "$fix_elapsed" >> "$DATA/guard.log"
-                    exit "$fix_rc"
-                ) &
-                maintenance_pid=$!
-                printf '%s\n' "$maintenance_pid" > "$MAINTENANCE_LOCK/pid"
-            fi
-            last_fix="$now"
-        fi
-        bytes="$(wc -c < "$DATA/guard.log" 2>/dev/null)"
-        case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
-        if [ "$bytes" -gt 131072 ]; then
-            tail -n 160 "$DATA/guard.log" > "$DATA/guard.log.tmp" && mv -f "$DATA/guard.log.tmp" "$DATA/guard.log"
+    if [ "$mode_changed" = 1 ]; then mode_changed=0; sync_timer; fi
+    if ! patrol_alive; then
+        if [ -n "$patrol_pid" ]; then wait "$patrol_pid" 2>/dev/null || :; patrol_pid=; patrol_stamp=; fi
+        now_up="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
+        case "$now_up" in ""|*[!0-9]*) now_up=0;; esac
+        if [ "$patrol_started" -eq 0 ] || [ "$now_up" -ge $((patrol_started + PATROL_RESTART_DELAY)) ]; then start_patrol || :; fi
+    else
+        hb="$(cat "$DATA/patrol.heartbeat" 2>/dev/null)"
+        now_up="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
+        case "$hb" in ""|*[!0-9]*) hb=0;; esac
+        case "$now_up" in ""|*[!0-9]*) now_up=0;; esac
+        if [ "$hb" -gt 0 ] && [ "$now_up" -ge "$hb" ] && [ $((now_up - hb)) -gt 90 ]; then
+            printf '[%s] patrol_watchdog_stale pid=%s heartbeat=%s uptime=%s\n' "$(date '+%F %T')" "$patrol_pid" "$hb" "$now_up" >> "$DATA/guard.log"
+            stop_patrol
+            patrol_started="$now_up"
         fi
     fi
-    if [ "$mode_changed" = 1 ] || [ "$wake_count" != "$wake_seen" ]; then continue; fi
-    sleep 30 &
+    sleep 5 &
     wait_pid=$!
-    if [ "$mode_changed" = 1 ] || [ "$wake_count" != "$wake_seen" ]; then stop_wait; fi
-    wait "$wait_pid"
+    wait "$wait_pid" 2>/dev/null || :
     wait_pid=
 done
-stop_timer
+exit 0

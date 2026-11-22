@@ -43,11 +43,18 @@ persistent() {
 wake_mode() {
     if [ "$(cat "$DATA/wake-mode" 2>/dev/null)" = timed ]; then echo timed; else echo passive; fi
 }
+proc_start_time() {
+    [ -r "/proc/$1/stat" ] || return 1
+    tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $20}'
+}
 refresh_guard() {
     pid="$(cat "$DATA/service.lock/wake-pid" 2>/dev/null)"
+    stamp="$(cat "$DATA/service.lock/starttime" 2>/dev/null)"
     case "$pid" in ''|*[!0-9]*) pid=0;; esac
-    if [ "$pid" -gt 1 ] && [ "$(cat "$DATA/service.lock/pid" 2>/dev/null)" = "$pid" ] &&
-        tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q '/berry_fcm_ksu/service.sh '; then
+    if [ "$pid" -gt 1 ] && [ -n "$stamp" ] &&
+        [ "$(cat "$DATA/service.lock/pid" 2>/dev/null)" = "$pid" ] &&
+        [ "$(proc_start_time "$pid")" = "$stamp" ] &&
+        tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q 'service.sh'; then
         kill -USR1 "$pid" 2>/dev/null && return 0
     fi
     if [ "$(cat "$ENABLED" 2>/dev/null)" = 1 ]; then

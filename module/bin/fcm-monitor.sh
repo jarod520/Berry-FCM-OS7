@@ -895,11 +895,32 @@ case "$command" in
             lock_boot="$(boot_id | tr -cd 'A-Za-z0-9-')"
             [ -n "$lock_boot" ] || exit 11
             lock_dir="$DATA/mcs-monitor-$lock_boot.lockdir"
+            proc_start_time() {
+                [ -r "/proc/$1/stat" ] || return 1
+                tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $20}'
+            }
+            lock_owner_alive() {
+                owner_pid="$1"; owner_stamp="$2"
+                case "$owner_pid:$owner_stamp" in *[!0-9:]*|:*) return 1;; esac
+                [ "$owner_pid" -gt 1 ] && kill -0 "$owner_pid" 2>/dev/null || return 1
+                [ "$(proc_start_time "$owner_pid")" = "$owner_stamp" ] || return 1
+                tr "\000" " " < "/proc/$owner_pid/cmdline" 2>/dev/null | grep -Fq "fcm-monitor.sh"
+}
             if ! mkdir "$lock_dir" 2>/dev/null; then
-                echo "后台正在检查 GMS，请稍后重试" >&2
-                exit 13
+                owner_pid="$(cat "$lock_dir/pid" 2>/dev/null)"
+                owner_stamp="$(cat "$lock_dir/starttime" 2>/dev/null)"
+                if [ -n "$owner_pid" ] && [ -z "$owner_stamp" ]; then sleep 1; owner_stamp="$(cat "$lock_dir/starttime" 2>/dev/null)"; fi
+                if lock_owner_alive "$owner_pid" "$owner_stamp"; then
+                    echo "后台正在检查 GMS，请稍后重试" >&2
+                    exit 13
+                fi
+                stale_lock="$lock_dir.stale.$"
+                if mv "$lock_dir" "$stale_lock" 2>/dev/null; then rm -rf "$stale_lock"; fi
+                mkdir "$lock_dir" 2>/dev/null || { echo "后台正在检查 GMS，请稍后重试" >&2; exit 13; }
             fi
-            trap 'rmdir "$lock_dir" 2>/dev/null || :' EXIT
+            echo $ > "$lock_dir/pid"
+            proc_start_time "$" > "$lock_dir/starttime"
+            trap 'rm -f "$lock_dir/pid" "$lock_dir/starttime"; rmdir "$lock_dir" 2>/dev/null || :' EXIT
             trap 'exit 130' HUP INT TERM
             run_monitor_command "$command"
         fi
