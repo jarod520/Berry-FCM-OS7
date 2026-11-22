@@ -42,7 +42,7 @@ su -c 'sh /data/adb/modules/berry_fcm_ksu/bin/ctl.sh guard off'
 - `/data/adb/berry_fcm_ksu/mcs-monitor-events.log`：巡检空档 / 断联 / 重连事件
 - `/data/adb/berry_fcm_ksu/mcs-native-events.log`：筛选和去重后的 GMS 原生事件
 - `/data/adb/berry_fcm_ksu/guard.log`：守护巡检日志
-- `guard.log` 中的 `fcm_check_start` / `fcm_check_end`：逐次巡检开始/结束、耗时、采样状态和恢复决策；只有监控命令成功返回才刷新 `patrol.sample.heartbeat`。service 同时监督 patrol 循环心跳与成功样本心跳，若循环仍活着但连续 90 秒没有成功样本，会记录 `reason=monitor_sample` 并重启巡检进程；`maintenance_start` / `maintenance_end` 记录守护修复命令。`wake-timer.log` 还记录 timer worker 的启动/退出、armed/fired、迟到和 suspend 时长。三者对照可判断空档发生在哪一阶段。
+- `guard.log` 中的 `fcm_check_start` / `fcm_check_end`：逐次巡检开始/结束、耗时、采样状态和恢复决策；只有监控命令成功返回才刷新 `patrol.sample.heartbeat`。service 同时监督 patrol 循环心跳与成功样本心跳，若循环仍活着但连续 90 秒没有成功样本，会记录 `reason=monitor_sample`，先按 PID/starttime 校验并终止卡住的 monitor 锁所有者，再重启巡检进程；`maintenance_start` / `maintenance_end` 记录守护修复命令。`wake-timer.log` 还记录 timer worker 的启动/退出、armed/fired、迟到和 suspend 时长。三者对照可判断空档发生在哪一阶段。
 - 导出这两类记录：`su -c 'sh /data/adb/modules/berry_fcm_ksu/bin/ctl.sh log'`。巡检有开始没有结束，表示检查调用未返回；修复命令有开始没有结束，表示守护修复未返回；定时器只看到 `wake_timer_armed` 没有 `wake_timer_fired`，表示定时器未按期完成。以上情况都要结合后续日志判断，不能仅凭一条记录推断进程已退出。
 
 ## 保留功能
