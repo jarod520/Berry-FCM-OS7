@@ -398,8 +398,9 @@ parse_mcs() {
         } else if(line=="Server: Connected" && (header || scoped)){
           if(state!="" && state!="connected") conflict=1
           state="connected"; explicit_status=1
-        } else if((line=="Is client connected: true" || line=="Is client connected: false") && (header || scoped)){
-          client_state=(line=="Is client connected: true" ? "connected" : "disconnected")
+        } else if(line~/^Is client connected:[[:space:]]*(true|false)$/ && (header || scoped)){
+          v=line;sub(/^Is client connected:[[:space:]]*/,"",v)
+          client_state=(v=="true" ? "connected" : "disconnected")
           if(state!="" && state!=client_state) conflict=1
           state=client_state; explicit_status=1; explicit_client_status=1
         } else if((line=="Not connected" || line=="Server: Not connected") && (header || scoped)){
