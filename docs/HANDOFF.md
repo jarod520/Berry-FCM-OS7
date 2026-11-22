@@ -14,10 +14,10 @@
 
 - **复审发现 1**：`request_reconnect()` 中恢复广播后的二次 `observe()` 若 evidence 原子发布失败，会返回 `confirmation_unavailable`，但 `run_monitor_command monitor` 原先仍无条件调用 `write_evidence()`。这会把失败采样的内存字段写入 evidence，覆盖上一份已提交证据；虽然 state/evidence 代次检查能将结果标 stale，却损失了上一份有效样本。
 - **修正**：新增 `write_decision_evidence()`。它只读取已提交 state 与 evidence，确认第 28 列 `sample_mono` 和 evidence 第 7 列一致后，仅更新 decision 字段，其余样本字段和 generation 原样保留。若代次本身不一致则拒绝更新。monitor 与手动 reconnect 的恢复决策写回均使用该路径；`observe()` 的 evidence-first 样本提交仍使用原 `write_evidence()`。
-- **回归夹具**：调整 evidence `mv` 故障注入场景：第 3 次样本 evidence 发布失败后，第 4 次只允许写入“决策更新”，最终 evidence sample_mono 必须仍等于已提交 state sample_mono=10380；snapshot 应保留 `connecting`，并展示 `confirmation_unavailable`，不得变成 stale，也不得接受失败采样的 10381。
+- **回归夹具（后续已扩展）**：当前故障注入在第四个动作的复采 evidence 发布处失败；前三次有效样本提交到 sample_mono=10383，决策更新只能保留该已提交代次，snapshot 保持 `connecting` 并显示 `recovery_exhausted`，不得写入失败采样的 10384。
 - **复审发现 2**：当 `ss` 已能显示 GMS UID，但只观察到一个非 mtalk 对端的 GMS HTTPS :443 socket 时，若 DNS 已有 mtalk 候选地址，旧逻辑会将该连接漏过且返回 absent；连续计时后可能误报断联。
 - **修正**：只要 GMS :443 已建立但对端不匹配已验证 mtalk 地址，就保留 `unknown/unavailable`，不把普通 HTTPS 连接当 MCS，也不把它当作 MCS 缺失。新增有 DNS 候选、但 GMS :443 对端为 1.1.1.1 的回归场景。
-- **验证边界**：本轮已通过 GitHub 源码复读，确认 monitor/patrol/service 三条关键路径没有 `dumpsys` 引用，新增两个回归夹具与代码分支均已落入当前分支。这里是静态源码核对，不是完整 smoke 执行或 Shell 语法验证。
+- **验证边界**：本轮已通过 GitHub 源码复读，确认 monitor/patrol/service 三条关键路径没有 `dumpsys` 引用，新增回归场景与代码分支均已落入当前分支。这里是静态源码核对，不是完整 smoke 执行或 Shell 语法验证。
 - **范围边界**：按当前任务“先以 KSU RC5 为主、APK 暂不处理”的既定范围，`app/src/main/assets/fcm-monitor.sh` 的旧 APK dump 主判据未修改，`tests/apk-native-fcm-smoke.sh` 也未改动。KSU 模块目录中，唯一仍含 `dumpsys` 的 `module/bin/ctl.sh` 是独立的 stopped/suspended/hidden 应用管理与 Receiver 诊断；它不参与 MCS 状态机、patrol sample heartbeat 或恢复动作选择。完整 `fcm-monitor-smoke.sh`、`ksu-wake-smoke.sh`、全仓 Shell syntax gate 和 OriginOS 7 / KernelSU 真机长时间后台验证仍未执行；未触发 Actions、编译、打包、合并或发布。
 ## 2026-11-23 恢复序列复审：未知或复采失败不得截断剩余触发
 
@@ -42,7 +42,7 @@
 ## 2026-11-23 复审修正：同周期恢复序列与无 setsid watchdog
 
 - **实际缺陷 1：恢复动作被错误拆分到多个巡检周期**。旧实现每次 `request_reconnect()` 只发一个广播；即使广播被接受但内核 Socket 仍明确断联，也要等 30/45/60/90 秒才尝试下一种动作，不符合“一个动作无效就继续下一种”的恢复要求。
-- **修正**：一次已确认断联触发一个有界序列，按 `GCM_RECONNECT` → `MCS_HEARTBEAT` → `ACTION_HEARTBEAT_NOW` → `GTALK_HEARTBEAT` 逐项执行。广播失败直接升级；广播成功后约 2 秒复采内核 Socket，仍明确为 connecting/disconnected 才升级；connected 停止；unknown/复采失败安全停止，不把未知伪装成断联。四项均无效后才按 30/45/60/90 秒退避重试完整序列。attempts 现在按实际广播动作计数，retry_streak 按完整恢复序列计数。
+- **修正**：一次已确认断联触发一个有界序列，按 `GCM_RECONNECT` → `MCS_HEARTBEAT` → `ACTION_HEARTBEAT_NOW` → `GTALK_HEARTBEAT` 逐项执行。广播失败直接升级；广播成功后约 2 秒复采内核 Socket；只有 connected 停止，connecting/disconnected/unknown/复采失败都继续下一个有界动作，不把未知伪装成断联。四项均无效后才按 30/45/60/90 秒退避重试完整序列。attempts 现在按实际广播动作计数，retry_streak 按完整恢复序列计数。
 - **开源方案依据**：参考 `grimseraph/HeartbeatFixerForFCM` 对 `GTALK_HEARTBEAT` / `MCS_HEARTBEAT` 的显式 GMS 定向广播，以及其他 FCM keeper 对 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW` 的使用。以上均为 GMS 内部、未公开稳定契约的动作；广播被系统接受不代表接收器处理成功，必须以本项目的内核 Socket 复采为准。不同 GMS 版本可能不支持其中部分动作。
 - **实际缺陷 2：无 timeout、无 setsid 时的进程树快照路径解析**。`bounded_descendants_snapshot()` 对 `/proc/PID/stat` 的 awk 路径正则含错误转义，可能使 awk 解析失败；原测试仅有静态字符串断言，未实际执行完整 smoke，因此未及时发现。
 - **修正**：不再使用易错的 slash-escaped awk 正则，从 `FILENAME` 按 `/` 分段取倒数第二项作为 PID；KSU smoke 增加该解析方式的固定源码断言，原有无 timeout/无 setsid 挂起子进程场景保留。
@@ -51,7 +51,7 @@
 - **进程扫描自匹配修正**：继续复审发现 `monitor_process_exists()` 若用 `grep -Fq "fcm-monitor.sh"` 搜索 `/proc/*/cmdline`，grep 自身的 argv 也包含该字面模式，可能把自己误认成 monitor，导致损坏 owner 永远无法清除。现改为 `tr` 读取后由 shell `case` 匹配，避免 grep 子进程自匹配；KSU smoke 增加反回归断言。
 - **timeout/setsid 组合修正**：旧 `run_bounded()` 在 BusyBox `timeout -k` 可用但 `setsid` 不可用时，仍会走 `BERRY_FCM_ISOLATED_GROUP=0` 的直接 timeout 路径；BusyBox timeout 只向 monitor 主进程发信号，可能留下其子探测进程。现在只有 Toybox 自带 timeout（其实现会管理进程组），或 BusyBox/PATH timeout 与同时具备 setsid、kill 的进程组工具组合，才走 timeout 快速路径；否则统一进入 `/proc` 子进程树 watchdog。新增回归夹具模拟“Toybox 无 timeout、KernelSU BusyBox 有 timeout -k 但无 setsid”，要求不调用该 timeout、仍清理子进程并继续巡检。
 - **本轮提交**：patrol 路径解析 `1a0b03f8f5af06a1486ff05599822ea9a47945f7`；恢复序列 `82a0e312692fe4a9b5ab18919639d6e822bee980`；FCM smoke `f08ac01bf8d9fbb24bf97e274686898a982469b6`、`568866d335984a2445e236888605a4ba519b5aa2`、`81d541f8b5028d128bd5927fed1b7c753afad6cf`；KSU smoke `118661cb708b146df36cf4d0429e30d95e78015f`、`6c0aa4392b720984618e7f95d57f0526634971a6`；CLI 恢复结果文案 `52a3587d882e502a1d6accf9d09a0ace180150b1`；service 重启门控 `f0ed8b5db498397aa29eb24f32a53cb736bf3aae`、损坏 owner 自恢复 `b02960f900d80375d5d6e1ff7a7c2400a3bd9a`；KSU 运行夹具 `903b3cb165854e47e3d10409352bf50bd552fb4b`；恢复复采 evidence 原子提交保护 `3d022f1532ad544b9691ae2dd29b45a3d6a57bd0`；FCM 回归夹具 `efd6e4876d944429e5d14373233214757f15684c`、uptime fixture 修正 `b09b73e575fb130a1d8ee4375678023afd2fd1d4`；monitor 进程扫描自匹配修正 `9ac6dd9e89c99c8177ec725dccbb3efa1c6b4f92`；KSU 反回归断言 `21bef4aab9962ce801a4c7a281c5ec4825201cbb`；FCM smoke PASS 文案 `9e3192903b17a059c10f8f84bdc789474b8f02ea`；timeout/setsid 安全组合 `a49272468a2d65e5c351d03876d0d628ef209eb8`、快速路径整理 `e78d38cee2a2fe67896cc77995b5bb06ca6dd1d8`；BusyBox timeout 无 setsid 回归夹具 `88cfe050f45b5330ab696e1931f7bf0e93bc01f1`、列表输出修正 `c475dbc49c9f29b2cbc69af5359e337ecbca04ea`；进程组信号能力门控 `6c91c986d1efafe6bcc1dbe95d1f4f7e7ea8ed0e`；BusyBox 探测夹具修正 `9561a98f10138c6e4a767dc59fbe7cd5e94ed429`。
-- **验证边界**：已复读修改后的源码与测试夹具，检查动作顺序、成功后复采、断联继续、connected 停止、unknown 停止及退避状态字段。另在临时 Linux 容器中对修改后的 `run_bounded()`、恢复序列和 service 重启门控片段执行 `sh -n`；用 mock `am` 动态验证首个动作失败后同轮发出后续动作，以及第二个动作恢复连接后立即停止；用系统 awk 与 BusyBox awk 实测 `/proc/PID/stat` 路径解析和子进程 PID/starttime 快照/TERM 清理；用模拟进程验证 monitor 扫描不会自匹配；用模拟 applet 验证缺少 setsid/kill 时拒绝 timeout 快速路径。这些是局部验证，不等同完整仓库测试。两个完整 smoke、全仓 `sh -n`、Toybox/OriginOS 7/KernelSU 设备验证仍未执行。不能据此宣称测试通过，也不触发编译、打包、Actions、合并或发布。
+- **验证边界**：已复读修改后的源码与测试夹具，检查动作顺序、成功后复采、断联继续、connected 停止、unknown/复采失败继续及退避状态字段。另在临时 Linux 容器中对修改后的 `run_bounded()`、恢复序列和 service 重启门控片段执行 `sh -n`；用 mock `am` 动态验证首个动作失败后同轮发出后续动作，以及第二个动作恢复连接后立即停止；用系统 awk 与 BusyBox awk 实测 `/proc/PID/stat` 路径解析和子进程 PID/starttime 快照/TERM 清理；用模拟进程验证 monitor 扫描不会自匹配；用模拟 applet 验证缺少 setsid/kill 时拒绝 timeout 快速路径。这些是局部验证，不等同完整仓库测试。两个完整 smoke、全仓 `sh -n`、Toybox/OriginOS 7/KernelSU 设备验证仍未执行。不能据此宣称测试通过，也不触发编译、打包、Actions、合并或发布。
 
 ---
 
