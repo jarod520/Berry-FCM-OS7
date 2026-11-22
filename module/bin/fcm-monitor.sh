@@ -267,7 +267,20 @@ scan_sockets() {
 
     # Refresh short-lived learned IPs from exact GMS UID-owned MCS sockets.
     refresh_learned_ips "$raw" "$uid"
-    learned_ips="$(awk -F'|' -v now="$(num "$(now_epoch)")" 'NF==2 && $2~/^[0-9]+$/ && $2+0<=now && now-($2+0)<=120 {print $1}' "$LEARNED_IPS" 2>/dev/null)"
+    learned_ips="$(awk -F'|' -v now="$(num "$(now_epoch)")" '
+      function valid_ip(ip, a,n,i) {
+        if(length(ip)<3 || length(ip)>45 || ip !~ /^[0-9a-f:.]+$/) return 0
+        if(index(ip,":")) return 1
+        if(index(ip,".")) {
+          n=split(ip,a,".")
+          if(n!=4) return 0
+          for(i=1;i<=4;i++) if(a[i]!~/^[0-9]+$/ || a[i]+0>255) return 0
+          return 1
+        }
+        return 0
+      }
+      NF==2 && now>0 && $2~/^[0-9]+$/ && $2+0<=now && now-($2+0)<=120 && valid_ip($1) {print tolower($1)}
+    ' "$LEARNED_IPS" 2>/dev/null)"
     ips="$(cat "$DNS_IPS" 2>/dev/null; printf '%s\n' "$learned_ips")"
     ips="$(printf '%s\n' "$ips" | awk 'NF && !seen[$0]++ {printf "%s%s",sep,$0;sep="|"}')"
     ip_count="$(printf '%s' "$ips" | awk -F'|' '{print NF}')"
