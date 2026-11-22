@@ -84,12 +84,33 @@ maintenance_child_alive() {
 run_bounded() {
     seconds="$1"; shift
     if [ -x "$TOYBOX_BIN" ] && "$TOYBOX_BIN" --list 2>/dev/null | grep -qx timeout; then
+        # Toybox timeout creates its own process group by default.
         BERRY_FCM_ISOLATED_GROUP=1 "$TOYBOX_BIN" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
     elif [ -x "$KSU_BUSYBOX" ] &&
          "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx timeout; then
-        BERRY_FCM_ISOLATED_GROUP=1 "$KSU_BUSYBOX" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
+        # BusyBox timeout signals only its direct command and does not create
+        # a process group. Isolate it first; never mark its inherited group safe.
+        if [ -x "$TOYBOX_BIN" ] &&
+           "$TOYBOX_BIN" --list 2>/dev/null | grep -qx setsid; then
+            BERRY_FCM_ISOLATED_GROUP=1 "$TOYBOX_BIN" setsid "$KSU_BUSYBOX" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
+        elif [ -x "$KSU_BUSYBOX" ] &&
+             "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx setsid; then
+            BERRY_FCM_ISOLATED_GROUP=1 "$KSU_BUSYBOX" setsid "$KSU_BUSYBOX" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
+        else
+            BERRY_FCM_ISOLATED_GROUP=0 "$KSU_BUSYBOX" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
+        fi
     elif command -v timeout >/dev/null 2>&1; then
-        BERRY_FCM_ISOLATED_GROUP=1 timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
+        # PATH timeout may be Toybox, BusyBox or coreutils. Use setsid to
+        # guarantee a private group independent of the implementation.
+        if [ -x "$TOYBOX_BIN" ] &&
+           "$TOYBOX_BIN" --list 2>/dev/null | grep -qx setsid; then
+            BERRY_FCM_ISOLATED_GROUP=1 "$TOYBOX_BIN" setsid timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
+        elif [ -x "$KSU_BUSYBOX" ] &&
+             "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx setsid; then
+            BERRY_FCM_ISOLATED_GROUP=1 "$KSU_BUSYBOX" setsid timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
+        else
+            BERRY_FCM_ISOLATED_GROUP=0 timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
+        fi
     else
         # Last-resort watchdog when no timeout applet exists. Use a private
         # session when the available applet supports it, so timeout cleanup
