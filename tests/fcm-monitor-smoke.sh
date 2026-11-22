@@ -551,8 +551,8 @@ test ! -s "$BERRY_FCM_DATA/mcs-mtalk-dns-ips.txt"
 echo 'PASS: expired mtalk DNS addresses are discarded after failed refresh'
 
 
-# Learned MCS peers may validate GMS-owned :443 only briefly. Legacy plain-IP
-# entries are ignored; a fresh exact MCS socket refreshes the timestamp.
+# Learned MCS peers may validate GMS-owned :443 only briefly.
+# entries are discarded; a fresh exact MCS socket refreshes the timestamp.
 export BERRY_FCM_DATA="$TMP/learned-ip-ttl-data"
 mkdir -p "$BERRY_FCM_DATA"
 echo 1 > "$BERRY_FCM_DATA/enabled"
@@ -562,23 +562,8 @@ settime 61000
 printf '%s\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
 j="$(run status)"
 assert_json "$j" fcm_state=connected
-grep -q '^142.250.157.188|1700061000
-! grep -q '203.0.113.9' "$BERRY_FCM_DATA/mcs-mtalk-learned-ips.txt"
-export MCS_SS_MODE=mtalk443
-settime 61060
-j="$(run status)"
-assert_json "$j" fcm_state=connected
-assert_json "$j" fcm_transport=tcp443
-# At 121 seconds the learned peer is expired; an unrelated HTTPS socket must
-# no longer be promoted to MCS. Recent-state retention has also elapsed.
-settime 61121
-j="$(run status)"
-assert_json "$j" fcm_state=unknown
-assert_json "$j" fcm_tcp_hint=unknown
-test ! -s "$BERRY_FCM_DATA/mcs-mtalk-learned-ips.txt"
-echo 'PASS: learned MCS peer IPs expire after 120 seconds and legacy entries are discarded'
- "$BERRY_FCM_DATA/mcs-mtalk-learned-ips.txt"
-[ "$(grep -c '^142.250.157.188|' "$BERRY_FCM_DATA/mcs-mtalk-learned-ips.txt")" = 1 ]
+grep -qx '142.250.157.188|1700061000' "$BERRY_FCM_DATA/mcs-mtalk-learned-ips.txt"
+[ "$(wc -l < "$BERRY_FCM_DATA/mcs-mtalk-learned-ips.txt" | tr -d ' ')" = 1 ]
 ! grep -q '203.0.113.9' "$BERRY_FCM_DATA/mcs-mtalk-learned-ips.txt"
 export MCS_SS_MODE=mtalk443
 settime 61060
