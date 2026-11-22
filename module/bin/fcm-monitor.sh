@@ -217,7 +217,13 @@ parse_mcs() {
           header=1;next
         }
         if(line~/^SERVICE /){
-          service_seen=1
+          if(!service_seen){
+            service_seen=1
+            state=""; remote=""; port=""; err=""; ct=""; dt=""
+            has_ct=0; has_dt=0; has_stream=0
+            explicit_status=0; explicit_client_status=0
+            conflict=0; header=0; done=0
+          }
           scoped=(line~/^SERVICE com\.google\.android\.gms\/(\.gcm\.GcmService|com\.google\.android\.gms\.gcm\.GcmService)([[:space:]]|$)/)
           next
         }

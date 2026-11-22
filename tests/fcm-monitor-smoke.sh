@@ -173,12 +173,25 @@ assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=gms
 assert_json "$j" fcm_native_duration=202
 # Neighboring services must not override the GMS service's explicit state.
-printf '%s\\n' 'SERVICE com.google.android.gms/.gcm.GcmService 1234abcd pid=321 user=0' '  Is client connected: true' '  connectTime=03:22/00:00' 'SERVICE com.example.other/.PushService pid=999' '  Is client connected: false' > "$MCS_FIXTURE"
+printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService 1234abcd pid=321 user=0' '  Is client connected: true' '  connectTime=03:22/00:00' 'SERVICE com.example.other/.PushService pid=999' '  Is client connected: false' > "$MCS_FIXTURE"
 j="$(run status)"
 assert_json "$j" fcm_state=connected
-printf '%s\\n' 'SERVICE com.example.other/.PushService pid=999' '  Is client connected: false' 'SERVICE com.google.android.gms/.gcm.GcmService 1234abcd pid=321 user=0' '  Is client connected: true' '  connectTime=03:22/00:00' > "$MCS_FIXTURE"
+printf '%s\n' 'SERVICE com.example.other/.PushService pid=999' '  Is client connected: false' 'SERVICE com.google.android.gms/.gcm.GcmService 1234abcd pid=321 user=0' '  Is client connected: true' '  connectTime=03:22/00:00' > "$MCS_FIXTURE"
 j="$(run status)"
 assert_json "$j" fcm_state=connected
+# A legacy preamble must not contaminate the scoped GMS service state.
+printf '%s\n' 'DeviceID: [legacy]' 'Not connected' 'disconnectTime=01:00/00:00' 'SERVICE com.google.android.gms/.gcm.GcmService 1234abcd pid=321 user=0' '  Is client connected: true' '  connectTime=03:22/00:00' > "$MCS_FIXTURE"
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_native_duration=202
+# Conflicting explicit values in the target service remain unknown.
+export BERRY_FCM_DATA="$TMP/conflict-state-data"
+mkdir -p "$BERRY_FCM_DATA"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService' '  Is client connected: true' '  Is client connected: false' > "$MCS_FIXTURE"
+j="$(run status)"
+assert_json "$j" fcm_state=unknown
+export BERRY_FCM_DATA="$TMP/client-state-data"
 settime 13001
 printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService 1234abcd pid=321 user=0' '  Is client connected: false' > "$MCS_FIXTURE"
 j="$(run status)"
