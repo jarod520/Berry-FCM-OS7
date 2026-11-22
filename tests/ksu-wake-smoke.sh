@@ -50,7 +50,7 @@ grep -Fq 'monitor_group_tool()' "$ROOT/module/service.sh"
 grep -Fq 'process_group_alive "$monitor_pgid"' "$ROOT/module/service.sh"
 grep -Fq 'stop_monitor_owner()' "$ROOT/module/service.sh"
 monitor_cleanup_line="$(grep -n 'stop_monitor_owner || exit 0' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
-service_pid_write_line="$(grep -n 'LOCK/pid' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
+service_pid_write_line="$(grep -nF 'echo $ > "$LOCK/pid"' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
 [ "$monitor_cleanup_line" -lt "$service_pid_write_line" ]
 grep -Fq 'mcs-monitor.lock.owner' "$ROOT/module/service.sh"
 grep -Fq 'stop_stale_patrol()' "$ROOT/module/service.sh"
