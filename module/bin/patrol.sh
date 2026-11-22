@@ -330,6 +330,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                         "$(date '+%F %T')" "$service_pid" "$now" >> "$DATA/guard.log"
                     HEARTBEAT_MODE=auto
                     export HEARTBEAT_MODE
+                    # setsid must exec in-place; verify PID == PGID below before tracking or running maintenance.
                     if [ -x "$TOYBOX_BIN" ] &&
                        "$TOYBOX_BIN" --list 2>/dev/null | grep -qx setsid &&
                        "$TOYBOX_BIN" --list 2>/dev/null | grep -qx kill; then
