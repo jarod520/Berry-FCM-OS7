@@ -235,7 +235,7 @@ stop_patrol() {
     patrol_pid=; patrol_stamp=
     rm -f "$LOCK/patrol"
 }
-service_cleanup() { stop_timer; stop_patrol; rm -rf "$LOCK"; }
+service_cleanup() { stop_timer; stop_monitor_owner; stop_patrol; rm -rf "$LOCK"; }
 stop_service() { stop_wait; exit 0; }
 refresh_mode() {
     mode_changed=1
