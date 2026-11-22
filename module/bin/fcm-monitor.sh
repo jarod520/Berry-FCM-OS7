@@ -674,6 +674,9 @@ observe() {
         gap_detected=1
         record_event sample_gap "距离上次有效采样 $((nowe-sample_epoch)) 秒；空档内没有状态样本，现重新读取 Google 状态"
         state=unknown; missing_since=0; missing_epoch=0; conn_since=0; down_observed=0
+        # A timer anchor from before an unobserved interval cannot prove a
+        # continuous stalled native timer after sampling resumes.
+        native_timer_duration=0; native_timer_since=0; native_timer_last_request=0; native_timer_key=
     fi
     # Socket ownership is sampled every patrol cycle; the more expensive native
     # GMS dump is refreshed at most once per minute unless an explicit check or
