@@ -108,8 +108,9 @@ else
     before="$(wc -l < "$TEST_DIR/samples")"
     echo "$1" >> "$TEST_DIR/samples"
     if [ "${TEST_HANG_FIRST:-0}" = 1 ] && [ "$before" = 0 ]; then
-        echo "$" > "$TEST_DIR/hung-pid"
-        exec /bin/sleep 30
+        /bin/sleep 30 &
+        echo "$!" > "$TEST_DIR/hung-pid"
+        wait
     fi
     if [ "${TEST_HANG_CHILD:-0}" = 1 ] && [ "$before" = 0 ]; then
         echo "$" > "$TEST_DIR/hung-pid"
@@ -202,7 +203,8 @@ unset TEST_HANG_FIRST
 test "$(wc -l < "$TMP/samples")" -ge 3
 grep -q "fcm_check_end rc=124" "$TMP/data/guard.log"
 hung="$(cat "$TMP/hung-pid")"
-! kill -0 "$hung" 2>/dev/null
+hung_state="$(awk '{print $3}' "/proc/$hung/stat" 2>/dev/null || :)"
+[ -z "$hung_state" ] || [ "$hung_state" = Z ]
 test ! -d "$TMP/data/service.lock"
 
 # The timeout must kill descendants in the monitor's process group too.
