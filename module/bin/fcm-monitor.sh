@@ -234,7 +234,9 @@ scan_sockets() {
     raw=
     if command -v "$SS_BIN" >/dev/null 2>&1; then
         raw="$("$SS_BIN" -tinpe 2>/dev/null)" || raw=
-        [ -n "$raw" ] || raw="$("$SS_BIN" -tnpe 2>/dev/null)" || raw=
+        if [ -z "$raw" ] || ! printf '%s\\n' "$raw" | grep -Eq "uid:${uid}([^0-9]|$)"; then
+            raw="$("$SS_BIN" -tnpe 2>/dev/null)" || raw=
+        fi
     fi
 
     # If ss does not expose GMS UID ownership, use the root-readable kernel tables.
