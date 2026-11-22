@@ -15,6 +15,7 @@ LEARNED_IPS="$DATA/mcs-mtalk-learned-ips.txt"
 DNS_TIME="$DATA/mcs-mtalk-dns-time"
 NATIVE_HINT="$DATA/mcs-native-hint"
 NATIVE_RETRY_TIME="$DATA/mcs-native-retry-time"
+NATIVE_POLL_TIME="$DATA/mcs-native-poll-time"
 LOCK_OWNER="$DATA/mcs-monitor.lock.owner"
 lock_owner_stamp=
 SS_BIN="${BERRY_SS_BIN:-ss}"
@@ -106,6 +107,11 @@ save_state() {
 }
 
 update_native_timer_tracking() {
+    # Keep the last native timer anchor between 20-second socket samples.
+    # The next scheduled native poll will validate or reset it.
+    if [ "$source" = gms_socket ] && [ "$state" = connected ] && [ "$native_timer_since" -gt 0 ]; then
+        return 0
+    fi
     timer_now="$(num "$(monotime)")"
     timer_key="${remote:-$transport}"
     if [ "$source" = gms ] && [ "$state" = connected ] && is_uint "${duration:-}" &&
@@ -550,6 +556,7 @@ request_reconnect() {
 }
 
 observe() {
+    force_native_poll="${1:-0}"
     load_state
     nowm="$(num "$(monotime)")"; nowe="$(num "$(now_epoch)")"
     [ "$nowm" -gt 0 ] && [ "$nowe" -gt 0 ] || return 12
@@ -585,27 +592,48 @@ observe() {
         record_event sample_gap "距离上次有效采样 $((nowe-sample_epoch)) 秒；空档内没有状态样本，现重新读取 Google 状态"
         state=unknown; missing_since=0; missing_epoch=0; conn_since=0; down_observed=0
     fi
-    dump="$("$DUMPSYS_BIN" -t 5 activity service "$GMS/.gcm.GcmService" 2>&1)"
-    dump_rc=$?
-    native_reason=none
-    if printf '%s\n' "$dump" | grep -qiE 'Permission Denial|SecurityException|Permission denied'; then
-        native_reason=permission_denied
-    elif printf '%s\n' "$dump" | grep -qiE 'DUMP TIMEOUT|dump timed out|dumpsys.*timed out'; then
-        native_reason=timeout
-    elif printf '%s\n' "$dump" | grep -qiE 'No services match|No service found'; then
-        native_reason=service_unavailable
-    elif [ "$dump_rc" -ne 0 ]; then
-        native_reason=dump_failed
-    elif [ -z "$dump" ]; then
-        native_reason=empty
+    # Socket ownership is sampled every patrol cycle; the more expensive native
+    # GMS dump is refreshed at most once per minute unless an explicit check or
+    # a two-sample recovery confirmation requires fresh native evidence.
+    native_poll_last="$(num "$(cat "$NATIVE_POLL_TIME" 2>/dev/null)")"
+    native_poll_due=0
+    if [ "$force_native_poll" = 1 ] || [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] ||
+       [ "$native_poll_last" -le 0 ] || [ "$nowm" -lt "$native_poll_last" ] ||
+       [ $((nowm-native_poll_last)) -ge 60 ]; then
+        native_poll_due=1
     fi
-    if [ "$native_reason" = none ]; then
-        result="$(printf '%s\n' "$dump" | parse_mcs)"
-        # Keep native lifecycle history even if the current-state parser rejects
-        # an otherwise successful dump. Historical Close alone never authorizes recovery.
-        import_native_events "$dump"
+    socket="$(scan_sockets)"
+    if [ "$native_poll_due" = 1 ]; then
+        dump="$("$DUMPSYS_BIN" -t 5 activity service "$GMS/.gcm.GcmService" 2>&1)"
+        dump_rc=$?
+        native_reason=none
+        if printf '%s\n' "$dump" | grep -qiE 'Permission Denial|SecurityException|Permission denied'; then
+            native_reason=permission_denied
+        elif printf '%s\n' "$dump" | grep -qiE 'DUMP TIMEOUT|dump timed out|dumpsys.*timed out'; then
+            native_reason=timeout
+        elif printf '%s\n' "$dump" | grep -qiE 'No services match|No service found'; then
+            native_reason=service_unavailable
+        elif [ "$dump_rc" -ne 0 ]; then
+            native_reason=dump_failed
+        elif [ -z "$dump" ]; then
+            native_reason=empty
+        fi
+        if [ "$native_reason" = none ]; then
+            result="$(printf '%s\n' "$dump" | parse_mcs)"
+            # Keep native lifecycle history even if the current-state parser rejects
+            # an otherwise successful dump. Historical Close alone never authorizes recovery.
+            import_native_events "$dump"
+        else
+            result='unknown||||-1|'
+        fi
+        printf '%s\n' "$nowm" > "$NATIVE_POLL_TIME.tmp" &&
+            mv -f "$NATIVE_POLL_TIME.tmp" "$NATIVE_POLL_TIME"
     else
-        result='unknown||||-1|'
+        dump=
+        dump_rc=0
+        native_reason=not_polled
+        retry_rc=not_due
+        result='unknown||||-1|native_poll_deferred'
     fi
     IFS='|' read -r observed new_transport new_remote source duration close_code parse_detail <<EOF_RESULT
 $result
@@ -613,31 +641,33 @@ EOF_RESULT
     # A successful service command can return only ActivityManager wrapper lines.
     # Retry at most once per 60 seconds; repeated wrapper-only dumps must not double
     # the native dump cost on every 20-second patrol cycle.
-    retry_rc=none
-    retry_last="$(num "$(cat "$NATIVE_RETRY_TIME" 2>/dev/null)")"
-    retry_due=0
-    if [ "$retry_last" -le 0 ] || [ "$nowm" -lt "$retry_last" ] ||
-       [ $((nowm-retry_last)) -ge 60 ]; then
-        retry_due=1
-    fi
-    if [ "$native_reason" = none ] && [ "$parse_detail" = no_current_state ] && [ "$retry_due" = 1 ]; then
-        printf '%s\n' "$nowm" > "$NATIVE_RETRY_TIME.tmp" &&
-            mv -f "$NATIVE_RETRY_TIME.tmp" "$NATIVE_RETRY_TIME"
-        [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 1
-        retry_dump="$("$DUMPSYS_BIN" -t 2 activity service "$GMS/.gcm.GcmService" 2>&1)"
-        retry_rc=$?
-        if [ "$retry_rc" -eq 0 ] &&
-           ! printf '%s\n' "$retry_dump" | grep -qiE 'Permission Denial|SecurityException|Permission denied|DUMP TIMEOUT|dump timed out|dumpsys.*timed out|No services match|No service found'; then
-            retry_result="$(printf '%s\n' "$retry_dump" | parse_mcs)"
-            case "$retry_result" in
-              connected\|*|connecting\|*|disconnected\|*)
-                IFS='|' read -r observed new_transport new_remote source duration close_code parse_detail <<EOF_RETRY
+    if [ "$native_poll_due" = 1 ]; then
+        retry_rc=none
+        retry_last="$(num "$(cat "$NATIVE_RETRY_TIME" 2>/dev/null)")"
+        retry_due=0
+        if [ "$retry_last" -le 0 ] || [ "$nowm" -lt "$retry_last" ] ||
+           [ $((nowm-retry_last)) -ge 60 ]; then
+            retry_due=1
+        fi
+        if [ "$native_reason" = none ] && [ "$parse_detail" = no_current_state ] && [ "$retry_due" = 1 ]; then
+            printf '%s\n' "$nowm" > "$NATIVE_RETRY_TIME.tmp" &&
+                mv -f "$NATIVE_RETRY_TIME.tmp" "$NATIVE_RETRY_TIME"
+            [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 1
+            retry_dump="$("$DUMPSYS_BIN" -t 2 activity service "$GMS/.gcm.GcmService" 2>&1)"
+            retry_rc=$?
+            if [ "$retry_rc" -eq 0 ] &&
+               ! printf '%s\n' "$retry_dump" | grep -qiE 'Permission Denial|SecurityException|Permission denied|DUMP TIMEOUT|dump timed out|dumpsys.*timed out|No services match|No service found'; then
+                retry_result="$(printf '%s\n' "$retry_dump" | parse_mcs)"
+                case "$retry_result" in
+                  connected\|*|connecting\|*|disconnected\|*)
+                    IFS='|' read -r observed new_transport new_remote source duration close_code parse_detail <<EOF_RETRY
 $retry_result
 EOF_RETRY
-                import_native_events "$retry_dump"
-                record_event sample_retry "first=no_current_state retry_rc=$retry_rc state=$observed"
-                ;;
-            esac
+                    import_native_events "$retry_dump"
+                    record_event sample_retry "first=no_current_state retry_rc=$retry_rc state=$observed"
+                    ;;
+                esac
+            fi
         fi
     fi
     tcp_hint=none
@@ -647,7 +677,6 @@ EOF_RETRY
         # Root-visible GMS UID MCS sockets resolve the state when dumpsys has
         # only ActivityManager wrapper lines. This is limited to exact MCS
         # ports or known mtalk IPs, never arbitrary GMS HTTPS traffic.
-        socket="$(scan_sockets)"
         IFS='|' read -r socket_state socket_transport socket_remote socket_key socket_reason <<EOF_SOCKET
 $socket
 EOF_SOCKET
@@ -658,11 +687,13 @@ EOF_SOCKET
            [ "$previous_native_reason" != "$native_reason" ]; then
             record_event sample_unknown "reason=$native_reason parser=${parse_detail:-none} tcp=$tcp_hint prior_down=$previous_down_observed dump_rc=$dump_rc retry_rc=$retry_rc"
         fi
-        dump_shape="parser=${parse_detail:-none} rc=$dump_rc $(printf '%s' "$dump" | dump_state_shape)"
-        dump_shape="$(printf '%s' "$dump_shape" | cut -c1-220)"
-        previous_shape="$(awk -F '|' '$2=="sample_dump" { shape=$3 } END { print shape }' "$EVENTS" 2>/dev/null || :)"
-        if [ "$previous_down_state" != unknown ] || [ "$dump_shape" != "$previous_shape" ]; then
-            record_event sample_dump "$dump_shape"
+        if [ "$native_poll_due" = 1 ]; then
+            dump_shape="parser=${parse_detail:-none} rc=$dump_rc $(printf '%s' "$dump" | dump_state_shape)"
+            dump_shape="$(printf '%s' "$dump_shape" | cut -c1-220)"
+            previous_shape="$(awk -F '|' '$2=="sample_dump" { shape=$3 } END { print shape }' "$EVENTS" 2>/dev/null || :)"
+            if [ "$previous_down_state" != unknown ] || [ "$dump_shape" != "$previous_shape" ]; then
+                record_event sample_dump "$dump_shape"
+            fi
         fi
         socket_now="$(num "$(monotime)")"
         case "$tcp_hint" in
@@ -800,7 +831,7 @@ write_evidence() {
 confirm_recovery() {
     first_state="$state"; first_source="$source"; first_tcp_hint="$tcp_hint"; first_duration="$duration"
     [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 2
-    observe || return $?
+    if [ "$first_source" = gms ]; then observe force_native; else observe; fi
     if { [ "$source" = gms ] || [ "$source" = gms_socket ]; } &&
        { [ "$state" = disconnected ] || [ "$state" = connecting ]; }; then
         record_event recovery_confirmed "二次采样仍确认 GMS MCS 尚未建立连接"
@@ -841,8 +872,8 @@ confirm_recovery() {
 confirm_stalled_timer() {
     first_duration="$duration"; first_remote="$remote"
     [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 2
-    observe || return $?
-    nowm="$(num "$(monotime)")"
+    observe force_native || return $?
+    nowm="$(num "$(monotime)")
     stalled_age=0
     if [ "$native_timer_since" -gt 0 ] && [ "$nowm" -ge "$native_timer_since" ]; then
         stalled_age=$((nowm-native_timer_since))
@@ -918,7 +949,7 @@ status_json() {
     source=unavailable; duration=-1; close_code=; tcp_hint=none; native_reason=unrecognized; decision=not_evaluated
     if [ -f "$EVIDENCE" ]; then IFS='|' read -r source duration close_code tcp_hint native_reason decision < "$EVIDENCE" || :; fi
     case "${decision:-}" in not_evaluated|not_disconnected|sample_unavailable|disabled|cooldown|gms_stopped_unknown|requested|request_failed|waiting_duration|waiting_confirmation|confirmation_changed|timer_stalled_recovery|timer_stalled_disabled|timer_stalled_cooldown|timer_stalled_cancelled) :;; *) decision=not_evaluated;; esac
-    case "$native_reason" in none|permission_denied|timeout|service_unavailable|dump_failed|empty|unrecognized|gms_stopped) :;; *) native_reason=unrecognized;; esac
+    case "$native_reason" in none|not_polled|permission_denied|timeout|service_unavailable|dump_failed|empty|unrecognized|gms_stopped) :;; *) native_reason=unrecognized;; esac
     case "$duration" in -1) :;; *) is_uint "$duration" || duration=-1;; esac
     [ "$age" -ge 0 ] && [ "$age" -le 90 ] || state=stale
     # Never present stale duration as live and never extrapolate past the sample.
@@ -953,7 +984,7 @@ status_json() {
 run_monitor_command() {
 case "${1:-status}" in
     status)
-        observe || exit $?
+        observe force_native || exit $?
         status_json
         ;;
     snapshot)
@@ -981,7 +1012,7 @@ case "${1:-status}" in
         esac
         ;;
     reconnect)
-        observe || exit $?
+        observe force_native || exit $?
         if { { [ "$source" = gms ] || [ "$source" = gms_socket ] || [ "$source" = gms_socket_fallback ] || [ "$source" = gms_native_event_fallback ]; } && { [ "$state" = connecting ] || [ "$state" = disconnected ]; }; } ||
            { [ "$state" = unknown ] && socket_fallback_ready "$duration"; }; then
             confirm_recovery manual || exit $?
