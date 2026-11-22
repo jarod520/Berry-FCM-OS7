@@ -379,6 +379,7 @@ request_reconnect() {
     last_result=failed; save_state || return $?
     sequence_requested=0
     sequence_index=0
+    confirmation_unavailable=0
     for action_label in GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT; do
         case "$action_label" in
           GCM_RECONNECT) action=com.google.android.intent.action.GCM_RECONNECT;;
@@ -398,31 +399,32 @@ request_reconnect() {
             record_event reconnect_requested "$reason UID=0 $action_label exit=$rc $completion；等待内核复采确认（序列 $sequence_index/4）"
             save_state || return $?
             [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 2
-            observe || {
-                # observe() may have changed in-memory fields before its
-                # evidence/state atomic commit failed. Never save those fields
-                # here; that would bypass observe()'s evidence-first commit.
-                decision=confirmation_unavailable
-                record_event recovery_confirmation_unavailable "恢复命令 $action_label 后内核复采失败；停止本轮序列，等待下一次巡检"
-                return 0
-            }
-            case "$state" in
-              connected)
-                decision=confirmation_recovered
-                record_event recovery_sequence_recovered "恢复序列第 $sequence_index 阶段后，内核复采观察到 MCS TCP 建立；停止后续命令"
-                save_state
-                return 0
-                ;;
-              connecting|disconnected)
-                record_event recovery_sequence_still_down "恢复序列第 $sequence_index 阶段后仍为 $state；继续下一种原生触发"
-                ;;
-              *)
-                decision=confirmation_changed
-                record_event recovery_sequence_stopped_unknown "恢复序列第 $sequence_index 阶段后内核证据变为 unknown；停止后续命令，不把未知当作断联"
-                save_state
-                return 0
-                ;;
-            esac
+            if observe; then
+                case "$state" in
+                  connected)
+                    decision=confirmation_recovered
+                    record_event recovery_sequence_recovered "恢复序列第 $sequence_index 阶段后，内核复采观察到 MCS TCP 建立；停止后续命令"
+                    save_state
+                    return 0
+                    ;;
+                  connecting|disconnected)
+                    record_event recovery_sequence_still_down "恢复序列第 $sequence_index 阶段后仍为 $state；继续下一种原生触发"
+                    ;;
+                  *)
+                    # Unknown is not treated as disconnected, but it also
+                    # cannot confirm recovery. Continue the bounded trigger
+                    # chain; stop early only after positive connected evidence.
+                    confirmation_unavailable=1
+                    record_event recovery_sequence_unverified "恢复序列第 $sequence_index 阶段后内核证据不可用；不推断断联，继续下一种恢复触发"
+                    ;;
+                esac
+            else
+                # A failed follow-up sample cannot overwrite committed state.
+                # The next bounded trigger is still attempted because recovery
+                # has not been positively confirmed.
+                confirmation_unavailable=1
+                record_event recovery_confirmation_unavailable "恢复命令 $action_label 后内核复采失败；保留已提交样本，继续下一种恢复触发"
+            fi
         else
             [ "$sequence_requested" = 1 ] || last_result=failed
             record_event reconnect_failed "$reason UID=0 $action_label exit=$rc；本命令未被系统接受，立即尝试下一种原生触发"
@@ -432,7 +434,11 @@ request_reconnect() {
 
     if [ "$sequence_requested" = 1 ]; then
         decision=recovery_exhausted
-        record_event reconnect_sequence_exhausted "四种原生触发均未使内核 MCS TCP 恢复；本轮结束，按退避间隔再次巡检"
+        if [ "$confirmation_unavailable" = 1 ]; then
+            record_event reconnect_sequence_exhausted "四种原生触发已执行，但至少一次内核复采不可用且未确认恢复；本轮结束，按退避间隔再次巡检"
+        else
+            record_event reconnect_sequence_exhausted "四种原生触发均未使内核 MCS TCP 恢复；本轮结束，按退避间隔再次巡检"
+        fi
     else
         decision=request_failed
         record_event reconnect_sequence_failed "四种原生触发均未被系统接受；本轮结束，按退避间隔再次巡检"
