@@ -216,10 +216,10 @@ MOCK
 chmod +x "$TMP/orphan-patrol.sh"
 "$TMP/orphan-patrol.sh" &
 orphan_pid=$!
-orphan_stamp="$(tr -d '\\n' < "/proc/$orphan_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
+orphan_stamp="$(tr -d '\n' < "/proc/$orphan_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
 mkdir -p "$TMP/data/service.lock"
-printf '999999\\n1\\n' > "$TMP/data/service.lock/pid"
-printf '%s %s\\n' "$orphan_pid" "$orphan_stamp" > "$TMP/data/service.lock/patrol"
+printf '999999\n1\n' > "$TMP/data/service.lock/pid"
+printf '%s %s\n' "$orphan_pid" "$orphan_stamp" > "$TMP/data/service.lock/patrol"
 echo 1 > "$TMP/data/enabled"
 touch "$TMP/module/module.prop"
 : > "$TMP/samples"
