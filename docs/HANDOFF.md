@@ -749,3 +749,5 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **修正**：启动 child 后记录 PID 对应的 starttime 和 PGID；setsid 未建立 PID=PGID 的私有组时自动降级为仅对身份匹配的直接 child 发信号。TERM 和 KILL 前分别复核原 child 身份；无法确认时拒绝信号并写入 guard.log。保留现有 timeout 返回码与 marker 语义。
 - **回归约束**：KSU smoke 增加进程身份 helper、TERM/KILL 拒绝日志及直接 PID KILL 复核源码断言。
 - **验证边界**：本次尚需复核固定断言与 shell 语法；完整 KSU/FCM smoke、全仓 Shell gate、Android/KernelSU 实机验证仍未执行。未触发 Actions、编译、打包、合并或发布。
+
+- **补充安全回退**：若原 child PID/starttime 仍匹配，但 PGID 身份复核失败，则只向已核实的直接 child 发送 TERM/KILL，不再尝试组信号；若 PID/starttime 也无法确认，则拒绝信号。这样避免因组身份校验失败而让直接 child 永久挂住，同时不扩大到不可信进程组。
