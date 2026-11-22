@@ -19,7 +19,7 @@ is_guardian() {
 if is_guardian; then
     kill -TERM "$pid" 2>/dev/null || :
     n=0
-    while is_guardian && [ "$n" -lt 24 ]; do
+    while is_guardian && [ "$n" -lt 45 ]; do
         sleep 1
         n=$((n + 1))
     done
