@@ -59,7 +59,8 @@ case "$group" in
 esac
 wait_pid=
 timer_pid=
-service_pid=$$
+service_pid=$
+service_stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
 stop_wait() { [ -z "$wait_pid" ] || kill "$wait_pid" 2>/dev/null || :; }
 stop_timer() {
     [ -n "$timer_pid" ] || return 0
@@ -86,7 +87,7 @@ timer_worker() {
     trap timer_worker_cleanup EXIT
     trap 'exit 0' HUP INT TERM
     echo timed > "$DATA/wake-status"
-    while [ -e "$MODDIR/module.prop" ] && kill -0 "$service_pid" 2>/dev/null; do
+    while [ -e "$MODDIR/module.prop" ] && [ "$(proc_start_time "$service_pid")" = "$service_stamp" ]; do
         "$MODDIR/bin/wake-timer-arm64" "$1" >> "$log" 2>&1 &
         alarm_pid=$!
         if ! wait "$alarm_pid"; then
@@ -96,6 +97,7 @@ timer_worker() {
             return 1
         fi
         alarm_pid=
+        [ "$(proc_start_time "$service_pid")" = "$service_stamp" ] || return 0
         kill -USR2 "$service_pid" 2>/dev/null || return 0
         tail -n 120 "$log" > "$log.tmp" && mv -f "$log.tmp" "$log"
     done
