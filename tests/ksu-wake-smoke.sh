@@ -55,7 +55,8 @@ grep -Fq 'current_stamp" = "$maintenance_owner_stamp"' "$ROOT/module/bin/patrol.
 grep -Fq 'register_patrol_identity || exit 1' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'mv -f "$DATA/service.lock/patrol.tmp.$patrol_self_pid" "$DATA/service.lock/patrol"' "$ROOT/module/bin/patrol.sh"
 ! grep -Fq '\\n' "$ROOT/module/bin/patrol.sh"
-! grep -Eq '\\\\hot_enabled_line="$(grep -n 'berry_fcm_ksu/enabled' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
+! grep -Eq '\\\\$' "$ROOT/module/bin/patrol.sh"
+hot_stop_line="$(grep -n '^if is_guardian' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 [ "$hot_stop_line" -lt "$hot_enabled_line" ]
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -309,7 +310,6 @@ grep -q 'fcm_check_end rc=124' "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: watchdog fallback keeps bounded patrol active without timeout applets'
  "$ROOT/module/bin/patrol.sh"
-hot_stop_line="$(grep -n '^if is_guardian' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 hot_enabled_line="$(grep -n 'berry_fcm_ksu/enabled' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 [ "$hot_stop_line" -lt "$hot_enabled_line" ]
 TMP="$(mktemp -d)"
@@ -564,7 +564,6 @@ grep -q 'fcm_check_end rc=124' "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: watchdog fallback keeps bounded patrol active without timeout applets'
  "$ROOT/module/bin/patrol.sh"
-hot_stop_line="$(grep -n '^if is_guardian' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 hot_enabled_line="$(grep -n 'berry_fcm_ksu/enabled' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 [ "$hot_stop_line" -lt "$hot_enabled_line" ]
 TMP="$(mktemp -d)"
@@ -819,7 +818,6 @@ grep -q 'fcm_check_end rc=124' "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: watchdog fallback keeps bounded patrol active without timeout applets'
  "$ROOT/module/bin/patrol.sh"
-hot_stop_line="$(grep -n '^if is_guardian' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 hot_enabled_line="$(grep -n 'berry_fcm_ksu/enabled' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 [ "$hot_stop_line" -lt "$hot_enabled_line" ]
 TMP="$(mktemp -d)"
