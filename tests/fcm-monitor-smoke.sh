@@ -185,6 +185,28 @@ assert_json "$j" fcm_state=connected
 [ ! -e "$lockdir" ]
 echo "PASS: incomplete lockdir initialization is recoverable"
 
+# Background patrol samples sockets every cycle but refreshes native GMS state only once per minute.
+export BERRY_FCM_DATA="$TMP/native-poll-data" MCS_DUMPSYS_LOG="$TMP/native-poll.log" MCS_SS_MODE=connected
+mkdir -p "$BERRY_FCM_DATA"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+: > "$MCS_DUMPSYS_LOG"
+unset BERRY_FCM_TEST_MODE
+settime 70000
+printf "%s\\n" "DeviceID: [fixture]" "connected=mtalk.google.com/142.250.157.188,port=5228" "connectTime=00:10/00:00" > "$MCS_FIXTURE"
+run monitor
+[ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 1 ]
+settime 70020
+printf "%s\\n" "DeviceID: [fixture]" "Not connected" > "$MCS_FIXTURE"
+run monitor
+assert_json "$(run snapshot)" fcm_state=connected
+[ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 1 ]
+settime 70060
+run monitor
+assert_json "$(run snapshot)" fcm_state=disconnected
+[ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 2 ]
+export BERRY_FCM_TEST_MODE=1
+echo 'PASS: native GMS dumps are rate-limited while socket samples remain continuous'
+
 # ActivityManager can return only wrapper lines with exit code zero.
 export MCS_NEXT_FIXTURE="$TMP/next-state-dump" MCS_DUMPSYS_LOG="$TMP/dumpsys.log"
 : > "$MCS_DUMPSYS_LOG"
