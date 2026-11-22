@@ -52,7 +52,7 @@ grep -Fq 'stop_monitor_owner()' "$ROOT/module/service.sh"
 grep -Fq "IFS=' ' read -r service_pid _ < /proc/self/stat" "$ROOT/module/service.sh"
 monitor_cleanup_line="$(grep -n 'stop_monitor_owner || exit 0' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
 service_pid_write_line="$(grep -nF 'echo "$service_pid" > "$LOCK/pid"' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
-[ "$monitor_cleanup_line" -lt "$service_pid_write_line" ]
+[ "$service_pid_write_line" -lt "$monitor_cleanup_line" ]
 grep -Fq 'mcs-monitor.lock.owner' "$ROOT/module/service.sh"
 grep -Fq 'stop_stale_patrol()' "$ROOT/module/service.sh"
 grep -Fq 'stop_stale_patrol || exit 0' "$ROOT/module/service.sh"
