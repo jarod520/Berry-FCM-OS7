@@ -399,9 +399,11 @@ request_reconnect() {
             save_state || return $?
             [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 2
             observe || {
+                # observe() may have changed in-memory fields before its
+                # evidence/state atomic commit failed. Never save those fields
+                # here; that would bypass observe()'s evidence-first commit.
                 decision=confirmation_unavailable
                 record_event recovery_confirmation_unavailable "恢复命令 $action_label 后内核复采失败；停止本轮序列，等待下一次巡检"
-                save_state
                 return 0
             }
             case "$state" in
