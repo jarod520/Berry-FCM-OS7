@@ -15,6 +15,7 @@ LEARNED_IPS="$DATA/mcs-mtalk-learned-ips.txt"
 DNS_TIME="$DATA/mcs-mtalk-dns-time"
 NATIVE_HINT="$DATA/mcs-native-hint"
 SS_BIN="${BERRY_SS_BIN:-ss}"
+PROC_NET_DIR="${BERRY_PROC_NET_DIR:-/proc/net}"
 CMD_BIN="${BERRY_CMD_BIN:-cmd}"
 PM_BIN="${BERRY_PM_BIN:-pm}"
 DUMPSYS_BIN="${BERRY_DUMPSYS_BIN:-dumpsys}"
@@ -160,9 +161,10 @@ scan_sockets() {
         raw="$("$SS_BIN" -tnpe 2>/dev/null)" || raw=
     fi
 
-    # Fall back to kernel TCP tables when ss is absent, fails, or omits UID ownership.
-    if [ -z "$raw" ] || ! printf '%s\n' "$raw" | grep -Eq 'uid:[0-9]+'; then
-        for table in /proc/net/tcp /proc/net/tcp6; do
+    # Fall back when ss does not expose the GMS UID specifically. Other UID
+    # annotations in ss output do not prove that GMS ownership was observable.
+    if [ -z "$raw" ] || ! printf '%s\n' "$raw" | grep -Eq "uid:${uid}([^0-9]|$)"; then
+        for table in "$PROC_NET_DIR/tcp" "$PROC_NET_DIR/tcp6"; do
             [ -r "$table" ] || continue
             awk -v u="$uid" '
               NR > 1 && $8 == u {
@@ -181,8 +183,9 @@ scan_sockets() {
         done | awk -F'|' '
           $1=="connected" {connected=$0}
           $1=="connecting" && !connecting {connecting=$0}
+          $1=="unknown" && !unknown {unknown=$0}
           $1=="absent" {absent=$0}
-          END {if(connected) print connected; else if(connecting) print connecting; else if(absent) print absent; else print "unknown||||proc_net_unavailable"}'
+          END {if(connected) print connected; else if(connecting) print connecting; else if(unknown) print unknown; else if(absent) print absent; else print "unknown||||proc_net_unavailable"}'
         return
     fi
 
