@@ -35,7 +35,7 @@ trap 'exit 0' HUP INT TERM
 trap on_wake USR2
 trap on_mode USR1
 printf '[%s] patrol_started pid=%s service_pid=%s\n' "$(date '+%F %T')" "$$" "$SERVICE_PID" >> "$DATA/guard.log"
-while [ -e "$MODDIR/module.prop" ] && parent_alive; do
+while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive; do
     now="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
     case "$now" in ""|*[!0-9]*) now=0;; esac
     printf '%s\n' "$now" > "$DATA/patrol.heartbeat.tmp" && mv -f "$DATA/patrol.heartbeat.tmp" "$DATA/patrol.heartbeat"

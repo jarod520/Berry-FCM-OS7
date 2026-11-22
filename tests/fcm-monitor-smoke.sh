@@ -261,9 +261,9 @@ settime 12500
 printf '%s\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
 run monitor; requests 6
 assert_json "$(run snapshot)" fcm_state=unknown
-settime 12559
+settime 12529
 run monitor; requests 6
-settime 12560
+settime 12530
 run monitor; requests 7
 assert_json "$(run snapshot)" fcm_state=disconnected
 assert_json "$(run snapshot)" fcm_source=gms_socket_fallback
@@ -291,3 +291,47 @@ grep -q '|reconnect_requested|stalled_timer UID=0 GCM_RECONNECT' "$BERRY_FCM_DAT
 settime 20330
 run monitor; requests 1
 echo 'PASS: stalled native connection timer gets one confirmed, targeted reconnect request'
+
+# Native GMS Close history can confirm a down state even when dumpsys has no
+# current-state fields and ss cannot expose UID ownership.
+export BERRY_FCM_DATA="$TMP/native-close-data"
+mkdir -p "$BERRY_FCM_DATA"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+: > "$MCS_AM_LOG"
+export MCS_SS_MODE=unknown
+settime 30000
+printf '%s\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '11-22 17:32:56.013 net=0: Close err:20 time:41' > "$MCS_FIXTURE"
+run monitor; requests 0
+settime 30029
+run monitor; requests 0
+assert_json "$(run snapshot)" fcm_state=unknown
+settime 30030
+run monitor; requests 1
+j="$(run snapshot)"
+assert_json "$j" fcm_state=disconnected
+assert_json "$j" fcm_source=gms_native_event_fallback
+assert_json "$j" fcm_recovery_decision=requested
+grep -q '|native_close_confirmed|' "$BERRY_FCM_DATA/mcs-monitor-events.log"
+echo 'PASS: recent native GMS Close event resolves missing current-state dump'
+
+# Recovery actions advance only after a later sample still confirms outage.
+export BERRY_FCM_DATA="$TMP/action-stages-data"
+mkdir -p "$BERRY_FCM_DATA"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+: > "$MCS_AM_LOG"
+settime 40000
+printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService' 'Server: Not connected' > "$MCS_FIXTURE"
+run monitor; requests 0
+settime 40015
+run monitor; requests 1
+test "$(sed -n '1p' "$MCS_AM_LOG")" = 'broadcast --user 0 -a com.google.android.intent.action.GCM_RECONNECT -p com.google.android.gms'
+settime 40077
+run monitor; requests 2
+test "$(sed -n '2p' "$MCS_AM_LOG")" = 'broadcast --user 0 -a com.google.android.intent.action.MCS_HEARTBEAT -p com.google.android.gms'
+settime 40197
+run monitor; requests 3
+test "$(sed -n '3p' "$MCS_AM_LOG")" = 'broadcast --user 0 -a com.google.android.gms.gcm.ACTION_HEARTBEAT_NOW -p com.google.android.gms'
+settime 40377
+run monitor; requests 4
+test "$(sed -n '4p' "$MCS_AM_LOG")" = 'broadcast --user 0 -a com.google.android.gcm.intent.SEND -n com.google.android.gms/.gcm.GcmSenderProxy'
+echo 'PASS: staged GMS reconnect fallbacks are ordered and independently rate-limited'

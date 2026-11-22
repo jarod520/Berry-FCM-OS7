@@ -1,6 +1,5 @@
 #!/system/bin/sh
 DIR="$(cd "${0%/*}" && pwd)" || exit 1
-[ "$(cat /data/adb/berry_fcm_ksu/enabled 2>/dev/null)" = 1 ] || exit 0
 LOCK=/data/adb/berry_fcm_ksu/service.lock
 old="$(cat "$LOCK/pid" 2>/dev/null)"
 old_stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
@@ -24,4 +23,6 @@ if is_guardian; then
     done
     if is_guardian; then kill -KILL "$old" 2>/dev/null || :; fi
 fi
+[ "$(cat /data/adb/berry_fcm_ksu/enabled 2>/dev/null)" = 1 ] || exit 0
+[ ! -e "$DIR/disable" ] || exit 0
 sh "$DIR/service.sh" </dev/null >/dev/null 2>&1 &

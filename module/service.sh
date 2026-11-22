@@ -181,7 +181,7 @@ trap refresh_mode USR1
 trap on_timer USR2
 
 mode_changed=1
-while [ -e "$MODDIR/module.prop" ]; do
+while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ]; do
     if [ "$mode_changed" = 1 ]; then mode_changed=0; sync_timer; fi
     if ! patrol_alive; then
         if [ -n "$patrol_pid" ]; then wait "$patrol_pid" 2>/dev/null || :; patrol_pid=; patrol_stamp=; fi

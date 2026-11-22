@@ -1,3 +1,12 @@
+## 2026-11-22 KSU RC7：原生 Close 辅助判据、分阶段恢复与卸载清理
+
+- 基于 RC6 提交 `d9312e44a6b0c4110a6dbc383c39def40bde131b`；本轮候选版本 `1.0-rc.7 / 10007`，仍属于测试候选，不合并 main、不发布正式 Release。
+- RC6 在 GMS dump 只有 ActivityManager wrapper、Socket 元信息不可见时会保留 unknown；TCP 明确 absent 时等待 60 秒，跨长采样空档会丢弃过旧的连续缺失计时。RC7 改为 30 秒双采样确认，并记录最新 GMS `Close/Connected` 事件的单调时钟锚点；当前状态字段缺失且最近 Close 持续 30–900 秒、没有更新的 Connected 事件时，可作为独立辅助断联证据。单次 Close 不直接触发重连。
+- 自动恢复按连续未恢复轮次依次尝试 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、显式组件 `GCM_SEND`；每轮只发送一种动作，下一轮需由新采样再次确认断联，继续沿用退避和 GMS stopped 检查。广播返回成功仍不等于连接恢复。
+- 修复热安装时 `enabled=0` 提前退出导致旧 service 未停止的问题；新增卸载脚本，service/patrol 检查模块 disable 标记，卸载或禁用后退出并清理工作进程。保留数据目录配置与历史，不强制重启。
+- 开源参考：`miuiadmin/Berry-FCM` 的 `lib/berry.sh` 明确列出 MCS_HEARTBEAT、ACTION_HEARTBEAT_NOW、GCM_SEND 三种动作；本项目借鉴动作来源，按断联轮次受控调用。Toybox timeout 默认创建独立进程组，RC6 保留其超时巡检结构。
+- 验证要求：Shell 语法、FCM monitor smoke、KSU wake/lifecycle smoke、WebUI 检查、ARM64 定时器构建、ZIP 打包全部通过后再交付 Artifact；CI 不能代替 OriginOS 7 实机断联与热卸载验证。
+
 # Berry-FCM-OS7 开发进度与接续交接
 
 ## 2026-11-22 KSU RC5 巡检与状态解析修复候选

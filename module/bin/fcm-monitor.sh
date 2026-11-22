@@ -13,6 +13,7 @@ EVIDENCE="$DATA/mcs-evidence"
 DNS_IPS="$DATA/mcs-mtalk-dns-ips.txt"
 LEARNED_IPS="$DATA/mcs-mtalk-learned-ips.txt"
 DNS_TIME="$DATA/mcs-mtalk-dns-time"
+NATIVE_HINT="$DATA/mcs-native-hint"
 SS_BIN="${BERRY_SS_BIN:-ss}"
 CMD_BIN="${BERRY_CMD_BIN:-cmd}"
 PM_BIN="${BERRY_PM_BIN:-pm}"
@@ -65,6 +66,7 @@ load_state() {
         last_try_mono=0; transport=; remote=; sample_epoch=0; down_observed=0; retry_streak=0; outage_hint_mono=0
         native_timer_duration=0; native_timer_since=0; native_timer_last_request=0; native_timer_key=
         : > "$LEARNED_IPS"
+        rm -f "$NATIVE_HINT"
         record_event reboot '设备重启：清除上一启动周期的连接计时，保留历史事件'
     fi
 }
@@ -355,6 +357,26 @@ import_native_events() {
           print stamp "|" kind "|" substr(msg,1,160)
         }'
     } | awk 'NF && !seen[$0]++' | tail -n 600 > "$tmp" && mv -f "$tmp" "$NATIVE_EVENTS"
+    native_hint="$(printf '%s\n' "$1" | awk '
+      {
+        sub(/\r$/, ""); sub(/^[[:space:]]+/, "")
+        if($0 !~ /^[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9]+ net=-?[0-9]+: /) next
+        stamp=$1" "$2; msg=$0; sub(/^[^ ]+ [^ ]+ /,"",msg)
+        if(msg~/^net=-?[0-9]+: Close err:[0-9]+([[:space:]]|$)/)kind="gms_close"
+        else if(msg~/^net=-?[0-9]+: Connected[[:space:]]*$/)kind="gms_connected"
+        else next
+        token=stamp "|" kind
+      }
+      END {print token}')"
+    if [ -n "$native_hint" ]; then
+        old_hint="$(awk -F'|' 'NF>=3 {print $1 "|" $2}' "$NATIVE_HINT" 2>/dev/null)"
+        if [ "$native_hint" != "$old_hint" ]; then
+            hint_stamp="$(printf '%s' "$native_hint" | cut -d'|' -f1)"
+            hint_kind="$(printf '%s' "$native_hint" | cut -d'|' -f2)"
+            printf '%s|%s|%s\n' "$hint_stamp" "$hint_kind" "$(num "$(monotime)")" > "$NATIVE_HINT.tmp" &&
+                mv -f "$NATIVE_HINT.tmp" "$NATIVE_HINT"
+        fi
+    fi
 }
 
 is_gms_stopped() {
@@ -385,7 +407,18 @@ socket_fallback_ready() {
     socket_down_now="$(num "$(monotime)")"
     [ "$socket_down_anchor" -gt 0 ] && [ "$socket_down_now" -ge "$socket_down_anchor" ] || return 1
     socket_down_age=$((socket_down_now-socket_down_anchor))
-    [ "$socket_down_age" -ge 60 ] && [ "$socket_down_age" -le 900 ]
+    [ "$socket_down_age" -ge 30 ] && [ "$socket_down_age" -le 900 ]
+}
+
+native_close_fallback_ready() {
+    [ -f "$NATIVE_HINT" ] || return 1
+    IFS='|' read -r native_hint_stamp native_hint_kind native_hint_mono < "$NATIVE_HINT" || return 1
+    [ "$native_hint_kind" = gms_close ] || return 1
+    native_hint_now="$(num "$(monotime)")"
+    native_hint_mono="$(num "$native_hint_mono")"
+    [ "$native_hint_mono" -gt 0 ] && [ "$native_hint_now" -ge "$native_hint_mono" ] || return 1
+    native_hint_age=$((native_hint_now-native_hint_mono))
+    [ "$native_hint_age" -ge 30 ] && [ "$native_hint_age" -le 900 ]
 }
 
 promote_socket_fallback() {
@@ -424,17 +457,38 @@ request_reconnect() {
     last_try_mono="$nowm"; last_try_epoch="$nowe"; attempts=$((attempts+1))
     retry_streak=$((retry_streak+1)); last_try_reason="$reason"; last_result=failed
     save_state || return $?
-    action=com.google.android.intent.action.GCM_RECONNECT
-    reply="$("$AM_BIN" broadcast --user 0 -a "$action" -p "$GMS" 2>&1)"
+    stage=$(((retry_streak - 1) % 4))
+    case "$stage" in
+      0)
+        action=com.google.android.intent.action.GCM_RECONNECT
+        action_label=GCM_RECONNECT
+        reply="$("$AM_BIN" broadcast --user 0 -a "$action" -p "$GMS" 2>&1)"
+        ;;
+      1)
+        action=com.google.android.intent.action.MCS_HEARTBEAT
+        action_label=MCS_HEARTBEAT
+        reply="$("$AM_BIN" broadcast --user 0 -a "$action" -p "$GMS" 2>&1)"
+        ;;
+      2)
+        action=com.google.android.gms.gcm.ACTION_HEARTBEAT_NOW
+        action_label=ACTION_HEARTBEAT_NOW
+        reply="$("$AM_BIN" broadcast --user 0 -a "$action" -p "$GMS" 2>&1)"
+        ;;
+      *)
+        action=com.google.android.gcm.intent.SEND
+        action_label=GCM_SEND
+        reply="$("$AM_BIN" broadcast --user 0 -a "$action" -n "$GMS/.gcm.GcmSenderProxy" 2>&1)"
+        ;;
+    esac
     rc=$?
     if [ "$rc" -eq 0 ] && printf '%s\n' "$reply" | grep -q 'Broadcast completed:' &&
         ! printf '%s\n' "$reply" | grep -qiE 'Permission Denial|SecurityException|not allowed|Error:|result=-[0-9]'; then
         last_result=requested; decision=requested
         completion="$(printf '%s\n' "$reply" | grep 'Broadcast completed:' | tail -n 1)"
-        record_event reconnect_requested "$reason UID=0 ${action##*.} exit=$rc $completion；命令返回不代表投递或恢复（第 $attempts 次）"
+        record_event reconnect_requested "$reason UID=0 $action_label exit=$rc $completion；命令返回不代表投递或恢复（第 $attempts 次）"
     else
         last_result=failed; decision=request_failed
-        record_event reconnect_failed "$reason UID=0 ${action##*.} exit=$rc；请核对 KernelSU Root 和 GMS 版本"
+        record_event reconnect_failed "$reason UID=0 $action_label exit=$rc；请核对 KernelSU Root 和 GMS 版本"
     fi
     save_state
 }
@@ -565,7 +619,7 @@ EOF_SOCKET
                 record_event tcp_absence_started 'UID0 未观察到 GMS MCS TCP；开始连续缺失计时，暂不据单次缺失重连'
             fi
             socket_down_age=$((socket_now-outage_hint_mono))
-            if [ "$socket_down_age" -ge 60 ] && [ "$socket_down_age" -le 900 ]; then
+            if [ "$socket_down_age" -ge 30 ] && [ "$socket_down_age" -le 900 ]; then
                 observed=disconnected; source=gms_socket_fallback
                 new_transport=; new_remote=
                 [ "$previous_down_state" = disconnected ] ||
@@ -573,6 +627,13 @@ EOF_SOCKET
             fi
             ;;
         esac
+        if [ "$observed" = unknown ] && native_close_fallback_ready; then
+            observed=disconnected; source=gms_native_event_fallback; duration=-1
+            new_transport=; new_remote=
+            previous_down_observed="$native_hint_mono"
+            outage_hint_mono="$native_hint_mono"
+            record_event native_close_confirmed "GMS 原生最近事件为 Close，持续 $native_hint_age 秒且当前未观察到 MCS Socket；按断联复核"
+        fi
     else
         # Reject implausible wall-clock-derived durations (e.g. no prior session).
         if [ "$duration" -gt "$nowm" ]; then duration=-1; fi
@@ -663,6 +724,10 @@ confirm_recovery() {
        { [ "$state" = disconnected ] || [ "$state" = connecting ]; }; then
         record_event recovery_confirmed "二次采样仍确认 GMS MCS 尚未建立连接"
         request_reconnect "$1"
+    elif [ "$source" = gms_native_event_fallback ] && [ "$state" = disconnected ] &&
+         [ "$first_source" = gms_native_event_fallback ] && [ "$first_state" = disconnected ]; then
+        record_event recovery_confirmed "GMS 原生 Close 事件持续 $native_hint_age 秒，二次采样仍未观察到连接"
+        request_reconnect "$1"
     elif [ "$source" = gms_socket_fallback ] && [ "$state" = disconnected ] &&
          { { [ "$first_source" = gms ] || [ "$first_source" = gms_socket ]; } &&
            { [ "$first_state" = disconnected ] || [ "$first_state" = connecting ]; } ||
@@ -742,7 +807,7 @@ auto_recovery() {
         fi
         return 0
     fi
-    case "$source" in gms|gms_socket|gms_socket_fallback) :;; *) return 0;; esac
+    case "$source" in gms|gms_socket|gms_socket_fallback|gms_native_event_fallback) :;; *) return 0;; esac
     case "$state" in connecting|disconnected) :;; *) return 0;; esac
     if ! auto_enabled; then decision=disabled; return 0; fi
     nowm="$(num "$(monotime)")"
@@ -837,7 +902,7 @@ case "${1:-status}" in
     reconnect)
         observe || exit $?
         if { { [ "$source" = gms ] || [ "$source" = gms_socket ] || [ "$source" = gms_socket_fallback ]; } && { [ "$state" = connecting ] || [ "$state" = disconnected ]; }; } ||
-           { [ "$state" = unknown ] && socket_fallback_ready "$duration"; }; then
+           { [ "$state" = unknown ] && { socket_fallback_ready "$duration" || native_close_fallback_ready; }; }; then
             confirm_recovery manual || exit $?
         else
             decision=not_disconnected
