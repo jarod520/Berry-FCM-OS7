@@ -1,3 +1,10 @@
+## 2026-11-22 FCM smoke 累计请求计数修正
+
+- 复核完整 `tests/fcm-monitor-smoke.sh` 时发现 OriginOS GMS 状态解析区段前，测试已在 native-poll 场景将 `MCS_AM_LOG` 清零，并明确验证该场景累计请求数为 1；随后 OriginOS 状态解析场景只新增一次重连请求，因此原断言 `requests 5` 与实际累计日志不一致，会在完整 smoke 中提前失败。
+- 同一计数区段后续的 socket fallback 与 unknown-absence 场景也沿用同一累计日志，原 `5/6/7` 断言整体偏大 3。已统一修正为 `2/3/4`，仅调整测试期望，不改变运行时代码与重连策略。
+- 修正提交：`cfd6e9b3b55748ee7631b74e2ff30da3254dedd8`。
+- **验证边界**：通过源码顺序追踪确认计数器清零点与各新增请求点；尚未执行完整 `fcm-monitor-smoke.sh`，不能将本次静态修正记为 smoke 通过。未触发 workflow、编译、打包或发布。
+
 ## 2026-11-22 DNS timeout applet fallback修复
 
 - 发现 `resolve_mtalk()` 只判断 `/system/bin/toybox` 文件存在，就直接调用 `toybox timeout`；如果设备 Toybox 编译时未包含 timeout applet，即使 PATH 中存在可用的 `timeout`，DNS 查询仍会失败并把失败缓存 10 分钟，导致 mtalk DNS :443 辅助证据无法建立。
