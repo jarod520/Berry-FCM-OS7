@@ -17,7 +17,7 @@ MOCK
 cat > "$TMP/bin/pm" <<'MOCK'
 #!/bin/sh
 case "$*" in
-  "list packages -U com.google.android.gms") echo 'package:com.google.android.gms uid:10200';;
+  "list packages -U com.google.android.gms") [ "${MCS_UID_FAIL:-0}" = 1 ] && exit 1; echo 'package:com.google.android.gms uid:10200';;
   "path --user 0 "*) echo 'package:/data/app/base.apk';;
   *) exit 1;;
 esac
