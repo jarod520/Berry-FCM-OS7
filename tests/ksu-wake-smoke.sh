@@ -916,3 +916,43 @@ child_state="$(awk '{print $3}' "/proc/$fix_child/stat" 2>/dev/null || :)"
 test ! -d "$TMP/data/maintenance.lock"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: service shutdown reaps the maintenance owner and its ctl child'
+
+
+# A replacement patrol must not start while the previous monitor owner cannot
+# be identity-verified/cleaned; once the stale owner record is cleared it may start.
+touch "$TMP/module/module.prop"
+echo 0 > "$TMP/data/enabled"
+echo passive > "$TMP/data/wake-mode"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+rm -f "$TMP/data/mcs-monitor.lock.owner"
+sh "$TMP/module/service.sh" &
+service_pid=$!
+n=0
+while [ "$(grep -c 'patrol_supervisor_start' "$TMP/data/guard.log" 2>/dev/null || true)" -lt 1 ] && [ "$n" -lt 80 ]; do
+    /bin/sleep 0.1
+    n=$((n + 1))
+done
+[ "$(grep -c 'patrol_supervisor_start' "$TMP/data/guard.log")" -eq 1 ]
+patrol_pid="$(awk '{print $1}' "$TMP/data/service.lock/patrol")"
+[ "$patrol_pid" -gt 1 ]
+kill -KILL "$patrol_pid"
+printf 'not-a-pid not-a-starttime\n' > "$TMP/data/mcs-monitor.lock.owner"
+n=0
+while ! grep -q 'patrol_restart_blocked reason=monitor_owner_cleanup_unconfirmed' "$TMP/data/guard.log" 2>/dev/null && [ "$n" -lt 80 ]; do
+    /bin/sleep 0.1
+    n=$((n + 1))
+done
+grep -q 'patrol_restart_blocked reason=monitor_owner_cleanup_unconfirmed' "$TMP/data/guard.log"
+[ "$(grep -c 'patrol_supervisor_start' "$TMP/data/guard.log")" -eq 1 ]
+rm -f "$TMP/data/mcs-monitor.lock.owner"
+n=0
+while [ "$(grep -c 'patrol_supervisor_start' "$TMP/data/guard.log" 2>/dev/null || true)" -lt 2 ] && [ "$n" -lt 80 ]; do
+    /bin/sleep 0.1
+    n=$((n + 1))
+done
+[ "$(grep -c 'patrol_supervisor_start' "$TMP/data/guard.log")" -ge 2 ]
+kill -TERM "$service_pid"
+wait "$service_pid" 2>/dev/null || :
+test ! -d "$TMP/data/service.lock"
+echo 'PASS: supervisor blocks replacement patrol until stale monitor owner cleanup is confirmed'
