@@ -61,6 +61,66 @@ stop_stale_patrol() {
     return 0
 }
 
+maintenance_owner_identity() {
+    maintenance_pid=; maintenance_stamp=
+    IFS=' ' read -r maintenance_pid maintenance_stamp < "$MAINTENANCE_LOCK/owner" 2>/dev/null || return 1
+    case "$maintenance_pid:$maintenance_stamp" in *[!0-9:]*|:*|*:) return 1;; esac
+    [ "$maintenance_pid" -gt 1 ] && [ "$maintenance_stamp" -gt 0 ] &&
+        kill -0 "$maintenance_pid" 2>/dev/null || return 1
+    [ "$(proc_start_time "$maintenance_pid")" = "$maintenance_stamp" ] || return 1
+    [ "$(proc_state "$maintenance_pid")" != Z ]
+}
+stop_maintenance_owner() {
+    [ -d "$MAINTENANCE_LOCK" ] || return 0
+    n=0
+    while [ ! -s "$MAINTENANCE_LOCK/owner" ] && [ "$n" -lt 2 ]; do
+        sleep 1; n=$((n + 1))
+    done
+    if [ ! -s "$MAINTENANCE_LOCK/owner" ]; then
+        printf '[%s] maintenance_owner_unpublished; refusing to clear maintenance lock\\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+        return 1
+    fi
+    if ! maintenance_owner_identity; then
+        rm -rf "$MAINTENANCE_LOCK"
+        return 0
+    fi
+    maintenance_stop_pid="$maintenance_pid"
+    maintenance_stop_stamp="$maintenance_stamp"
+    kill -TERM "$maintenance_stop_pid" 2>/dev/null || :
+    n=0
+    while maintenance_owner_identity &&
+          [ "$maintenance_pid" = "$maintenance_stop_pid" ] &&
+          [ "$maintenance_stamp" = "$maintenance_stop_stamp" ] && [ "$n" -lt 4 ]; do
+        sleep 1; n=$((n + 1))
+    done
+    if maintenance_owner_identity &&
+       [ "$maintenance_pid" = "$maintenance_stop_pid" ] &&
+       [ "$maintenance_stamp" = "$maintenance_stop_stamp" ]; then
+        kill -KILL "$maintenance_stop_pid" 2>/dev/null || :
+        n=0
+        while maintenance_owner_identity &&
+              [ "$maintenance_pid" = "$maintenance_stop_pid" ] &&
+              [ "$maintenance_stamp" = "$maintenance_stop_stamp" ] && [ "$n" -lt 3 ]; do
+            sleep 1; n=$((n + 1))
+        done
+    fi
+    if maintenance_owner_identity &&
+       [ "$maintenance_pid" = "$maintenance_stop_pid" ] &&
+       [ "$maintenance_stamp" = "$maintenance_stop_stamp" ]; then
+        printf '[%s] maintenance_owner_stop_unconfirmed pid=%s start=%s\\n' \
+            "$(date '+%F %T')" "$maintenance_stop_pid" "$maintenance_stop_stamp" >> "$DATA/guard.log"
+        return 1
+    fi
+    if [ -d "$MAINTENANCE_LOCK" ] &&
+       [ "$(awk '{print $1}' "$MAINTENANCE_LOCK/owner" 2>/dev/null)" = "$maintenance_stop_pid" ] &&
+       [ "$(awk '{print $2}' "$MAINTENANCE_LOCK/owner" 2>/dev/null)" = "$maintenance_stop_stamp" ]; then
+        rm -rf "$MAINTENANCE_LOCK"
+    fi
+    printf '[%s] maintenance_owner_stopped pid=%s start=%s\\n' \
+        "$(date '+%F %T')" "$maintenance_stop_pid" "$maintenance_stop_stamp" >> "$DATA/guard.log"
+    return 0
+}
+
 if ! mkdir "$LOCK" 2>/dev/null; then
     old="$(cat "$LOCK/pid" 2>/dev/null)"
     stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
@@ -76,6 +136,7 @@ if ! mkdir "$LOCK" 2>/dev/null; then
         exit 0
     fi
     stop_stale_patrol || exit 0
+    stop_maintenance_owner || exit 0
     stale="$DATA/service.lock.stale.$old.$stamp"
     if mv "$LOCK" "$stale" 2>/dev/null; then rm -rf "$stale"; fi
     mkdir "$LOCK" 2>/dev/null || exit 0
@@ -286,6 +347,7 @@ service_cleanup() {
     stop_timer || cleanup_ok=0
     stop_monitor_owner || cleanup_ok=0
     stop_patrol || cleanup_ok=0
+    stop_maintenance_owner || cleanup_ok=0
     if [ "$cleanup_ok" = 1 ]; then
         rm -rf "$LOCK"
     else
