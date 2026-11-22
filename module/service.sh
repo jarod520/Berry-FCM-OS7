@@ -64,7 +64,7 @@ if ! mkdir "$LOCK" 2>/dev/null; then
     fi
     service_identity "$old" "$stamp" && exit 0
     stop_stale_patrol || exit 0
-    stale="$DATA/service.lock.stale.$"
+    stale="$DATA/service.lock.stale.$old.$stamp"
     if mv "$LOCK" "$stale" 2>/dev/null; then rm -rf "$stale"; fi
     mkdir "$LOCK" 2>/dev/null || exit 0
 fi
