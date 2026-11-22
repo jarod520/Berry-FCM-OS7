@@ -98,8 +98,14 @@ else
     before="$(wc -l < "$TEST_DIR/samples")"
     echo "$1" >> "$TEST_DIR/samples"
     if [ "${TEST_HANG_FIRST:-0}" = 1 ] && [ "$before" = 0 ]; then
-        echo "$$" > "$TEST_DIR/hung-pid"
+        echo "$" > "$TEST_DIR/hung-pid"
         exec /bin/sleep 30
+    fi
+    if [ "${TEST_HANG_CHILD:-0}" = 1 ] && [ "$before" = 0 ]; then
+        echo "$" > "$TEST_DIR/hung-pid"
+        /bin/sleep 30 &
+        echo "$!" > "$TEST_DIR/hung-child-pid"
+        wait
     fi
 fi
 MOCK
@@ -176,6 +182,19 @@ test "$(wc -l < "$TMP/samples")" -ge 3
 grep -q "fcm_check_end rc=124" "$TMP/data/guard.log"
 hung="$(cat "$TMP/hung-pid")"
 ! kill -0 "$hung" 2>/dev/null
+test ! -d "$TMP/data/service.lock"
+
+# The timeout must kill descendants in the monitor's process group too.
+touch "$TMP/module/module.prop"
+echo 1 > "$TMP/data/enabled"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+export TEST_HANG_CHILD=1
+timeout 8 sh "$TMP/module/service.sh"
+unset TEST_HANG_CHILD
+child_pid="$(cat "$TMP/hung-child-pid")"
+child_state="$(awk '{print $3}' "/proc/$child_pid/stat" 2>/dev/null || :)"
+[ -z "$child_state" ] || [ "$child_state" = Z ]
 test ! -d "$TMP/data/service.lock"
 
 # A killed patrol is restarted by the independent supervisor.
