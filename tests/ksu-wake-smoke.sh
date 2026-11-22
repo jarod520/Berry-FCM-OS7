@@ -43,7 +43,7 @@ grep -Fq 'BERRY_FCM_ISOLATED_GROUP=1 "$KSU_BUSYBOX" timeout' "$ROOT/module/bin/p
 grep -Fq 'BERRY_FCM_ISOLATED_GROUP=1 timeout' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'BERRY_FCM_ISOLATED_GROUP=1 "$TOYBOX_BIN" setsid "$@" &' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'monitor_group_stop_unconfirmed' "$ROOT/module/service.sh"
-grep -Fq 'monitor_legacy_orphan_group_inferred' "$ROOT/module/service.sh"
+grep -Fq 'monitor_legacy_group_inferred' "$ROOT/module/service.sh"
 grep -Fq 'proc_group_id()' "$ROOT/module/bin/fcm-monitor.sh"
 grep -Fq 'printf "%s %s %s %s\n"' "$ROOT/module/bin/fcm-monitor.sh"
 grep -Fq 'monitor_owner_alive()' "$ROOT/module/service.sh"
