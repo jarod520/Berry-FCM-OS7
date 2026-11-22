@@ -417,7 +417,6 @@ while [ ! -s "$TMP/startup-monitor-child-pid" ] && [ "$n" -lt 60 ]; do
 done
 test -s "$TMP/startup-monitor-child-pid"
 startup_monitor_child="$(cat "$TMP/startup-monitor-child-pid")"
-wait "$startup_monitor_pid" 2>/dev/null || :
 printf '%s %s\n' "$startup_monitor_pid" "$startup_monitor_stamp" > "$TMP/data/mcs-monitor.lock.owner"
 sh "$TMP/module/service.sh" &
 service_pid=$!
