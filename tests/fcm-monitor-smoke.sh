@@ -15,6 +15,10 @@ grep -Fq 'owner_tmp="$LOCK_OWNER.tmp.$lock_owner_pid"' "$MON"
 grep -Fq 'rm -f "$owner_tmp"' "$MON"
 ! grep -Fq 'write_lock_owner || :' "$MON"
 grep -Fq 'case "$lock_result" in "$DATA"/mcs-monitor.lock.result.*)' "$MON"
+grep -Fq '"$decision" "$sample_mono" > "$evidence_tmp"' "$MON"
+grep -Fq 'evidence_sample_mono="$(num "$evidence_sample_mono")"' "$MON"
+grep -Fq 'if [ "$evidence_sample_mono" -ne "$sample_mono" ]; then' "$MON"
+grep -Fq 'mv -f "$tmp" "$STATE" || { rc=$?; rm -f "$tmp"; return "$rc"; }' "$MON"
 TMP="$(mktemp -d)"
 cleanup() {
     if [ -n "${first_monitor_pid:-}" ]; then
