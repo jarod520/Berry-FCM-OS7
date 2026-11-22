@@ -10,6 +10,8 @@ grep -Fq '(run_monitor_command "$command")' "$MON"
 grep -Fq '无法登记 GMS monitor 进程身份，拒绝启动未受监管的检查' "$MON"
 grep -Fq 'monitor_rc=14' "$MON"
 grep -Fq 'if ! write_lock_owner; then' "$MON"
+grep -Fq 'owner_tmp="$LOCK_OWNER.tmp.$lock_owner_pid"' "$MON"
+grep -Fq 'rm -f "$owner_tmp"' "$MON"
 ! grep -Fq 'write_lock_owner || :' "$MON"
 grep -Fq 'case "$lock_result" in "$DATA"/mcs-monitor.lock.result.*)' "$MON"
 TMP="$(mktemp -d)"
@@ -227,6 +229,42 @@ j="$(PATH="$TMP/bin:$TMP/compatible" /bin/sh "$MON" status)"
 assert_json "$j" fcm_state=connected
 [ ! -e "$lockdir" ]
 echo "PASS: incomplete lockdir initialization is recoverable"
+
+# If owner publication fails, neither lock backend may run an untracked monitor.
+cat > "$TMP/bin/mv" <<'MOCK'
+#!/bin/sh
+dest=
+for arg do dest="$arg"; done
+case "$dest" in "$BERRY_FCM_DATA/mcs-monitor.lock.owner") exit 1;; esac
+exec /bin/mv "$@"
+MOCK
+chmod +x "$TMP/bin/mv"
+export BERRY_FCM_DATA="$TMP/owner-fail-flock-data" MCS_DUMPSYS_LOG="$TMP/owner-fail-flock-dumpsys.log"
+mkdir -p "$BERRY_FCM_DATA"
+: > "$MCS_DUMPSYS_LOG"
+if sh "$MON" monitor > "$TMP/owner-fail-flock.out" 2>&1; then
+    echo "monitor unexpectedly ran without a published owner" >&2; exit 1
+fi
+grep -q "无法登记 GMS monitor 进程身份" "$TMP/owner-fail-flock.out"
+test ! -s "$MCS_DUMPSYS_LOG"
+test ! -e "$BERRY_FCM_DATA/mcs-monitor.lock.owner"
+set -- "$BERRY_FCM_DATA"/mcs-monitor.lock.owner.tmp.*
+test ! -e "$1"
+echo "PASS: flock owner publication failure refuses untracked monitor"
+
+export BERRY_FCM_DATA="$TMP/owner-fail-dir-data" MCS_DUMPSYS_LOG="$TMP/owner-fail-dir-dumpsys.log"
+mkdir -p "$BERRY_FCM_DATA"
+: > "$MCS_DUMPSYS_LOG"
+if PATH="$TMP/bin:$TMP/compatible" /bin/sh "$MON" monitor > "$TMP/owner-fail-dir.out" 2>&1; then
+    echo "directory-lock monitor unexpectedly ran without a published owner" >&2; exit 1
+fi
+grep -q "无法登记 GMS monitor 进程身份" "$TMP/owner-fail-dir.out"
+test ! -s "$MCS_DUMPSYS_LOG"
+test ! -e "$BERRY_FCM_DATA/mcs-monitor-test-boot.lockdir"
+test ! -e "$BERRY_FCM_DATA/mcs-monitor.lock.owner"
+set -- "$BERRY_FCM_DATA"/mcs-monitor.lock.owner.tmp.*
+test ! -e "$1"
+echo "PASS: directory-lock owner publication failure releases lock and refuses monitor"
 
 # Background patrol samples sockets every cycle but refreshes native GMS state only once per minute.
 export BERRY_FCM_DATA="$TMP/native-poll-data" MCS_DUMPSYS_LOG="$TMP/native-poll.log" MCS_SS_MODE=connected
