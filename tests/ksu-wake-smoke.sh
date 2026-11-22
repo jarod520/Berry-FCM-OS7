@@ -289,11 +289,11 @@ cat > "$TMP/bin/toybox" <<'MOCK'
 #!/bin/sh
 if [ "$1" = --list ]; then
     if [ "${TEST_NO_TIMEOUT:-0}" = 1 ] && [ "${TEST_NO_SETSID:-0}" = 1 ]; then
-        printf '%s\\n' kill
+        printf '%s\n' kill
     elif [ "${TEST_NO_TIMEOUT:-0}" = 1 ]; then
-        printf '%s\\n' setsid kill
+        printf '%s\n' setsid kill
     else
-        printf '%s\\n' timeout setsid kill
+        printf '%s\n' timeout setsid kill
     fi
     exit 0
 fi
