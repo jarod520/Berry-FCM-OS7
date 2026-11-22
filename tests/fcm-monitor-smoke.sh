@@ -206,6 +206,13 @@ settime 70060
 run monitor
 assert_json "$(run snapshot)" fcm_state=disconnected
 [ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 2 ]
+settime 70070
+run monitor
+assert_json "$(run snapshot)" fcm_state=disconnected
+assert_json "$(run snapshot)" fcm_source=gms
+[ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 2 ]
+grep -q '|socket_native_conflict|' "$BERRY_FCM_DATA/mcs-monitor-events.log"
+requests 0
 settime 70080
 run status
 [ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 3 ]
