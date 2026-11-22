@@ -200,7 +200,12 @@ request_reconnect() {
     fi
     last_try_mono="$nowm"; last_try_epoch="$nowe"; attempts=$((attempts+1))
     retry_streak=$((retry_streak+1)); last_try_reason="$reason"; last_result=failed
-    save_state
+    if ! save_state; then
+        decision=state_save_failed
+        last_result=failed
+        record_event reconnect_aborted "恢复请求前无法持久化退避状态；为避免重复广播，本轮不发送"
+        return 0
+    fi
     # OriginOS 7 real-device evidence: GCM_RECONNECT is NOT exported.
     # UID 2000 can deliver MCS_HEARTBEAT and ACTION_HEARTBEAT_NOW to GMS.
     # Delivery is not proof of reconnection; only observe() can report restored.
@@ -226,7 +231,10 @@ request_reconnect() {
         last_result=failed; decision=request_failed
         record_event reconnect_failed "$reason UID=$sender_uid ${action##*.} exit=$rc：$reply"
     fi
-    save_state
+    if ! save_state; then
+        decision=state_save_failed
+        record_event reconnect_state_commit_failed "广播已提交但恢复结果状态写入失败；保留请求前已提交的退避锚点"
+    fi
 }
 
 observe() {
