@@ -678,6 +678,15 @@ observe() {
     if [ -f "$EVIDENCE" ]; then
         IFS='|' read -r old_source old_duration old_close old_tcp previous_native_reason old_decision old_evidence_sample_mono < "$EVIDENCE" || :
     fi
+    old_evidence_sample_mono="$(num "$old_evidence_sample_mono")"
+    if { [ "$sample_mono" -gt 0 ] || [ "$old_evidence_sample_mono" -gt 0 ]; } &&
+       [ "$old_evidence_sample_mono" -ne "$sample_mono" ]; then
+        # Evidence and state are two atomic files, not one transaction. If the
+        # evidence rename succeeded but state rename failed, never reuse that
+        # uncommitted evidence as the previous observation on the next cycle.
+        old_source=; old_duration=-1; old_close=; old_tcp=unknown
+        previous_native_reason=; old_decision=not_evaluated
+    fi
     decision=not_evaluated
     gap_detected=0
     if [ "$sample_gap_age" -gt 90 ]; then
@@ -1176,8 +1185,15 @@ case "${1:-status}" in
     monitor)
         prior_decision=
         prior_evidence_sample_mono=0
+        prior_state_sample_mono="$(awk -F'|' 'NR==1 {print $28}' "$STATE" 2>/dev/null)"
+        prior_state_sample_mono="$(num "$prior_state_sample_mono")"
         if [ -f "$EVIDENCE" ]; then
             IFS='|' read -r old_source old_duration old_close old_tcp old_reason prior_decision prior_evidence_sample_mono < "$EVIDENCE" || :
+        fi
+        prior_evidence_sample_mono="$(num "$prior_evidence_sample_mono")"
+        if { [ "$prior_state_sample_mono" -gt 0 ] || [ "$prior_evidence_sample_mono" -gt 0 ]; } &&
+           [ "$prior_state_sample_mono" -ne "$prior_evidence_sample_mono" ]; then
+            prior_decision=
         fi
         observe || exit $?
         auto_recovery || exit $?
