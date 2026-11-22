@@ -54,7 +54,9 @@ grep -Fq 'trap maintenance_cleanup EXIT' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'timeout -k "$MONITOR_KILL_GRACE" 45 sh "$MODDIR/bin/ctl.sh" fix' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'maintenance_skipped reason=no_timeout_applet' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'maintenance_child_identity()' "$ROOT/module/service.sh"
+grep -Fq 'maintenance_child_alive()' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'stop_maintenance_child()' "$ROOT/module/service.sh"
+grep -Fq 'maintenance_skip reason=child_identity_invalid' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'stop_maintenance_child || return 1' "$ROOT/module/service.sh"
 grep -Fq 'maintenance_child_stop_unconfirmed' "$ROOT/module/service.sh"
 grep -Fq 'mv -f "$MAINTENANCE_LOCK/child.tmp.$maintenance_owner_pid" "$MAINTENANCE_LOCK/child"' "$ROOT/module/bin/patrol.sh"
@@ -302,6 +304,32 @@ wait "$orphan_pid" 2>/dev/null || :
 grep -q 'stale_patrol_stopped pid=' "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: stale service lock cannot spawn a duplicate patrol'
+
+# A stale maintenance owner must not hide a still-running tracked child.
+cat > "$TMP/orphan-maintenance-child.sh" <<'MOCK'
+#!/bin/sh
+exec /bin/sleep 30
+MOCK
+chmod +x "$TMP/orphan-maintenance-child.sh"
+"$TMP/orphan-maintenance-child.sh" &
+orphan_child_pid=$!
+orphan_child_stamp="$(tr -d '\n' < "/proc/$orphan_child_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
+mkdir -p "$TMP/data/service.lock" "$TMP/data/maintenance.lock"
+echo 999999 > "$TMP/data/service.lock/pid"
+echo 1 > "$TMP/data/service.lock/starttime"
+echo '999998 1' > "$TMP/data/maintenance.lock/owner"
+printf '%s %s\n' "$orphan_child_pid" "$orphan_child_stamp" > "$TMP/data/maintenance.lock/child"
+echo 1 > "$TMP/data/enabled"
+touch "$TMP/module/module.prop"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+timeout 8 sh "$TMP/module/service.sh"
+wait "$orphan_child_pid" 2>/dev/null || :
+! kill -0 "$orphan_child_pid" 2>/dev/null
+grep -q 'service_started pid=' "$TMP/data/guard.log"
+test ! -d "$TMP/data/maintenance.lock"
+test ! -d "$TMP/data/service.lock"
+echo 'PASS: stale maintenance owner cleanup also terminates its tracked child'
 
 # If timeout is missing from Toybox, KernelSU BusyBox and PATH, the watchdog
 # fallback must still execute and bound the monitor rather than skip sampling.
