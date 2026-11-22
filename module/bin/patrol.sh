@@ -151,8 +151,10 @@ run_bounded() {
                 fi
                 sleep "$MONITOR_KILL_GRACE"
                 if [ -n "$group_tool" ]; then
-                    "$group_tool" kill -KILL "-$bounded_pid" 2>/dev/null || :
-                else
+                    if process_group_alive "$bounded_pid"; then
+                        "$group_tool" kill -KILL "-$bounded_pid" 2>/dev/null || :
+                    fi
+                elif kill -0 "$bounded_pid" 2>/dev/null; then
                     kill -KILL "$bounded_pid" 2>/dev/null || :
                 fi
             fi
