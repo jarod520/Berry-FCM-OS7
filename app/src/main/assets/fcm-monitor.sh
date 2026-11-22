@@ -37,12 +37,12 @@ load_state() {
     state=never_seen; conn_key=; conn_since=0; conn_since_mono=0; last_seen=0
     missing_since=0; missing_epoch=0; last_try_mono=0; last_try_epoch=0
     attempts=0; last_result=none; last_restore=0; outages=0
-    transport=; remote=; sample_epoch=0; last_try_reason=none
+    transport=; remote=; sample_epoch=0; sample_mono=0; last_try_reason=none
     reconnects=0; last_down=0
     down_observed=0; retry_streak=0; outage_hint_mono=0
     prev_b=
     if [ -f "$STATE" ]; then
-        IFS='|' read -r prev_b state conn_key conn_since conn_since_mono last_seen missing_since missing_epoch last_try_mono last_try_epoch attempts last_result last_restore outages transport remote sample_epoch last_try_reason reconnects last_down down_observed retry_streak outage_hint_mono < "$STATE" || :
+        IFS='|' read -r prev_b state conn_key conn_since conn_since_mono last_seen missing_since missing_epoch last_try_mono last_try_epoch attempts last_result last_restore outages transport remote sample_epoch last_try_reason reconnects last_down down_observed retry_streak outage_hint_mono sample_mono < "$STATE" || :
     fi
     conn_since="$(num "$conn_since")"; conn_since_mono="$(num "$conn_since_mono")"; last_seen="$(num "$last_seen")"
     missing_since="$(num "$missing_since")"; missing_epoch="$(num "$missing_epoch")"
@@ -51,13 +51,13 @@ load_state() {
     outages="$(num "$outages")"; sample_epoch="$(num "$sample_epoch")"
     reconnects="$(num "$reconnects")"; last_down="$(num "$last_down")"
     down_observed="$(num "${down_observed:-0}")"; retry_streak="$(num "${retry_streak:-0}")"
-    outage_hint_mono="$(num "${outage_hint_mono:-0}")"
+    outage_hint_mono="$(num "${outage_hint_mono:-0}")"; sample_mono="$(num "${sample_mono:-0}")"
     case "$state" in connected|connecting|disconnected|unknown|never_seen) : ;; *) state=unknown;; esac
     case "$last_result" in none|requested|failed|restored) : ;; *) last_result=none;; esac
     case "$last_try_reason" in none|auto|manual|rescue) : ;; *) last_try_reason=none;; esac
     if [ -n "$prev_b" ] && [ "$prev_b" != "$b" ]; then
         state=never_seen; conn_key=; conn_since=0; conn_since_mono=0; missing_since=0; missing_epoch=0
-        last_try_mono=0; transport=; remote=; sample_epoch=0; down_observed=0; retry_streak=0; outage_hint_mono=0
+        last_try_mono=0; transport=; remote=; sample_epoch=0; sample_mono=0; down_observed=0; retry_streak=0; outage_hint_mono=0
         : > "$LEARNED_IPS"
         record_event reboot '设备重启：清除上一启动周期的连接计时，保留历史事件'
     fi
@@ -65,10 +65,10 @@ load_state() {
 
 save_state() {
     tmp="$STATE.$$"
-    if ! printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+    if ! printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
       "$b" "$state" "$conn_key" "$conn_since" "$conn_since_mono" "$last_seen" "$missing_since" "$missing_epoch" \
       "$last_try_mono" "$last_try_epoch" "$attempts" "$last_result" "$last_restore" "$outages" \
-      "$transport" "$remote" "$sample_epoch" "$last_try_reason" "$reconnects" "$last_down" "$down_observed" "$retry_streak" "$outage_hint_mono" > "$tmp"; then
+      "$transport" "$remote" "$sample_epoch" "$last_try_reason" "$reconnects" "$last_down" "$down_observed" "$retry_streak" "$outage_hint_mono" "$sample_mono" > "$tmp"; then
         rm -f "$tmp"
         return 1
     fi
@@ -258,11 +258,20 @@ observe() {
     previous_down_state="$state"; previous_missing_epoch="$missing_epoch"
     previous_down_observed="$(num "${outage_hint_mono:-0}")"
     [ "$previous_down_observed" -gt 0 ] || previous_down_observed="$(num "${down_observed:-0}")"
-    if [ "$previous_down_observed" -gt "$nowm" ] ||
-       { [ "$sample_epoch" -gt 0 ] && [ "$nowe" -gt "$sample_epoch" ] && [ $((nowe-sample_epoch)) -gt 90 ]; }; then
+    sample_gap=0; sample_gap_age=0
+    if [ "$sample_mono" -gt 0 ]; then
+        if [ "$nowm" -lt "$sample_mono" ]; then
+            sample_gap=1
+        elif [ $((nowm-sample_mono)) -gt 90 ]; then
+            sample_gap=1; sample_gap_age=$((nowm-sample_mono))
+        fi
+    elif [ "$sample_epoch" -gt 0 ] && [ "$nowe" -gt "$sample_epoch" ] && [ $((nowe-sample_epoch)) -gt 90 ]; then
+        sample_gap=1; sample_gap_age=$((nowe-sample_epoch))
+    fi
+    if [ "$previous_down_observed" -gt "$nowm" ] || [ "$sample_gap" -eq 1 ]; then
         previous_down_observed=0
-        if [ "$sample_epoch" -gt 0 ] && [ "$nowe" -gt "$sample_epoch" ] && [ $((nowe-sample_epoch)) -gt 90 ]; then
-            record_event sample_gap "距离上次有效内核 Socket 采样 $((nowe-sample_epoch)) 秒；重置连续性计时并重新采样"
+        if [ "$sample_gap" -eq 1 ]; then
+            record_event sample_gap "距离上次有效内核 Socket 采样约 $sample_gap_age 秒；重置连续性计时并重新采样"
             state=unknown; missing_since=0; missing_epoch=0; conn_since=0; down_observed=0
         fi
     fi
@@ -337,8 +346,8 @@ EOF_SOCKET
         current_key="$socket_remote"
         if [ "$state" != connected ] || [ "$conn_key" != "$current_key" ] ||
            [ "$conn_since_mono" -le 0 ] || [ "$nowm" -lt "$conn_since_mono" ] ||
-           [ "$sample_epoch" -le 0 ] || [ "$nowe" -lt "$sample_epoch" ] ||
-           [ $((nowe-sample_epoch)) -gt 45 ]; then conn_since_mono="$nowm"; fi
+           [ "$sample_mono" -le 0 ] || [ "$nowm" -lt "$sample_mono" ] ||
+           [ $((nowm-sample_mono)) -gt 45 ]; then conn_since_mono="$nowm"; fi
         conn_key="$current_key"; state=connected; last_seen="$nowe"; missing_since=0; missing_epoch=0
         down_observed=0; outage_hint_mono=0; last_try_mono=0; retry_streak=0; conn_since=0
         ;;
@@ -358,7 +367,7 @@ EOF_SOCKET
         new_transport=; new_remote=
         ;;
     esac
-    transport="$new_transport"; remote="$new_remote"; sample_epoch="$nowe"
+    transport="$new_transport"; remote="$new_remote"; sample_epoch="$nowe"; sample_mono="$nowm"
     save_state || return $?
     write_evidence || return $?
 }
@@ -405,8 +414,12 @@ auto_recovery() {
 }
 status_json() {
     load_state
-    nowe="$(num "$(now_epoch)")"; age=-1
-    [ "$sample_epoch" -gt 0 ] && [ "$nowe" -ge "$sample_epoch" ] && age=$((nowe-sample_epoch))
+    nowe="$(num "$(now_epoch)")"; nowm="$(num "$(monotime)")"; age=-1
+    if [ "$sample_mono" -gt 0 ] && [ "$nowm" -ge "$sample_mono" ]; then
+        age=$((nowm-sample_mono))
+    elif [ "$sample_mono" -le 0 ] && [ "$sample_epoch" -gt 0 ] && [ "$nowe" -ge "$sample_epoch" ]; then
+        age=$((nowe-sample_epoch))
+    fi
     source=unavailable; duration=-1; close_code=; tcp_hint=none; native_reason=not_used; decision=not_evaluated
     if [ -f "$EVIDENCE" ]; then IFS='|' read -r source duration close_code tcp_hint native_reason decision < "$EVIDENCE" || :; fi
     case "$source" in
