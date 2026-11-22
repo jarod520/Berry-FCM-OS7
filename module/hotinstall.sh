@@ -3,7 +3,7 @@ DIR="$(cd "${0%/*}" && pwd)" || exit 1
 LOCK=/data/adb/berry_fcm_ksu/service.lock
 old="$(cat "$LOCK/pid" 2>/dev/null)"
 old_stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
-case "$old_stamp" in ""|*[!0-9]*) old_stamp=;; esac
+case "$old_stamp" in ""|0|*[!0-9]*) old_stamp=;; esac
 case "$old" in ''|*[!0-9]*) old=0 ;; esac
 proc_start_time() {
     [ -r "/proc/$1/stat" ] || return 1
