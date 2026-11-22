@@ -242,14 +242,16 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     printf '[%s] maintenance_start pid=%s uptime=%s operation=guard_fix\n' \
                         "$(date '+%F %T')" "$service_pid" "$now" >> "$DATA/guard.log"
                     (
+                        HEARTBEAT_MODE=auto
+                        export HEARTBEAT_MODE
                         if [ -x "$TOYBOX_BIN" ] &&
                            "$TOYBOX_BIN" --list 2>/dev/null | grep -qx timeout; then
-                            exec "$TOYBOX_BIN" timeout -k "$MONITOR_KILL_GRACE" 45 env HEARTBEAT_MODE=auto sh "$MODDIR/bin/ctl.sh" fix
+                            exec "$TOYBOX_BIN" timeout -k "$MONITOR_KILL_GRACE" 45 sh "$MODDIR/bin/ctl.sh" fix
                         elif [ -x "$KSU_BUSYBOX" ] &&
                              "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx timeout; then
-                            exec "$KSU_BUSYBOX" timeout -k "$MONITOR_KILL_GRACE" 45 env HEARTBEAT_MODE=auto sh "$MODDIR/bin/ctl.sh" fix
+                            exec "$KSU_BUSYBOX" timeout -k "$MONITOR_KILL_GRACE" 45 sh "$MODDIR/bin/ctl.sh" fix
                         elif command -v timeout >/dev/null 2>&1; then
-                            exec timeout -k "$MONITOR_KILL_GRACE" 45 env HEARTBEAT_MODE=auto sh "$MODDIR/bin/ctl.sh" fix
+                            exec timeout -k "$MONITOR_KILL_GRACE" 45 sh "$MODDIR/bin/ctl.sh" fix
                         fi
                         echo 'maintenance_skipped reason=no_timeout_applet'
                         exit 125
