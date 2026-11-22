@@ -96,9 +96,15 @@ grep -Fq 'service_cleanup_incomplete; preserving lock' "$ROOT/module/service.sh"
 service_stop_patrol_line="$(grep -n 'stop_patrol || cleanup_ok=0' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
 service_stop_monitor_line="$(grep -n 'stop_monitor_owner || cleanup_ok=0' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
 [ "$service_stop_patrol_line" -lt "$service_stop_monitor_line" ]
-watchdog_stop_patrol_line="$(grep -n '^            stop_patrol || :' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
-watchdog_stop_monitor_line="$(grep -nF '            if [ "$sample_stale" = 1 ]; then stop_monitor_owner || :; fi' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
+watchdog_stop_patrol_line="$(grep -nF '            stop_patrol || {' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
+watchdog_stop_monitor_line="$(grep -nF '                stop_monitor_owner || {' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
+[ -n "$watchdog_stop_patrol_line" ] && [ -n "$watchdog_stop_monitor_line" ]
 [ "$watchdog_stop_patrol_line" -lt "$watchdog_stop_monitor_line" ]
+grep -Fq 'watchdog_cleanup_ok=1' "$ROOT/module/service.sh"
+grep -Fq 'watchdog_cleanup_reason=patrol_stop_unconfirmed' "$ROOT/module/service.sh"
+grep -Fq 'watchdog_cleanup_reason=monitor_owner_stop_unconfirmed' "$ROOT/module/service.sh"
+grep -Fq 'patrol_watchdog_cleanup_blocked reason=%s; preserving stale heartbeat for retry' "$ROOT/module/service.sh"
+! grep -Fq '            stop_patrol || :' "$ROOT/module/service.sh"
 grep -Fq 'maintenance_owner_alive()' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'proc_start_time "$maintenance_pid"' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'maintenance_stop_child()' "$ROOT/module/bin/patrol.sh"
