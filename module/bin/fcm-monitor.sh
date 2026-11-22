@@ -189,6 +189,45 @@ gms_uid() {
     printf '%s\n' "$uid"
 }
 
+# Keep only recently observed GMS MCS peer addresses. A learned address
+# is weak evidence for a GMS-owned :443 socket, never a replacement for the
+# native GMS state or an exact :5228-5230 socket.
+refresh_learned_ips() {
+    learned_now="$(num "$(now_epoch)")"
+    learned_tmp="$LEARNED_IPS.tmp"
+    {
+        [ ! -f "$LEARNED_IPS" ] || cat "$LEARNED_IPS"
+        printf '%s\n' "$1" | awk -v u="$2" -v now="$learned_now" '
+          ($1=="ESTAB" || $1=="ESTABLISHED") {
+            if (!match($0,/uid:[0-9]+/)) next
+            owner=substr($0,RSTART+4,RLENGTH-4)+0; if(owner!=u+0) next
+            peer=$5; port=peer; sub(/^.*:/,"",port)
+            if(port==5228 || port==5229 || port==5230){
+              ip=peer; sub(/:[0-9]+$/, "", ip); gsub(/^\[|\]$/, "", ip)
+              sub(/^::ffff:/, "", ip); print tolower(ip) "|" now
+            }
+          }'
+    } | awk -F'|' -v now="$learned_now" -v ttl=300 '
+      function valid_ip(ip, a,n,i) {
+        if(length(ip)<3 || length(ip)>45 || ip !~ /^[0-9a-f:.]+$/) return 0
+        if(index(ip,":")) return 1
+        if(index(ip,".")) {
+          n=split(ip,a,".")
+          if(n!=4) return 0
+          for(i=1;i<=4;i++) if(a[i]!~/^[0-9]+$/ || a[i]+0>255) return 0
+          return 1
+        }
+        return 0
+      }
+      NF==2 && $2~/^[0-9]+$/ {
+        ip=tolower($1); stamp=$2+0
+        if(!valid_ip(ip) || stamp>now || now-stamp>ttl) next
+        if(!(ip in newest) || stamp>newest[ip]) newest[ip]=stamp
+      }
+      END {for(ip in newest) print ip "|" newest[ip]}
+    ' > "$learned_tmp" && mv -f "$learned_tmp" "$LEARNED_IPS"
+}
+
 scan_sockets() {
     uid="$(gms_uid 2>/dev/null)" || { printf 'unknown||||gms_uid_unavailable\n'; return; }
     resolve_mtalk >/dev/null 2>&1 || :
@@ -225,16 +264,11 @@ scan_sockets() {
         return
     fi
 
-    # Learn peer IPs observed on the dedicated MCS ports during this boot.
-    printf '%s\n' "$raw" | awk -v u="$uid" '
-      ($1=="ESTAB" || $1=="ESTABLISHED") {
-        if (!match($0,/uid:[0-9]+/)) next
-        owner=substr($0,RSTART+4,RLENGTH-4)+0; if(owner!=u+0) next
-        peer=$5; port=peer; sub(/^.*:/,"",port)
-        if(port==5228 || port==5229 || port==5230){ip=peer;sub(/:[0-9]+$/,"",ip);gsub(/^\[|\]$/,"",ip);sub(/^::ffff:/,"",ip);print tolower(ip)}
-      }' >> "$LEARNED_IPS"
-    [ -s "$LEARNED_IPS" ] && sort -u "$LEARNED_IPS" > "$LEARNED_IPS.tmp" && mv -f "$LEARNED_IPS.tmp" "$LEARNED_IPS"
-    ips="$(cat "$DNS_IPS" "$LEARNED_IPS" 2>/dev/null | awk 'NF && !seen[$0]++ {printf "%s%s",sep,$0;sep="|"}')"
+    # Refresh short-lived learned IPs from exact GMS UID-owned MCS sockets.
+    refresh_learned_ips "$raw" "$uid"
+    learned_ips="$(awk -F'|' 'NF==2 && $2~/^[0-9]+$/ {print $1}' "$LEARNED_IPS" 2>/dev/null)"
+    ips="$(cat "$DNS_IPS" 2>/dev/null; printf '%s\n' "$learned_ips")"
+    ips="$(printf '%s\n' "$ips" | awk 'NF && !seen[$0]++ {printf "%s%s",sep,$0;sep="|"}')"
     ip_count="$(printf '%s' "$ips" | awk -F'|' '{print NF}')"
     [ -n "$ips" ] || ip_count=0
     printf '%s\n' "$raw" | awk -v u="$uid" -v ips="|$ips|" -v ip_count="$ip_count" '
