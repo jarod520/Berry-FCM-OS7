@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# BerryFCM KernelSU (UID 0): GMS UID-owned MCS TCP sockets are the primary live signal.
+# BerryFCM KernelSU (UID 0): native GMS MCS state is primary; UID-owned TCP is fallback evidence.
 # Only observes GMS-owned TCP sockets and requests targeted recovery broadcasts; it never
 # changes DNS, VPN, proxy, routing, or force-stops Google Play services.
 set -u
@@ -14,6 +14,7 @@ DNS_IPS="$DATA/mcs-mtalk-dns-ips.txt"
 LEARNED_IPS="$DATA/mcs-mtalk-learned-ips.txt"
 DNS_TIME="$DATA/mcs-mtalk-dns-time"
 NATIVE_HINT="$DATA/mcs-native-hint"
+NATIVE_RETRY_TIME="$DATA/mcs-native-retry-time"
 LOCK_OWNER="$DATA/mcs-monitor.lock.owner"
 lock_owner_stamp=
 SS_BIN="${BERRY_SS_BIN:-ss}"
@@ -612,7 +613,15 @@ EOF_RESULT
     # A successful service command can return only ActivityManager wrapper lines.
     # Retry once with the same privileges before waiting for the next patrol.
     retry_rc=none
-    if [ "$native_reason" = none ] && [ "$parse_detail" = no_current_state ]; then
+    retry_last="$(num "$(cat "$NATIVE_RETRY_TIME" 2>/dev/null)")"
+    retry_due=0
+    if [ "$retry_last" -le 0 ] || [ "$nowm" -lt "$retry_last" ] ||
+       [ $((nowm-retry_last)) -ge 60 ]; then
+        retry_due=1
+    fi
+    if [ "$native_reason" = none ] && [ "$parse_detail" = no_current_state ] && [ "$retry_due" = 1 ]; then
+        printf '%s\n' "$nowm" > "$NATIVE_RETRY_TIME.tmp" &&
+            mv -f "$NATIVE_RETRY_TIME.tmp" "$NATIVE_RETRY_TIME"
         [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 1
         retry_dump="$("$DUMPSYS_BIN" -t 2 activity service "$GMS/.gcm.GcmService" 2>&1)"
         retry_rc=$?
