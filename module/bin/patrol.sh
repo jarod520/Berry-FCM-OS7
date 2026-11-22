@@ -215,7 +215,19 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     case "$fix_started_epoch" in ''|*[!0-9]*) fix_started_epoch=0;; esac
                     printf '[%s] maintenance_start pid=%s uptime=%s operation=guard_fix\n' \
                         "$(date '+%F %T')" "$service_pid" "$now" >> "$DATA/guard.log"
-                    HEARTBEAT_MODE=auto sh "$MODDIR/bin/ctl.sh" fix >> "$DATA/guard.log" 2>&1 &
+                    (
+                        if [ -x "$TOYBOX_BIN" ] &&
+                           "$TOYBOX_BIN" --list 2>/dev/null | grep -qx timeout; then
+                            exec "$TOYBOX_BIN" timeout -k "$MONITOR_KILL_GRACE" 45 env HEARTBEAT_MODE=auto sh "$MODDIR/bin/ctl.sh" fix
+                        elif [ -x "$KSU_BUSYBOX" ] &&
+                             "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx timeout; then
+                            exec "$KSU_BUSYBOX" timeout -k "$MONITOR_KILL_GRACE" 45 env HEARTBEAT_MODE=auto sh "$MODDIR/bin/ctl.sh" fix
+                        elif command -v timeout >/dev/null 2>&1; then
+                            exec timeout -k "$MONITOR_KILL_GRACE" 45 env HEARTBEAT_MODE=auto sh "$MODDIR/bin/ctl.sh" fix
+                        fi
+                        echo 'maintenance_skipped reason=no_timeout_applet'
+                        exit 125
+                    ) >> "$DATA/guard.log" 2>&1 &
                     maintenance_child_pid=$!
                     wait "$maintenance_child_pid"
                     fix_rc=$?
