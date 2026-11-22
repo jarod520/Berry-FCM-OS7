@@ -11,6 +11,7 @@ KernelSU Root（UID 0）模块。模块 ID 仍为 `berry_fcm_ksu`，升级保留
 - 按重试轮次依次尝试 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、`GTALK_HEARTBEAT`，再循环；每轮只发一种动作，下一轮必须由后续采样仍确认断联才会触发。自动断联请求间隔为 30 / 60 / 120 秒，之后封顶 180 秒；手动请求至少间隔 60 秒。原生或 Socket 状态恢复连接后清零连续重试计数。
 - 广播完成只记为已请求。WebUI 用后续 GMS 原生采样确认连接，实际推送送达需单测。
 - GMS UID Socket 缺失期间若 mtalk DNS 解析失败，失败结果缓存 10 分钟，避免每轮巡检重复执行最长 6 秒的 DNS 等待。
+- 每轮巡检有 25 秒上限，优先使用 Toybox / KernelSU BusyBox / 系统 `timeout`。若系统没有 `timeout` applet，则使用 watchdog；可用 `setsid` 与 `kill` applet 时按进程组清理 monitor 及其子进程。超时记为 `rc=124`，不刷新成功样本心跳，下一轮仍继续巡检。
 
 热安装时，如果 Root 服务继承了管理器的应用冻结组，服务仅迁移自身到 cgroup v2 根组，子进程继承该组。迁移失败会在 WebUI 和后台日志中显示。
 
