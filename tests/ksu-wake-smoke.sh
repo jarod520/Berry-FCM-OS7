@@ -190,6 +190,7 @@ if [ "$1" = snapshot ]; then
 else
     before="$(wc -l < "$TEST_DIR/samples")"
     echo "$1" >> "$TEST_DIR/samples"
+    if [ -n "${TEST_MONITOR_RC:-}" ]; then exit "$TEST_MONITOR_RC"; fi
     if [ "${TEST_HANG_FIRST:-0}" = 1 ] && [ "$before" = 0 ]; then
         /bin/sleep 30 &
         echo "$!" > "$TEST_DIR/hung-pid"
@@ -333,6 +334,21 @@ grep -q 'fcm_check_end rc=0 .*state=unknown' "$TMP/data/guard.log"
 ! grep -q 'patrol_watchdog_stale reason=monitor_sample' "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: unknown GMS state does not stop successful patrol sampling'
+
+# A completed monitor attempt with a nonzero result is not a stalled patrol.
+touch "$TMP/module/module.prop"
+echo 1 > "$TMP/data/enabled"
+echo passive > "$TMP/data/wake-mode"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+export TEST_MONITOR_RC=13
+timeout 8 sh "$TMP/module/service.sh"
+unset TEST_MONITOR_RC
+test -s "$TMP/data/patrol.sample.heartbeat"
+grep -q "fcm_check_end rc=13" "$TMP/data/guard.log"
+! grep -q "patrol_watchdog_stale reason=monitor_sample" "$TMP/data/guard.log"
+test ! -d "$TMP/data/service.lock"
+echo "PASS: failed but completed monitor attempts refresh patrol sampling heartbeat"
 
 # A dead service lock must not be reclaimed while its recorded patrol worker
 # is still alive; terminate that verified orphan before starting a new service.
