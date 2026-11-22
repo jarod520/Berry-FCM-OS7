@@ -197,10 +197,10 @@ echo 'PASS: exact GMS MCS TCP evidence resolves wrapper-only state'
 
 # A recent explicit GMS down sample plus root-visible MCS socket absence must
 # still recover when subsequent dumps contain only ActivityManager wrappers.
+export MCS_SS_MODE=absent
 settime 11800
 printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService' 'Server: Not connected' > "$MCS_FIXTURE"
 run monitor; requests 5
-export MCS_SS_MODE=absent
 settime 11820
 printf '%s\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
 j="$(run monitor)"; requests 5
