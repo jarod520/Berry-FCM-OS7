@@ -30,4 +30,7 @@ if is_guardian; then
     fi
     is_guardian && echo '警告：BerryFCM 守护进程在卸载时仍未退出' >&2
 fi
+if [ -d "$LOCK" ]; then
+    echo '警告：卸载时 service.lock 仍存在，后台 worker 清理未确认；请检查 guard.log 与 owner 文件' >&2
+fi
 exit 0
