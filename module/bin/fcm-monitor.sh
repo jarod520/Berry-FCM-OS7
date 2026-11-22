@@ -702,11 +702,24 @@ EOF_SOCKET
         socket_now="$(num "$(monotime)")"
         case "$tcp_hint" in
           established)
-            observed=connected; source=gms_socket
-            new_transport="$socket_transport"; new_remote="$socket_remote"
-            previous_down_observed=0; outage_hint_mono=0
-            [ "$previous_down_state" = connected ] ||
-                record_event socket_connected '本轮原生状态字段未提供；UID0 已观察到 GMS MCS TCP 建立'
+            if [ "$native_poll_due" = 0 ] && [ "$old_source" = gms ] &&
+               { [ "$previous_down_state" = connecting ] || [ "$previous_down_state" = disconnected ]; }; then
+                # A fresh native down state outranks a positive but potentially
+                # stale TCP socket until the next native poll confirms recovery.
+                observed="$previous_down_state"; source=gms
+                duration="${old_duration:--1}"; close_code="$old_close"
+                new_transport="$transport"; new_remote="$remote"
+                native_reason="$previous_native_reason"
+                parse_detail=retained_native_down_state
+                [ "$old_tcp" = established ] ||
+                    record_event socket_native_conflict 'Socket 仍显示 ESTABLISHED，但最近一次 GMS 原生状态为断开；等待下一次原生采样确认恢复'
+            else
+                observed=connected; source=gms_socket
+                new_transport="$socket_transport"; new_remote="$socket_remote"
+                previous_down_observed=0; outage_hint_mono=0
+                [ "$previous_down_state" = connected ] ||
+                    record_event socket_connected '本轮原生状态字段未提供；UID0 已观察到 GMS MCS TCP 建立'
+            fi
             ;;
           connecting)
             observed=connecting; source=gms_socket
