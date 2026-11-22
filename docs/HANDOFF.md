@@ -3,7 +3,7 @@
 > **最高优先级架构约束（2026-11-23 起生效，覆盖下方所有旧记录）**
 >
 > - KernelSU FCM 连接检测与自动/手动重连决策，**不得使用 `dumpsys` 作为状态来源或必要前提**。读取失败、超时、解析失败、无输出都不得改变连接状态、阻断巡检或阻止下一种恢复动作。
-> - 当前 KSU 监控唯一决策来源是 GMS UID 归属的内核 TCP Socket 证据：优先使用可提供 UID/状态/端点的 `ss -tnpe`；不可用时回退读取 `/proc/net/tcp` 与 `/proc/net/tcp6`。无法取得 GMS UID 或无法读取 Socket 表时，结果是“本轮证据不可用”，不是断联，也不是连接正常。
+> - 当前 KSU 监控唯一决策来源是 GMS UID 归属的内核 TCP Socket 证据：优先使用 `ss -tinpe` 获取 UID/状态/端点及可用的 TCP_INFO；不支持时降级 `ss -tnpe`，再不可用时回退读取 `/proc/net/tcp` 与 `/proc/net/tcp6`。无法取得 GMS UID 或无法读取 Socket 表时，结果是“本轮证据不可用”，不是断联，也不是连接正常。
 > - 明确区分 TCP ESTABLISHED（只证明传输层连接）、SYN-SENT（连接建立中）、TCP_INFO 中 unacked>0 且连续 retransmits>=3 的疑似卡死 Socket、已成功读取 UID/Socket 表且 MCS Socket 连续缺失（达到阈值后再复采确认）、以及检测源不可用。TCP_INFO 只在 `ss -i`/内核提供相关字段时启用；字段不可读不能伪造健康或断联。不得将 TCP 建立冒充 FCM 心跳 ACK 或消息送达。
 > - 当前断联判定要求连续缺失至少 45 秒；连接中持续 60 秒后进入二次确认。采样空档超过 90 秒重置连续性锚点。未知/不可用样本不阻断下一轮巡检，也不伪造确定状态。
 > - 自动恢复按轮次尝试四个既有 GMS 定向动作：`GCM_RECONNECT` → `MCS_HEARTBEAT` → `ACTION_HEARTBEAT_NOW` → `GTALK_HEARTBEAT`。每次命令后继续采样；仍断联时按 30/45/60/90 秒递增退避进入下一动作，后续循环保持 90 秒。命令返回成功只表示广播请求已提交，不代表 GMS 已恢复；必须由后续内核 Socket 样本验证。四个动作均无效时继续按退避周期轮换，不停止巡检。
