@@ -946,3 +946,13 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - `tests/apk-native-fcm-smoke.sh` 已替换旧 dump fixture；`tests/apk-no-dump-smoke.sh` 检查 APK monitor、KSU monitor/patrol/service 和两套 repair 路径的隔离。三个预构建 workflow（APK build、prebuild verify、KSU build）已加入该 isolation smoke；只修改 workflow 文件，**没有触发 workflow**。
 - 全仓 Java 源码复核：发现的唯一 APK 运行期 dump 业务点是 `GuardOps.java`；现仅非 repair 的只读守护状态展示保留 dump。KSU `ctl.sh` 仅 `check` 的 stopped/suspended/hidden/receiver 字段保留只读诊断；`fix` 不再调用 stopped dump。所有 FCM monitor、patrol、service 主决策路径不调用 dump。
 - **验证边界仍不变**：本轮没有运行任何 smoke、Java 编译、Gradle、Shell syntax gate 或设备测试；没有触发 Actions、构建、打包、合并或发布。源码与测试夹具已回读，但不能据此声称测试通过。
+
+### 2026-11-23 APK observation persistence and manual-result source correction
+
+- **复审发现 1：APK observe() 只更新 shell 进程内变量并写 evidence，没有调用 save_state()。** status 随后执行 status_json()，而 status_json() 会重新 load_state()；因此新样本的状态、断联计时、sample epoch 等字段会被旧 state 覆盖。monitor 的下一次独立进程也无法继承前一次采样。该缺陷会直接破坏连续 absence 计时与 APK 自动恢复，是本轮必须先修复的实际逻辑错误。
+- **修正**：observe() 现在在完成本轮状态转换后先执行 save_state || return $?，再执行 write_evidence || return $?。任一提交失败都会将采样标记为失败，不继续按未提交的状态做恢复决策。
+- **回归约束**：tests/apk-no-dump-smoke.sh 增加断言，要求 observe 状态持久化与 evidence 写入错误传播同时存在。tests/apk-native-fcm-smoke.sh 已覆盖跨独立进程的连续 Root absence、断联阈值、第二次确认及恢复请求路径；但该脚本仍未在本环境执行，不能声称通过。
+- **复审发现 2：APK 手动恢复后续展示仍检查旧 source gms。** 当前状态源已迁移为 gms_socket，所以“随后检查已连接”的 UI 结果分支永远无法成立。
+- **修正**：后续结果只接受 gms_socket；tests/apk-module-smoke.sh 增加负向断言，禁止再次使用旧 dump-derived gms source。
+- **测试门禁补强**：tests/apk-module-smoke.sh 现在会直接 javac 并运行 GuardOpsSmoke.java，覆盖 GuardOps repair 不调用 dump、安装路径确认、unstop 提交标记和分批目标完整性，而不再只是保留一份未被工作流调用的测试类。
+- **验证边界**：以上修改已通过 GitHub 源码回读确认；没有在当前运行环境执行 shell、javac、Gradle 或完整 smoke。没有触发 GitHub Actions、编译、构建、打包、合并或发布。
