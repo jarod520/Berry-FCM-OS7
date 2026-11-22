@@ -712,3 +712,8 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **修正**：两种锁路径都在 owner 身份登记失败时拒绝执行 monitor，返回专用错误码 14；目录锁路径先安装 EXIT 清理 trap，确保失败时释放目录锁。flock 路径仍写入锁结果文件并向调用方返回 14，flock 自身释放 FD 锁。
 - **回归约束**：FCM smoke 增加静态断言，要求存在登记失败拒绝分支、错误码 14，且不再存在忽略登记失败的 `write_lock_owner || :`。
 - **验证边界**：待做本次修改的局部 Shell 语法和源码断言复核；完整 FCM/KSU smoke、全仓语法 gate、Android/KernelSU 实机尚未执行。未触发构建、Actions 或 Release。
+
+### 2026-11-22 monitor owner 发布失败的双锁路径回归
+- `write_lock_owner()` 的原子发布失败分支现在会删除未发布的临时 owner 文件，再返回失败，避免留下残余临时文件。
+- FCM smoke 新增实际失败注入：用仅拒绝 `mcs-monitor.lock.owner` 目标的 `mv` mock，分别覆盖 flock 与无 flock 目录锁路径。两条路径都必须返回失败、不能执行 dumpsys/monitor 采样、不能留下 owner 文件或临时文件；目录锁路径还必须由 EXIT trap 删除 lockdir。
+- **验证边界**：待做局部 shell 语法、测试静态断言与行为模拟；完整 FCM/KSU smoke、全仓语法 gate 和设备实测仍未执行。未触发构建或 Actions。
