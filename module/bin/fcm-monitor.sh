@@ -716,6 +716,11 @@ observe() {
     IFS='|' read -r observed new_transport new_remote source duration close_code parse_detail <<EOF_RESULT
 $result
 EOF_RESULT
+    # Retain a confirmed package-stopped condition between native polls; an
+    # absent socket is expected in that state and must not become a recovery trigger.
+    if [ "$native_poll_due" = 0 ] && [ "$previous_native_reason" = gms_stopped ]; then
+        native_reason=gms_stopped
+    fi
     # A successful service command can return only ActivityManager wrapper lines.
     # Retry at most once per 60 seconds; repeated wrapper-only dumps must not double
     # the native dump cost on every 20-second patrol cycle.
