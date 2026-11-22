@@ -113,14 +113,40 @@ run_bounded() {
     fi
 }
 wait_pid=
+maintenance_worker_pid=
+maintenance_worker_stamp=
 wake_count=0
 wake_seen=0
 mode_changed=0
 last_fix=0
 stop_wait() { [ -z "$wait_pid" ] || kill "$wait_pid" 2>/dev/null || :; }
+stop_maintenance_worker() {
+    [ -n "$maintenance_worker_pid" ] || return 0
+    if kill -0 "$maintenance_worker_pid" 2>/dev/null &&
+       [ "$(proc_start_time "$maintenance_worker_pid")" = "$maintenance_worker_stamp" ]; then
+        kill -TERM "$maintenance_worker_pid" 2>/dev/null || :
+        n=0
+        while kill -0 "$maintenance_worker_pid" 2>/dev/null &&
+              [ "$(proc_start_time "$maintenance_worker_pid")" = "$maintenance_worker_stamp" ] &&
+              [ "$(proc_state "$maintenance_worker_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 4 ]; do
+            sleep 1; n=$((n + 1))
+        done
+        if kill -0 "$maintenance_worker_pid" 2>/dev/null &&
+           [ "$(proc_start_time "$maintenance_worker_pid")" = "$maintenance_worker_stamp" ] &&
+           [ "$(proc_state "$maintenance_worker_pid" 2>/dev/null)" != Z ]; then
+            kill -KILL "$maintenance_worker_pid" 2>/dev/null || :
+        fi
+        wait "$maintenance_worker_pid" 2>/dev/null || :
+    fi
+    maintenance_worker_pid=; maintenance_worker_stamp=
+}
+stop_patrol_children() {
+    stop_wait
+    stop_maintenance_worker
+}
 on_wake() { wake_count=$((wake_count + 1)); stop_wait; }
 on_mode() { mode_changed=1; stop_wait; }
-trap stop_wait EXIT
+trap stop_patrol_children EXIT
 trap 'exit 0' HUP INT TERM
 trap on_wake USR2
 trap on_mode USR1
@@ -242,6 +268,8 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                         "$(date '+%F %T')" "$service_pid" "$fix_rc" "$fix_elapsed" >> "$DATA/guard.log"
                     exit "$fix_rc"
                 ) &
+                maintenance_worker_pid=$!
+                maintenance_worker_stamp="$(proc_start_time "$maintenance_worker_pid")"
             fi
             last_fix="$now"
         fi
