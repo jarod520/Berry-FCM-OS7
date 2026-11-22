@@ -117,9 +117,8 @@ monitor_group_identity_alive() {
 monitor_process_exists() {
     for monitor_cmdline in /proc/[0-9]*/cmdline; do
         [ -r "$monitor_cmdline" ] || continue
-        if tr "\\000" " " < "$monitor_cmdline" 2>/dev/null | grep -Fq "fcm-monitor.sh"; then
-            return 0
-        fi
+        monitor_cmdline_text="$(tr "\\000" " " < "$monitor_cmdline" 2>/dev/null)"
+        case "$monitor_cmdline_text" in *fcm-monitor.sh*) return 0;; esac
     done
     return 1
 }
