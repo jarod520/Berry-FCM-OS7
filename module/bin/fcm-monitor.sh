@@ -160,7 +160,13 @@ resolve_mtalk() {
             continue
         fi | awk '/Address/ {ip=$NF; if(ip ~ /^[0-9A-Fa-f:.]+$/) print tolower(ip)}' >> "$tmp"
     done
-    if [ -s "$tmp" ]; then sort -u "$tmp" > "$DNS_IPS.new" && mv -f "$DNS_IPS.new" "$DNS_IPS"; fi
+    if [ -s "$tmp" ]; then
+        sort -u "$tmp" > "$DNS_IPS.new" && mv -f "$DNS_IPS.new" "$DNS_IPS"
+    else
+        # Expired DNS answers must not keep classifying unrelated GMS :443
+        # sockets as MCS after a failed refresh.
+        : > "$DNS_IPS"
+    fi
     rm -f "$tmp"
     echo "$now" > "$DNS_TIME"
 }
