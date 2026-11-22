@@ -970,3 +970,11 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **修正**：现在只有在广播前的退避状态成功提交后才发送恢复广播；提交失败时设置 state_save_failed、记录 reconnect_aborted 并跳过本轮广播。广播后若结果状态提交失败，保留广播前已经落盘的退避锚点，并记录 reconnect_state_commit_failed。snapshot 允许保留该决策原因。
 - **回归约束**：apk-no-dump-smoke.sh 检查 request_reconnect 的前置提交门控、失败事件和决策枚举；atomic rename 故障注入覆盖 observe 状态/evidence 文件写入失败。完整行为测试尚未执行。
 - **验证边界**：仅完成源码回读与静态断言核对；未运行任何 shell 测试、javac、Gradle 或设备测试，未触发 Actions/编译/构建/打包。
+
+### 2026-11-23 APK sample freshness 与状态提交一致性
+
+- **复审发现**：APK sample age 与 sample gap 原先依赖 wall-clock epoch；系统时间校正可能把新鲜样本显示为 stale，或把长时间采样空档漏掉。KSU 已使用 monotonic uptime，APK 应保持相同语义。
+- **修正**：APK state 追加第 24 列 sample_mono；旧 23 列状态仍可读取，sample_mono 缺失时只在迁移首轮回退 epoch，随后自动写入 monotonic uptime。连接连续性、采样空档（90 秒）与 snapshot age 改用 /proc/uptime；wall-clock 仅保留展示时间。
+- **回归夹具**：APK smoke 增加 24 列状态检查、wall-clock 大幅前跳/回拨但 monotonic 样本不变时 age 仍为 0 且不产生 sample_gap，以及 wall-clock 不变但 monotonic 前进 100 秒时必须产生 sample_gap。还保留旧 23 列状态迁移路径。
+- **并发临时文件**：state/evidence 临时文件名改为带 PID 的唯一名称，避免并发检查相互覆盖；失败清理和 mv 故障注入检查同步保留。
+- **验证边界**：上述测试均已写入 smoke，但尚未执行；仍不能宣称 shell smoke、语法检查或构建通过。没有触发 Actions、编译、构建、打包、合并或发布。
