@@ -17,7 +17,8 @@
 - **回归夹具**：调整 evidence `mv` 故障注入场景：第 3 次样本 evidence 发布失败后，第 4 次只允许写入“决策更新”，最终 evidence sample_mono 必须仍等于已提交 state sample_mono=10380；snapshot 应保留 `connecting`，并展示 `confirmation_unavailable`，不得变成 stale，也不得接受失败采样的 10381。
 - **复审发现 2**：当 `ss` 已能显示 GMS UID，但只观察到一个非 mtalk 对端的 GMS HTTPS :443 socket 时，若 DNS 已有 mtalk 候选地址，旧逻辑会将该连接漏过且返回 absent；连续计时后可能误报断联。
 - **修正**：只要 GMS :443 已建立但对端不匹配已验证 mtalk 地址，就保留 `unknown/unavailable`，不把普通 HTTPS 连接当 MCS，也不把它当作 MCS 缺失。新增有 DNS 候选、但 GMS :443 对端为 1.1.1.1 的回归场景。
-- **验证边界**：本轮已通过 GitHub 源码复读，确认 monitor/patrol/service 三条关键路径没有 `dumpsys` 引用，新增两个回归夹具与代码分支均已落入当前分支。这里是静态源码核对，不是完整 smoke 执行或 Shell 语法验证。完整 `fcm-monitor-smoke.sh`、`ksu-wake-smoke.sh`、全仓 Shell syntax gate 和 OriginOS 7 / KernelSU 真机长时间后台验证仍未执行；未触发 Actions、编译、打包、合并或发布。
+- **验证边界**：本轮已通过 GitHub 源码复读，确认 monitor/patrol/service 三条关键路径没有 `dumpsys` 引用，新增两个回归夹具与代码分支均已落入当前分支。这里是静态源码核对，不是完整 smoke 执行或 Shell 语法验证。
+- **范围边界**：按当前任务“先以 KSU RC5 为主、APK 暂不处理”的既定范围，`app/src/main/assets/fcm-monitor.sh` 的旧 APK dump 主判据未修改，`tests/apk-native-fcm-smoke.sh` 也未改动。KSU 模块目录中，唯一仍含 `dumpsys` 的 `module/bin/ctl.sh` 是独立的 stopped/suspended/hidden 应用管理与 Receiver 诊断；它不参与 MCS 状态机、patrol sample heartbeat 或恢复动作选择。完整 `fcm-monitor-smoke.sh`、`ksu-wake-smoke.sh`、全仓 Shell syntax gate 和 OriginOS 7 / KernelSU 真机长时间后台验证仍未执行；未触发 Actions、编译、打包、合并或发布。
 ## 2026-11-23 KSU RC5 初始记录（后续复审修正见下节）
 
 - **代码分支**：`fix/rc5-mcs-patrol-20261122`。本轮只修改该分支，不合并 main、不发布、不触发 GitHub Actions。
