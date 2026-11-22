@@ -104,21 +104,14 @@ stop_monitor_owner() {
         ;;
     esac
     [ "$monitor_pid" -gt 1 ] && [ "$monitor_stamp" -gt 0 ] || return 1
-    if [ -z "$monitor_isolated" ]; then
-        if kill -0 "$monitor_pid" 2>/dev/null; then
-            if [ "$(proc_start_time "$monitor_pid")" = "$monitor_stamp" ] &&
-               [ "$(proc_group_id "$monitor_pid")" = "$monitor_pid" ]; then
-                if [ "$(proc_state "$monitor_pid" 2>/dev/null)" = Z ] ||
-                   tr -d '\000' < "/proc/$monitor_pid/cmdline" 2>/dev/null | grep -Fq 'fcm-monitor.sh'; then
-                    monitor_pgid="$monitor_pid"
-                    monitor_isolated=1
-                    printf '[%s] monitor_legacy_group_inferred pid=%s pgid=%s\n' "$(date '+%F %T')" "$monitor_pid" "$monitor_pgid" >> "$DATA/guard.log"
-                fi
-            fi
-        elif process_group_alive "$monitor_pid"; then
+    if [ -z "$monitor_isolated" ] && kill -0 "$monitor_pid" 2>/dev/null &&
+       [ "$(proc_start_time "$monitor_pid")" = "$monitor_stamp" ] &&
+       [ "$(proc_group_id "$monitor_pid")" = "$monitor_pid" ]; then
+        if [ "$(proc_state "$monitor_pid" 2>/dev/null)" = Z ] ||
+           tr -d '\000' < "/proc/$monitor_pid/cmdline" 2>/dev/null | grep -Fq 'fcm-monitor.sh'; then
             monitor_pgid="$monitor_pid"
             monitor_isolated=1
-            printf '[%s] monitor_legacy_orphan_group_inferred pid=%s pgid=%s\n' "$(date '+%F %T')" "$monitor_pid" "$monitor_pgid" >> "$DATA/guard.log"
+            printf '[%s] monitor_legacy_group_inferred pid=%s pgid=%s\n' "$(date '+%F %T')" "$monitor_pid" "$monitor_pgid" >> "$DATA/guard.log"
         fi
     fi
     case "$monitor_isolated" in
