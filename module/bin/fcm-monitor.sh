@@ -150,11 +150,13 @@ gms_uid() {
 
 scan_sockets() {
     uid="$(gms_uid 2>/dev/null)" || { printf 'unknown||||gms_uid_unavailable\n'; return; }
-    command -v "$SS_BIN" >/dev/null 2>&1 || { printf 'unknown||||ss_unavailable\n'; return; }
-    raw="$("$SS_BIN" -tnpe 2>/dev/null)" || { printf 'unknown||||ss_failed\n'; return; }
+    raw=
+    if command -v "$SS_BIN" >/dev/null 2>&1; then
+        raw="$("$SS_BIN" -tnpe 2>/dev/null)" || raw=
+    fi
 
-    # Fall back to kernel TCP tables when ss omits UID ownership.
-    if ! printf '%s\\n' "$raw" | grep -Eq 'uid:[0-9]+'; then
+    # Fall back to kernel TCP tables when ss is absent, fails, or omits UID ownership.
+    if [ -z "$raw" ] || ! printf '%s\n' "$raw" | grep -Eq 'uid:[0-9]+'; then
         for table in /proc/net/tcp /proc/net/tcp6; do
             [ -r "$table" ] || continue
             awk -v u="$uid" '
@@ -167,7 +169,7 @@ scan_sockets() {
                 }
               }
               END {
-                if (rank>0) printf "%s|%s|proc-net|%s|\\n",kind,transport,key
+                if (rank>0) printf "%s|%s|proc-net|%s|\n",kind,transport,key
                 else print "absent||||proc_net_no_mcs_socket"
               }' "$table"
         done | awk -F'|' '
@@ -492,7 +494,7 @@ request_reconnect() {
       *)
         action=com.google.android.intent.action.GTALK_HEARTBEAT
         action_label=GTALK_HEARTBEAT
-        reply="$(\"$AM_BIN\" broadcast --user 0 -a "$action" -p "$GMS" 2>&1)"
+        reply="$("$AM_BIN" broadcast --user 0 -a "$action" -p "$GMS" 2>&1)"
         ;;
     esac
     rc=$?
@@ -550,7 +552,7 @@ EOF_SOCKET
         source=gms_socket_fallback
         if [ "$socket_down_age" -ge 30 ]; then
             observed=disconnected; duration="$socket_down_age"
-            [ "$previous_down_state" = disconnected ] || record_event tcp_absence_confirmed "GMS UID 的 MCS TCP 连续缺失 \${socket_down_age} 秒；确认断联"
+            [ "$previous_down_state" = disconnected ] || record_event tcp_absence_confirmed "GMS UID 的 MCS TCP 连续缺失 ${socket_down_age} 秒；确认断联"
         else
             observed=connecting; duration="$socket_down_age"
         fi
@@ -577,7 +579,7 @@ EOF_SOCKET
         if [ "$state" != connecting ] && [ "$state" != disconnected ]; then
             [ "$previous_down_state" != connected ] || outages=$((outages+1))
             missing_since="$nowm"; missing_epoch="$nowe"; down_observed="$nowm"
-            record_event connection_down "GMS MCS 状态：$observed；来源=$source；连续缺失=\${duration}秒"
+            record_event connection_down "GMS MCS 状态：$observed；来源=$source；连续缺失=${duration}秒"
         fi
         [ "$down_observed" -gt 0 ] && [ "$down_observed" -le "$nowm" ] || down_observed="$nowm"
         [ "$outage_hint_mono" -gt 0 ] || outage_hint_mono="$nowm"
