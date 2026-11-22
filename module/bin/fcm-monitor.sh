@@ -124,7 +124,9 @@ save_state() {
       "$b" "$state" "$conn_key" "$conn_since" "$conn_since_mono" "$last_seen" "$missing_since" "$missing_epoch" \
       "$last_try_mono" "$last_try_epoch" "$attempts" "$last_result" "$last_restore" "$outages" \
       "$transport" "$remote" "$sample_epoch" "$last_try_reason" "$reconnects" "$last_down" "$down_observed" "$retry_streak" "$outage_hint_mono" \
-      "$native_timer_duration" "$native_timer_since" "$native_timer_last_request" "$native_timer_key" "$sample_mono" > "$tmp" && mv -f "$tmp" "$STATE"
+      "$native_timer_duration" "$native_timer_since" "$native_timer_last_request" "$native_timer_key" "$sample_mono" > "$tmp" || { rc=$?; rm -f "$tmp"; return "$rc"; }
+    mv -f "$tmp" "$STATE" || { rc=$?; rm -f "$tmp"; return "$rc"; }
+    return 0
 }
 
 update_native_timer_tracking() {
@@ -672,9 +674,9 @@ observe() {
     fi
     outage_hint_mono="$previous_down_observed"
     previous_native_reason=
-    old_source=; old_duration=-1; old_close=; old_tcp=; old_decision=
+    old_source=; old_duration=-1; old_close=; old_tcp=; old_decision=; old_evidence_sample_mono=0
     if [ -f "$EVIDENCE" ]; then
-        IFS='|' read -r old_source old_duration old_close old_tcp previous_native_reason old_decision < "$EVIDENCE" || :
+        IFS='|' read -r old_source old_duration old_close old_tcp previous_native_reason old_decision old_evidence_sample_mono < "$EVIDENCE" || :
     fi
     decision=not_evaluated
     gap_detected=0
@@ -975,7 +977,7 @@ EOF_SOCKET
 
 write_evidence() {
     evidence_tmp="$EVIDENCE.tmp"
-    if printf '%s|%s|%s|%s|%s|%s\n' "$source" "$duration" "$close_code" "$tcp_hint" "$native_reason" "$decision" > "$evidence_tmp" &&
+    if printf '%s|%s|%s|%s|%s|%s|%s\n' "$source" "$duration" "$close_code" "$tcp_hint" "$native_reason" "$decision" "$sample_mono" > "$evidence_tmp" &&
        mv -f "$evidence_tmp" "$EVIDENCE"; then
         return 0
     fi
@@ -1117,7 +1119,18 @@ status_json() {
         age=$((nowe-sample_epoch))
     fi
     source=unavailable; duration=-1; close_code=; tcp_hint=none; native_reason=unrecognized; decision=not_evaluated
-    if [ -f "$EVIDENCE" ]; then IFS='|' read -r source duration close_code tcp_hint native_reason decision < "$EVIDENCE" || :; fi
+    evidence_sample_mono=0
+    if [ -f "$EVIDENCE" ]; then
+        IFS='|' read -r source duration close_code tcp_hint native_reason decision evidence_sample_mono < "$EVIDENCE" || :
+    fi
+    evidence_sample_mono="$(num "$evidence_sample_mono")"
+    if [ "$sample_mono" -gt 0 ] || [ "$evidence_sample_mono" -gt 0 ]; then
+        if [ "$evidence_sample_mono" -ne "$sample_mono" ]; then
+            age=-1
+            source=unavailable; duration=-1; close_code=; tcp_hint=none
+            native_reason=unrecognized; decision=sample_unavailable
+        fi
+    fi
     case "${decision:-}" in not_evaluated|not_disconnected|sample_unavailable|disabled|cooldown|gms_stopped_unknown|requested|request_failed|waiting_duration|waiting_confirmation|confirmation_changed|timer_stalled_recovery|timer_stalled_disabled|timer_stalled_cooldown|timer_stalled_cancelled) :;; *) decision=not_evaluated;; esac
     case "$native_reason" in none|not_polled|permission_denied|timeout|service_unavailable|dump_failed|empty|unrecognized|gms_stopped) :;; *) native_reason=unrecognized;; esac
     case "$duration" in -1) :;; *) is_uint "$duration" || duration=-1;; esac
@@ -1162,8 +1175,9 @@ case "${1:-status}" in
         ;;
     monitor)
         prior_decision=
+        prior_evidence_sample_mono=0
         if [ -f "$EVIDENCE" ]; then
-            IFS='|' read -r old_source old_duration old_close old_tcp old_reason prior_decision < "$EVIDENCE" || :
+            IFS='|' read -r old_source old_duration old_close old_tcp old_reason prior_decision prior_evidence_sample_mono < "$EVIDENCE" || :
         fi
         observe || exit $?
         auto_recovery || exit $?
