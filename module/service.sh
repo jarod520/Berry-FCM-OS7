@@ -664,11 +664,26 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ]; do
             printf '[%s] patrol_watchdog_stale reason=%s pid=%s heartbeat=%s sample=%s started=%s uptime=%s\n' \
                 "$(date '+%F %T')" "$watchdog_reason" "$patrol_pid" "$hb" "$sample_hb" "$patrol_started" "$now_up" >> "$DATA/guard.log"
             # Stop patrol first so it cannot publish a monitor owner after cleanup.
-            stop_patrol || :
-            if [ "$sample_stale" = 1 ]; then stop_monitor_owner || :; fi
-            rm -f "$DATA/patrol.heartbeat" "$DATA/patrol.sample.heartbeat"
-            patrol_started="$now_up"
-            if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]; then patrol_sample_started="$now_up"; else patrol_sample_started=0; fi
+            watchdog_cleanup_ok=1
+            watchdog_cleanup_reason=
+            stop_patrol || {
+                watchdog_cleanup_ok=0
+                watchdog_cleanup_reason=patrol_stop_unconfirmed
+            }
+            if [ "$watchdog_cleanup_ok" = 1 ] && [ "$sample_stale" = 1 ]; then
+                stop_monitor_owner || {
+                    watchdog_cleanup_ok=0
+                    watchdog_cleanup_reason=monitor_owner_stop_unconfirmed
+                }
+            fi
+            if [ "$watchdog_cleanup_ok" = 1 ]; then
+                rm -f "$DATA/patrol.heartbeat" "$DATA/patrol.sample.heartbeat"
+                patrol_started="$now_up"
+                if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]; then patrol_sample_started="$now_up"; else patrol_sample_started=0; fi
+            else
+                printf '[%s] patrol_watchdog_cleanup_blocked reason=%s; preserving stale heartbeat for retry\n' \
+                    "$(date '+%F %T')" "$watchdog_cleanup_reason" >> "$DATA/guard.log"
+            fi
         fi
     fi
     sleep 5 &
