@@ -611,7 +611,8 @@ observe() {
 $result
 EOF_RESULT
     # A successful service command can return only ActivityManager wrapper lines.
-    # Retry once with the same privileges before waiting for the next patrol.
+    # Retry at most once per 60 seconds; repeated wrapper-only dumps must not double
+    # the native dump cost on every 20-second patrol cycle.
     retry_rc=none
     retry_last="$(num "$(cat "$NATIVE_RETRY_TIME" 2>/dev/null)")"
     retry_due=0
