@@ -139,6 +139,29 @@ run monitor; requests 0
 j="$(run snapshot)"; assert_json "$j" fcm_recovery_decision=confirmation_changed
 unset MCS_NEXT_FIXTURE
 
+# Unknown is not a confirmed down state: a retained outage hint must not
+# produce a false recovery event when the next usable observation is connected.
+export BERRY_FCM_DATA="$TMP/unknown-to-connected-data"
+mkdir -p "$BERRY_FCM_DATA"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+export MCS_SS_MODE=unknown
+settime 10070
+printf '%s\n' 'DeviceID: [fixture]' 'Not connected' > "$MCS_FIXTURE"
+j="$(run status)"
+assert_json "$j" fcm_state=disconnected
+settime 10080
+printf '%s\n' 'Permission Denial' > "$MCS_FIXTURE"
+j="$(run status)"
+assert_json "$j" fcm_state=unknown
+settime 10090
+export MCS_SS_MODE=connected
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_last_restore=0
+run events | grep -q '|connection_observed_after_unknown|'
+! run events | grep -q '|connection_restored|'
+echo 'PASS: unknown-to-connected is observed without claiming confirmed recovery'
+
 # A fresh native timer after resume permits a double check in the same window.
 settime 10360
 printf "%s\n" "DeviceID: [fixture]" "Not connected" "disconnectTime=02:00/00:00" > "$MCS_FIXTURE"
