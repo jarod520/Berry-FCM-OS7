@@ -136,7 +136,7 @@ echo "PASS: daemon and WebUI share a single lock"
 # A manager-provided BusyBox can exist while omitting the flock applet.
 # With no system flock on PATH, the same monitor must still read GMS.
 mkdir -p "$TMP/compatible"
-for bin in awk cat cp cut grep head mkdir mv rm rmdir sed tail tr wc; do
+for bin in awk cat cp cut grep head mkdir mv rm rmdir sed sleep tail tr wc; do
     ln -s "$(command -v "$bin")" "$TMP/compatible/$bin"
 done
 cat > "$TMP/bin/busybox-minimal" <<'MOCK'

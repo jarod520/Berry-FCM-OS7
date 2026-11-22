@@ -137,7 +137,7 @@ patrol_alive() {
     [ -n "$patrol_pid" ] || return 1
     kill -0 "$patrol_pid" 2>/dev/null || return 1
     [ -n "$patrol_stamp" ] && [ "$(proc_start_time "$patrol_pid")" = "$patrol_stamp" ] || return 1
-    tr "\000" " " < "/proc/$patrol_pid/cmdline" 2>/dev/null | grep -Fq "patrol.sh"
+    tr "\000" " " 2>/dev/null < "/proc/$patrol_pid/cmdline" | grep -Fq "patrol.sh"
 }
 start_patrol() {
     sh "$MODDIR/bin/patrol.sh" </dev/null >> "$DATA/patrol.log" 2>&1 &

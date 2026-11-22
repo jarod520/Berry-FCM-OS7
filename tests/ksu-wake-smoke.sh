@@ -11,6 +11,7 @@ mkdir -p "$TMP/data" "$TMP/module/bin" "$TMP/bin"
 export TEST_DIR="$TMP"
 export PATH="$TMP/bin:$PATH"
 export BERRY_TOYBOX_BIN="$TMP/bin/toybox" BERRY_MONITOR_TIMEOUT_SECONDS=1 BERRY_MONITOR_KILL_GRACE=1 BERRY_PATROL_RESTART_DELAY_SECONDS=0
+set -x
 sed 's|^DATA=/data/adb/berry_fcm_ksu$|DATA="$TEST_DIR/data"|' "$ROOT/module/service.sh" > "$TMP/module/service.sh"
 sed 's|^DATA=/data/adb/berry_fcm_ksu$|DATA="$TEST_DIR/data"|' "$ROOT/module/bin/patrol.sh" > "$TMP/module/bin/patrol.sh"
 cat > "$TMP/bin/id" <<'MOCK'
