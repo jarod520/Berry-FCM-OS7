@@ -687,3 +687,9 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **修正**：采样心跳现在表示“有界 monitor 调用已返回”，不再表示“GMS 状态读取成功”。无论 monitor 返回码如何，只要 `run_bounded()` 返回，就更新该心跳；若 monitor 真正卡住，`run_bounded()` 尚未返回，心跳仍不会刷新，service watchdog 仍可检测到停滞。实际样本是否成功仍由 `fcm_check_end rc`、monitor 状态与 `fcm_sample_time` 表达。
 - **回归用例**：KSU smoke 的 monitor mock 新增可配置非零返回码；新增 rc=13 场景，要求仍写入巡检心跳、保留错误返回日志，且不得触发 `monitor_sample` watchdog 重启。
 - **验证边界**：完成源码与 smoke 夹具更新；待做局部 POSIX shell 语法检查和静态断言核对。完整 KSU/FCM smoke、全仓语法 gate、Android/KernelSU 实机尚未执行；不触发构建或 Actions。
+
+### 2026-11-22 monitor 进程组强制回收前的身份复核
+- **复审发现**：stop_monitor_owner() 在 TERM 后等待期间，原 monitor/timeout leader 可能退出；旧代码只检查相同 PGID 是否仍有成员，随后直接向负 PGID 发送 KILL。若旧组恰好结束且 PGID 被复用，存在误伤新进程组的窄竞态。
+- **修正**：新增 monitor_group_identity_alive()，每次发送组信号前重新核对记录的 group leader（PID、starttime、PGID、命令行）或 monitor 自身（PID、starttime、PGID、命令行）至少一个身份仍锚定原组。TERM 前与 KILL 前都必须通过；无法确认时拒绝信号并保留 owner lock，交由后续清理重试。
+- **回归约束**：KSU smoke 检查身份复核函数存在、在 TERM/KILL 两次组信号前均被调用，以及 KILL 前拒绝原因日志存在。
+- **验证边界**：源码结构与固定断言静态验证；完整 KSU/FCM smoke、全仓 Shell syntax gate 和 Android 实机尚未执行。未触发 Actions、编译、打包、合并或 Release。
