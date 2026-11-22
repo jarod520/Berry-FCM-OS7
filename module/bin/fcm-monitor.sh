@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# BerryFCM KernelSU (UID 0): native GMS MCS state is primary; UID-owned TCP is fallback evidence.
+# BerryFCM KernelSU (UID 0): kernel-visible GMS UID MCS sockets are the sole connection-state evidence.
 # Only observes GMS-owned TCP sockets and requests targeted recovery broadcasts; it never
 # changes DNS, VPN, proxy, routing, or force-stops Google Play services.
 set -u
@@ -8,7 +8,7 @@ GMS=com.google.android.gms
 DATA="${BERRY_FCM_DATA:-/data/adb/berry_fcm_ksu}"
 STATE="$DATA/mcs-monitor.state"
 EVENTS="$DATA/mcs-monitor-events.log"
-NATIVE_EVENTS="$DATA/mcs-native-events.log"
+NATIVE_EVENTS="$DATA/mcs-native-events.log" # legacy history only; never read for decisions
 EVIDENCE="$DATA/mcs-evidence"
 DNS_IPS="$DATA/mcs-mtalk-dns-ips.txt"
 LEARNED_IPS="$DATA/mcs-mtalk-learned-ips.txt"
@@ -102,13 +102,12 @@ load_state() {
     native_timer_last_request="$(num "${native_timer_last_request:-0}")"
     case "$state" in connected|connecting|disconnected|unknown|never_seen) : ;; *) state=unknown;; esac
     case "$last_result" in none|requested|failed|restored) : ;; *) last_result=none;; esac
-    case "$last_try_reason" in none|auto|manual|rescue|stalled_timer) : ;; *) last_try_reason=none;; esac
+    case "$last_try_reason" in none|auto|manual|rescue) : ;; *) last_try_reason=none;; esac
     if [ -n "$prev_b" ] && [ "$prev_b" != "$b" ]; then
         state=never_seen; conn_key=; conn_since=0; conn_since_mono=0; missing_since=0; missing_epoch=0
         last_try_mono=0; transport=; remote=; sample_epoch=0; sample_mono=0; down_observed=0; retry_streak=0; outage_hint_mono=0
         native_timer_duration=0; native_timer_since=0; native_timer_last_request=0; native_timer_key=
         : > "$LEARNED_IPS"
-        rm -f "$NATIVE_HINT"
         record_event reboot '设备重启：清除上一启动周期的连接计时，保留历史事件'
     fi
 }
@@ -122,31 +121,6 @@ save_state() {
       "$native_timer_duration" "$native_timer_since" "$native_timer_last_request" "$native_timer_key" "$sample_mono" > "$tmp" || { rc=$?; rm -f "$tmp"; return "$rc"; }
     mv -f "$tmp" "$STATE" || { rc=$?; rm -f "$tmp"; return "$rc"; }
     return 0
-}
-
-update_native_timer_tracking() {
-    # Keep the last native timer anchor between 20-second socket samples.
-    # The next scheduled native poll will validate or reset it.
-    if [ "$source" = gms_socket ] && [ "$state" = connected ] && [ "$native_timer_since" -gt 0 ]; then
-        return 0
-    fi
-    timer_now="$(num "$(monotime)")"
-    timer_key="${remote:-$transport}"
-    if [ "$source" = gms ] && [ "$state" = connected ] && is_uint "${duration:-}" &&
-       [ "$duration" -gt 0 ] && [ -n "$timer_key" ]; then
-        if [ "$native_timer_since" -le 0 ] || [ "$timer_now" -lt "$native_timer_since" ] ||
-           [ "$native_timer_key" != "$timer_key" ] || [ "$duration" -ne "$native_timer_duration" ]; then
-            native_timer_duration="$duration"
-            native_timer_since="$timer_now"
-            native_timer_last_request=0
-            native_timer_key="$timer_key"
-        fi
-    else
-        native_timer_duration=0
-        native_timer_since=0
-        native_timer_last_request=0
-        native_timer_key=
-    fi
 }
 
 record_event() {
@@ -335,9 +309,6 @@ scan_sockets() {
       }'
 }
 
-# Current state only: do not match historical "Connected" or "Connecting"
-# lines. GMS dump may contain private IDs and application data; persist only
-# the selected fields and connection lifecycle events.
 auto_enabled() {
     [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]
 }
@@ -346,10 +317,9 @@ retry_interval() {
     case "$retry_streak" in 0) echo 30;; 1) echo 45;; 2) echo 60;; *) echo 90;; esac
 }
 
-# A continuous absence of the exact GMS UID-owned MCS TCP socket can confirm
-# a down state after 30 seconds, even when the native dump has no current fields.
-# A fresh MCS socket means connected/connecting; one absence sample alone never
-# creates an outage. Sampling gaps reset the continuity anchor.
+# A continuous absence of a verified GMS UID-owned MCS socket is considered only
+# after 45 seconds. A fresh MCS socket is positive transport evidence; one absence
+# sample alone never creates an outage. Sampling gaps reset the continuity anchor.
 socket_fallback_ready() {
     [ "$tcp_hint" = absent ] || return 1
     socket_down_age=0
@@ -361,28 +331,14 @@ socket_fallback_ready() {
     socket_down_now="$(num "$(monotime)")"
     [ "$socket_down_anchor" -gt 0 ] && [ "$socket_down_now" -ge "$socket_down_anchor" ] || return 1
     socket_down_age=$((socket_down_now-socket_down_anchor))
-    [ "$socket_down_age" -ge 30 ]
-}
-
-promote_socket_fallback() {
-    nowm="$(num "$(monotime)")"; nowe="$(num "$(now_epoch)")"
-    state=disconnected; source=gms_socket_fallback; duration=-1; close_code=
-    transport=; remote=; conn_key=; conn_since=0; conn_since_mono=0
-    missing_since="$nowm"; missing_epoch="$nowe"; last_down="$nowe"; down_observed="$nowm"
-    outage_hint_mono="$nowm"
-    record_event recovery_socket_confirmed "GMS 原生字段暂缺；UID0 连续未观察到 GMS MCS TCP（证据年龄 ${socket_down_age} 秒）；按断联继续恢复"
+    [ "$socket_down_age" -ge 45 ]
 }
 
 request_reconnect() {
     reason="$1"; nowm="$(num "$(monotime)")"; nowe="$(num "$(now_epoch)")"
-    if [ "$reason" = stalled_timer ]; then
-        [ "$state" = connected ] || { decision=not_disconnected; return 0; }
-    else
-        case "$state" in connecting|disconnected) :;; *) decision=not_disconnected; return 0;; esac
-    fi
+    case "$state" in connecting|disconnected) :;; *) decision=not_disconnected; return 0;; esac
     interval="$(retry_interval)"
     [ "$reason" != manual ] || interval=60
-    [ "$reason" != stalled_timer ] || interval=300
     if [ "$last_try_mono" -gt 0 ] && [ "$nowm" -ge "$last_try_mono" ] && [ $((nowm-last_try_mono)) -lt "$interval" ]; then
         decision=cooldown
         if [ "$reason" = manual ]; then
@@ -390,11 +346,7 @@ request_reconnect() {
         fi
         return 0
     fi
-    case "$reason" in auto|stalled_timer) auto_enabled || { decision=disabled; return 0; };; esac
-    if [ "$reason" = stalled_timer ]; then
-        native_timer_last_request="$nowm"
-        save_state || return $?
-    fi
+    [ "$reason" != auto ] || auto_enabled || { decision=disabled; return 0; }
     last_try_mono="$nowm"; last_try_epoch="$nowe"; attempts=$((attempts+1))
     retry_streak=$((retry_streak+1)); last_try_reason="$reason"; last_result=failed
     save_state || return $?
@@ -604,7 +556,7 @@ status_json() {
         # sample_mono existed. New samples use monotonic uptime exclusively.
         age=$((nowe-sample_epoch))
     fi
-    source=unavailable; duration=-1; close_code=; tcp_hint=none; native_reason=unrecognized; decision=not_evaluated
+    source=unavailable; duration=-1; close_code=; tcp_hint=none; native_reason=not_used; decision=not_evaluated
     evidence_sample_mono=0
     if [ -f "$EVIDENCE" ]; then
         IFS='|' read -r source duration close_code tcp_hint native_reason decision evidence_sample_mono < "$EVIDENCE" || :
@@ -614,7 +566,7 @@ status_json() {
         if [ "$evidence_sample_mono" -ne "$sample_mono" ]; then
             age=-1
             source=unavailable; duration=-1; close_code=; tcp_hint=none
-            native_reason=unrecognized; decision=sample_unavailable
+            native_reason=not_used; decision=sample_unavailable
         fi
     fi
     case "${decision:-}" in not_evaluated|not_disconnected|sample_unavailable|disabled|cooldown|requested|request_failed|waiting_duration|waiting_confirmation|confirmation_changed|confirmation_recovered) :;; *) decision=not_evaluated;; esac
@@ -683,7 +635,7 @@ case "${1:-status}" in
           connected)
             case "$decision" in timer_stalled_*)
                 if [ "$decision" != "$prior_decision" ]; then
-                    record_event recovery_decision "decision=$decision state=$state native_s=$duration reason=$native_reason parser=${parse_detail:-none} retry_streak=$retry_streak"
+                    record_event recovery_decision "decision=$decision state=$state source=$source tcp=$tcp_hint evidence=${parse_detail:-none} retry_streak=$retry_streak"
                 fi;;
             esac;;
         esac
