@@ -93,6 +93,29 @@ j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=gms_socket
 assert_json "$j" fcm_tcp_hint=established
+awk -F'|' 'NF == 24 {ok=1} END {exit !ok}' "$TMP/data/mcs-monitor.state"
+
+# Wall-clock changes must not age or reset fresh monotonic socket samples.
+settime 10010
+run status
+echo 1800000000 > "$MCS_CLOCK"
+j="$(run snapshot)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_sample_age_seconds=0
+! grep -q '|sample_gap|' "$TMP/data/mcs-monitor-events.log"
+echo 1600000000 > "$MCS_CLOCK"
+j="$(run snapshot)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_sample_age_seconds=0
+
+# A real monotonic sampling gap must still reset continuity even if wall time is unchanged.
+echo 1700000020 > "$MCS_CLOCK"
+echo 10020 > "$TMP/uptime"
+run status
+echo 10120 > "$TMP/uptime"
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+grep -q '|sample_gap|' "$TMP/data/mcs-monitor-events.log"
 
 # Failed atomic commits must fail the sample and remove temporary files.
 rm -f "$TMP/data/mcs-monitor.state" "$TMP/data/mcs-evidence"
