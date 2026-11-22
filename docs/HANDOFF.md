@@ -751,3 +751,9 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **验证边界**：本次尚需复核固定断言与 shell 语法；完整 KSU/FCM smoke、全仓 Shell gate、Android/KernelSU 实机验证仍未执行。未触发 Actions、编译、打包、合并或发布。
 
 - **补充安全回退**：若原 child PID/starttime 仍匹配，但 PGID 身份复核失败，则只向已核实的直接 child 发送 TERM/KILL，不再尝试组信号；若 PID/starttime 也无法确认，则拒绝信号。这样避免因组身份校验失败而让直接 child 永久挂住，同时不扩大到不可信进程组。
+
+### 2026-11-22 本轮 bounded watchdog 最终复核
+- KSU smoke 当前 6 个源码文件的固定正向断言 **123/123**、固定负向断言 **4/4** 全部匹配；之前针对旧实现的两条断言已替换为 PID/starttime/PGID 新约束，没有删除相应检查。
+- `run_bounded()` 新增身份检查片段通过宿主 `sh -n` 语法解析；该结果只覆盖本次修改片段，不等于全仓 Shell syntax gate 或 KSU smoke 执行。
+- 静态确认：组身份成立时才对原私有 PGID 发 TERM/KILL；组身份丢失但原 PID/starttime 仍匹配时退化为直接 child 信号；PID 身份也无法确认时拒绝信号。旧的 rc=13/124 不刷新 sample heartbeat 逻辑保持不变。
+- 完整 KSU/FCM smoke、全仓 Shell syntax gate、Android/KernelSU 实机验证仍未执行；未触发 Actions、构建、编译、打包、合并或发布。
