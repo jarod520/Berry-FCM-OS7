@@ -9,6 +9,7 @@ cat > "$TMP/bin/dumpsys" <<'MOCK'
 #!/bin/sh
 case "$*" in
   *"activity service"*)
+    [ -z "${MCS_DUMPSYS_LOG:-}" ] || echo "$*" >> "$MCS_DUMPSYS_LOG"
     if [ -n "${MCS_NEXT_FIXTURE:-}" ] && [ -f "$MCS_NEXT_FIXTURE" ]; then
       cat "$MCS_FIXTURE"
       mv "$MCS_NEXT_FIXTURE" "$MCS_FIXTURE"
@@ -185,14 +186,20 @@ assert_json "$j" fcm_state=connected
 echo "PASS: incomplete lockdir initialization is recoverable"
 
 # ActivityManager can return only wrapper lines with exit code zero.
-export MCS_NEXT_FIXTURE="$TMP/next-state-dump"
-printf '%s\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
-printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService' 'Server: Connected' > "$MCS_NEXT_FIXTURE"
+export MCS_NEXT_FIXTURE="$TMP/next-state-dump" MCS_DUMPSYS_LOG="$TMP/dumpsys.log"
+: > "$MCS_DUMPSYS_LOG"
+printf '%s\\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
+printf '%s\\n' 'SERVICE com.google.android.gms/.gcm.GcmService' 'Server: Connected' > "$MCS_NEXT_FIXTURE"
 j="$(run status)"
 assert_json "$j" fcm_state=connected
 grep -q 'sample_retry|first=no_current_state retry_rc=0 state=connected' "$BERRY_FCM_DATA/mcs-monitor-events.log"
 unset MCS_NEXT_FIXTURE
-echo 'PASS: wrapper-only dump retries once and uses fresh GMS state'
+printf '%s\\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
+settime 13020
+j="$(run status)"
+assert_json "$j" fcm_state=unknown
+[ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 3 ]
+echo 'PASS: wrapper-only dump retries once, then rate-limits duplicate dumps to 60 seconds'
 
 # OriginOS GMS current-state fields used by newer GMS builds.
 export BERRY_FCM_DATA="$TMP/client-state-data"
