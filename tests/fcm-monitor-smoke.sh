@@ -61,6 +61,9 @@ fi
 if [ -n "${MCS_AM_CONNECT_ON_ACTION:-}" ] && printf '%s' "$*" | grep -Fq "$MCS_AM_CONNECT_ON_ACTION"; then
     echo connected > "$MCS_MODE_FILE"
 fi
+if [ -n "${MCS_AM_ADVANCE_UPTIME:-}" ]; then
+    printf '%s\\n' "$MCS_AM_ADVANCE_UPTIME" > "$MCS_UPTIME_FILE"
+fi
 echo 'Broadcast completed: result=0'
 MOCK
 cat > "$TMP/bin/nslookup" <<'MOCK'
@@ -241,6 +244,41 @@ assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=gms_socket
 assert_json "$j" fcm_tcp_hint=established
 requests 18
+
+# If a recovery follow-up cannot atomically publish evidence, it must not
+# save the in-memory sample state and create a false state/evidence generation.
+echo connecting > "$TMP/mode"
+settime 10320
+j="$(run status)"
+assert_json "$j" fcm_state=connecting
+settime 10380
+REAL_MV="$(command -v mv)"
+export REAL_MV MCS_DATA="$TMP/data" MCS_UPTIME_FILE="$TMP/uptime"
+cat > "$TMP/bin/mv" <<'MOCK'
+#!/bin/sh
+if [ "${MCS_FAIL_EVIDENCE_MV:-0}" = 1 ] && [ "$3" = "$MCS_DATA/mcs-evidence" ]; then
+    n="$(cat "$MCS_DATA/evidence-mv-count" 2>/dev/null || echo 0)"
+    n=$((n + 1))
+    echo "$n" > "$MCS_DATA/evidence-mv-count"
+    [ "$n" -eq "${MCS_FAIL_EVIDENCE_MV_AT:-0}" ] && exit 1
+fi
+exec "$REAL_MV" "$@"
+MOCK
+chmod +x "$TMP/bin/mv"
+echo 0 > "$TMP/data/evidence-mv-count"
+export MCS_FAIL_EVIDENCE_MV=1 MCS_FAIL_EVIDENCE_MV_AT=3 MCS_AM_ADVANCE_UPTIME=10381
+run monitor >/dev/null
+unset MCS_FAIL_EVIDENCE_MV MCS_FAIL_EVIDENCE_MV_AT MCS_AM_ADVANCE_UPTIME
+requests 19
+test "$(cat "$TMP/data/evidence-mv-count")" = 4
+state_sample_uptime="$(awk -F'|' '{print $28}' "$TMP/data/mcs-monitor.state")"
+evidence_sample_uptime="$(awk -F'|' '{print $7}' "$TMP/data/mcs-evidence")"
+[ "$state_sample_uptime" = 10380 ] || fail "failed follow-up evidence publish advanced state sample"
+[ "$evidence_sample_uptime" = 10381 ] || fail "fixture did not create expected mismatched evidence generation"
+j="$(sh "$MON" snapshot)"
+assert_json "$j" fcm_state=stale
+assert_json "$j" fcm_recovery_decision=sample_unavailable
+rm -f "$TMP/bin/mv"
 
 [ ! -s "$TMP/dumpsys.log" ] || fail "dumpsys was invoked by the monitor"
 echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO retransmission and 30-minute receive-idle recovery, same-cycle four-trigger escalation, and dump independence"
