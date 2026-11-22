@@ -134,10 +134,15 @@ signal_bounded_descendants() {
     done < "$list"
 }
 has_setsid() {
-    if [ -x "$TOYBOX_BIN" ] && "$TOYBOX_BIN" --list 2>/dev/null | grep -qx setsid; then
+    # A private session is useful only when service.sh can later signal its group.
+    if [ -x "$TOYBOX_BIN" ] &&
+       "$TOYBOX_BIN" --list 2>/dev/null | grep -qx setsid &&
+       "$TOYBOX_BIN" --list 2>/dev/null | grep -qx kill; then
         return 0
     fi
-    if [ -x "$KSU_BUSYBOX" ] && "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx setsid; then
+    if [ -x "$KSU_BUSYBOX" ] &&
+       "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx setsid &&
+       "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx kill; then
         return 0
     fi
     return 1
