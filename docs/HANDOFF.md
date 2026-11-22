@@ -1,3 +1,10 @@
+## 2026-11-22 DNS timeout applet fallback修复
+
+- 发现 `resolve_mtalk()` 只判断 `/system/bin/toybox` 文件存在，就直接调用 `toybox timeout`；如果设备 Toybox 编译时未包含 timeout applet，即使 PATH 中存在可用的 `timeout`，DNS 查询仍会失败并把失败缓存 10 分钟，导致 mtalk DNS :443 辅助证据无法建立。
+- 已新增 `BERRY_TOYBOX_BIN`（默认 `/system/bin/toybox`）并按 applet 清单检测 `timeout`；Toybox 缺少该 applet 时回退 PATH 的 `timeout`，两者均不可用时安全跳过 DNS 查询，不执行无超时 nslookup。
+- 新增 FCM smoke 场景：模拟 Toybox 存在但 `--list` 不含 timeout，同时 PATH 有 timeout，确认两个 mtalk 主机均会查询并通过 DNS 地址识别 GMS UID :443 连接。
+- 在容器中按修改后的分支条件执行了独立行为模拟：Toybox mock 不提供 timeout，PATH timeout 成功运行两次 nslookup，结果通过。该模拟只验证 DNS fallback 代码路径，不代表完整 smoke 套件已执行。
+- 当前完整 `fcm-monitor-smoke.sh`、`ksu-wake-smoke.sh` 和完整 Shell syntax gate 仍未执行；未触发 workflow、构建、打包或发布；PR 未合并。
 ## 2026-11-22 KSU lifecycle smoke 重复块清理与 Toybox timeout 核实
 
 - 复核 `tests/ksu-wake-smoke.sh` 发现测试主体从 hotinstall 顺序断言开始被重复追加 4 次；每个重复块前还有一条裸执行 `"$ROOT/module/bin/patrol.sh"` 的孤立命令，且后续重复块缺少 `hot_stop_line` 赋值。原脚本会在 `set -e` 下提前失败，不能作为有效验收。
