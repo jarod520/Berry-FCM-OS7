@@ -58,6 +58,9 @@ if [ "${MCS_AM_FAIL:-0}" = 1 ] ||
     echo 'Permission Denial: fixture' >&2
     exit 1
 fi
+if [ -n "${MCS_AM_CONNECT_ON_ACTION:-}" ] && printf '%s' "$*" | grep -Fq "$MCS_AM_CONNECT_ON_ACTION"; then
+    echo connected > "$MCS_MODE_FILE"
+fi
 echo 'Broadcast completed: result=0'
 MOCK
 cat > "$TMP/bin/nslookup" <<'MOCK'
@@ -155,6 +158,20 @@ assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_last_result=restored
 requests 4
 
+# If an intermediate trigger restores the socket, stop the sequence immediately.
+echo connecting > "$TMP/mode"
+settime 10064
+j="$(run status)"
+assert_json "$j" fcm_state=connecting
+settime 10124
+export MCS_AM_CONNECT_ON_ACTION=MCS_HEARTBEAT
+run monitor >/dev/null
+unset MCS_AM_CONNECT_ON_ACTION
+requests 14
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_last_result=restored
+
 # TCP_INFO can identify an established-but-blackholed MCS socket.
 echo stalled > "$TMP/mode"
 settime 10198
@@ -163,7 +180,7 @@ assert_json "$j" fcm_state=disconnected
 assert_json "$j" fcm_tcp_hint=stalled
 settime 10213
 run monitor >/dev/null
-requests 5
+requests 10
 echo connected > "$TMP/mode"
 settime 10214
 run monitor >/dev/null
@@ -198,7 +215,7 @@ j="$(run status)"
 assert_json "$j" fcm_state=disconnected
 settime 10317
 run monitor >/dev/null
-requests 7
+requests 18
 
 # An unreadable ownership/source sample is unavailable, not falsely disconnected.
 echo unknown > "$TMP/mode"
