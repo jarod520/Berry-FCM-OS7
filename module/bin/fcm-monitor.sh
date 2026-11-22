@@ -697,7 +697,7 @@ EOF_SOCKET
         # remains authoritative; the 30-second socket fallback may still promote
         # a continuous absence to its own explicit evidence source.
         if [ "$native_poll_due" = 0 ] && [ "$old_source" = gms ] &&
-           { [ "$previous_down_state" = connecting ] || [ "$previous_down_state" = disconnected ]; } &&
+           { [ "$previous_down_state" = connected ] || [ "$previous_down_state" = connecting ] || [ "$previous_down_state" = disconnected ]; } &&
            { [ "$tcp_hint" = absent ] || [ "$tcp_hint" = unknown ]; }; then
             observed="$previous_down_state"; source=gms
             duration="${old_duration:--1}"; close_code="$old_close"
@@ -755,7 +755,8 @@ EOF_SOCKET
                 record_event tcp_absence_started 'UID0 未观察到 GMS MCS TCP；开始连续缺失计时，暂不据单次缺失重连'
             fi
             socket_down_age=$((socket_now-outage_hint_mono))
-            if [ "$socket_down_age" -ge 30 ]; then
+            if [ "$socket_down_age" -ge 30 ] &&
+               { [ "$native_poll_due" = 1 ] || [ "$old_source" != gms ] || [ "$previous_down_state" != connected ]; }; then
                 observed=disconnected; source=gms_socket_fallback
                 new_transport=; new_remote=
                 [ "$previous_down_state" = disconnected ] ||
