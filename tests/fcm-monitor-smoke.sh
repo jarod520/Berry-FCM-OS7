@@ -304,6 +304,8 @@ echo 1 > "$BERRY_FCM_DATA/enabled"
 printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService' '  Is client connected: true' '  Is client connected: false' > "$MCS_FIXTURE"
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
+grep -Fq 'if(gms_block_seen) multiple_gms_blocks=1' "$ROOT/module/bin/fcm-monitor.sh"
+grep -Fq 'if(multiple_gms_blocks || conflict || state=="" || state=="unknown" ||' "$ROOT/module/bin/fcm-monitor.sh"
 # A repeated GMS service block must not inherit Connected from the prior block.
 printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService pid=321' '  Is client connected: true' 'SERVICE com.google.android.gms/.gcm.GcmService pid=322' '  (no current client state)' > "$MCS_FIXTURE"
 j="$(run status)"
