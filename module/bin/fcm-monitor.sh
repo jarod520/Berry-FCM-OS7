@@ -709,7 +709,7 @@ EOF_SOCKET
                 observed="$previous_down_state"; source=gms
                 duration="${old_duration:--1}"; close_code="$old_close"
                 new_transport="$transport"; new_remote="$remote"
-                native_reason="$previous_native_reason"
+                native_reason="${previous_native_reason:-none}"
                 parse_detail=retained_native_down_state
                 [ "$old_tcp" = established ] ||
                     record_event socket_native_conflict 'Socket 仍显示 ESTABLISHED，但最近一次 GMS 原生状态为断开；等待下一次原生采样确认恢复'
