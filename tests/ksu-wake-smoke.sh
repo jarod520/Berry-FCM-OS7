@@ -246,7 +246,7 @@ else
     if [ "$sample_epoch" -le "$previous_sample_epoch" ]; then
         sample_epoch=$((previous_sample_epoch + 1))
     fi
-    printf '%s\\n' "$sample_epoch" > "$TEST_DIR/sample-epoch"
+    printf '%s\n' "$sample_epoch" > "$TEST_DIR/sample-epoch"
     if [ -n "${TEST_MONITOR_RC:-}" ]; then exit "$TEST_MONITOR_RC"; fi
     if [ "${TEST_HANG_FIRST:-0}" = 1 ] && [ "$before" = 0 ]; then
         /bin/sleep 30 &
