@@ -129,7 +129,7 @@ run_bounded() {
             group_tool="$KSU_BUSYBOX"
             BERRY_FCM_ISOLATED_GROUP=1 "$KSU_BUSYBOX" setsid "$@" &
         else
-            "$@" &
+            BERRY_FCM_ISOLATED_GROUP=0 "$@" &
         fi
         bounded_pid=$!
         (
