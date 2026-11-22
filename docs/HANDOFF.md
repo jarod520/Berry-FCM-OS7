@@ -4,7 +4,7 @@
 
 - 查询 Actions 历史发现旧工作流 `.github/workflows/validate-fcm.yml` 在提交 `e18b90d` 上曾由 push / pull_request 自动触发（run `45014447855` / `45014452369`）。Shell syntax 步骤通过；`fcm-monitor-smoke.sh` 在“suspend gap / double confirmation / native restoration”用例之后退出，后续用例被跳过。该失败发生在本轮学习 IP TTL 修改之前。
 - 对比失败提交与当前测试脚本，确认旧“stopped GMS”夹具互相矛盾：同时给出 `Not connected` 原生状态和 `stopped=true`，但测试又要求不能发送重连。现版本改为 `No services match` + Socket ownership unknown + `stopped=true`，先测试停止服务时不恢复；在广播失败用例前再显式恢复 `Not connected`，保证失败广播路径有真实断联输入。
-- 当前分支与 main 的 `.github/workflows/` 目录均只保留 `build-ksu.yml`、`build-apk.yml`、`verify-prebuild.yml`，三者均为 `workflow_dispatch`。历史 `validate-fcm.yml` 已不在两边目录；本轮新提交没有触发 workflow，也没有编译/打包。
+- 当前 PR 分支的 `.github/workflows/` 仅有 `build-ksu.yml`、`build-apk.yml`、`verify-prebuild.yml`，三者均只允许 `workflow_dispatch`；因此推送此功能分支不会自动触发构建。`main` 分支仍保留三个 workflow 对 `main` / `release/1.0-rc.1` 的 `push` 触发规则；PR 尚未合并，因此这些主分支触发器没有被触发。历史 `validate-fcm.yml` 已不在 main 与 PR 分支目录。本轮新提交没有触发 workflow，也没有编译/打包。
 - 历史失败已找到对应夹具修正，但**当前完整 smoke 尚未执行**；不得将历史失败视为当前版本通过，也不得将夹具修正等同于实测通过。
 ## 2026-11-22 KSU RC7：学习到的 MCS 对端 IP 有效期
 
