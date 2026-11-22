@@ -442,7 +442,7 @@ case "${1:-status}" in
         elif [ "$state" = connecting ] || [ "$state" = disconnected ]; then
             [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 2
             observe || exit $?
-            if { [ "$source" = gms ] || [ "$source" = gms_socket ] || [ "$source" = gms_socket_fallback ]; } &&
+            if { [ "$source" = gms_socket ] || [ "$source" = gms_socket_absence ]; } &&
                { [ "$state" = connecting ] || [ "$state" = disconnected ]; }; then
                 record_event rescue_confirmed '两次采样仍未观察到 MCS 连接，准备请求恢复'
                 request_reconnect rescue
