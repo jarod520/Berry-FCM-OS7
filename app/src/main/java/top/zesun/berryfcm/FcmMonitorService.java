@@ -971,7 +971,7 @@ public final class FcmMonitorService extends Service {
             if (key.equals(p.connectionKey())) {
                 runSafe(true, "manual_followup");
                 JSONObject latest = lastSnapshot(this);
-                if (key.equals(p.connectionKey()) && "gms".equals(latest.optString("fcm_source"))
+                if (key.equals(p.connectionKey()) && "gms_socket".equals(latest.optString("fcm_source"))
                         && "connected".equals(latest.optString("fcm_state"))
                         && sampleAgeSeconds(this) >= 0 && sampleAgeSeconds(this) <= 90
                         && currentError(this).isEmpty() && "requested".equals(decision)) {
