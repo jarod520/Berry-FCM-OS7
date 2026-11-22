@@ -1,3 +1,14 @@
+## 2026-11-22 BusyBox timeout -k 能力探测
+
+- 复核 `module/bin/patrol.sh` 发现旧逻辑只通过 `--list` 判断 timeout applet 是否存在，随后无条件传入 `-k`。这把“有 timeout applet”错误等同于“支持 -k”。
+- BusyBox 上游在 2021-12-17 合入 `timeout -k KILL_SECS`，并进入 BusyBox 1.35.0；旧版本或裁剪构建仍可能不支持该参数。参考：https://lists.busybox.net/pipermail/busybox-cvs/2021-December/040965.html
+- 已修改 Toybox、KernelSU BusyBox 和 PATH timeout 三条分支：先执行无副作用的 `timeout -k 1 1 sh -c ':'` 能力探测，只有探测成功才走 timeout 快速路径；探测失败则进入既有独立 watchdog / process-group fallback，不再把参数错误当作有效巡检。
+- 新增 `tests/ksu-wake-smoke.sh` 场景：模拟 `--list` 报告 timeout、但实际拒绝 `-k` 的旧 BusyBox，要求巡检切换到 bounded watchdog 并清理挂起子进程。
+- 代码提交：`90c2b6fe5834e1c0790d80e905adf9a3fb2308ad`；测试提交：`d99aba4219a9015dcd12e2626f0a6fc9ee3dc96a`。
+- 本地可用环境验证：宿主 BusyBox v1.37.0 的 `timeout -k 1 1 sh -c ':'` 探测返回 0；对 5 秒命令执行 `timeout -k 1 1`，约 1 秒后以 143 退出。新增代码片段通过 `sh -n`。这些仅验证宿主 BusyBox 和新分支语法，不代表 Android KernelSU BusyBox 或完整 smoke 已通过。
+- 静态回归：KSU smoke 的 95 条固定源码断言、FCM smoke 的 8 条固定源码断言全部匹配。
+- **未完成项**：完整 `tests/ksu-wake-smoke.sh`、`tests/fcm-monitor-smoke.sh` 和全仓 Shell syntax gate 尚未执行；Android 设备实测未执行。未触发 workflow、编译、打包或发布。
+
 ## 2026-11-22 FCM smoke 累计请求计数修正
 
 - 复核完整 `tests/fcm-monitor-smoke.sh` 时发现 OriginOS GMS 状态解析区段前，测试已在 native-poll 场景将 `MCS_AM_LOG` 清零，并明确验证该场景累计请求数为 1；随后 OriginOS 状态解析场景只新增一次重连请求，因此原断言 `requests 5` 与实际累计日志不一致，会在完整 smoke 中提前失败。
