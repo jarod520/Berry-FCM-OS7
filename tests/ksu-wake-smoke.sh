@@ -102,6 +102,8 @@ grep -Fq 'monitor_group_identity_alive()' "$ROOT/module/service.sh"
 grep -Fq 'monitor_group_identity_unverified_before_kill' "$ROOT/module/service.sh"
 grep -Fq 'stop_monitor_owner()' "$ROOT/module/service.sh"
 grep -Fq 'prepare_patrol_start()' "$ROOT/module/service.sh"
+grep -Fq 'monitor_process_exists()' "$ROOT/module/service.sh"
+grep -Fq 'stale_monitor_owner_record_cleared reason=no_monitor_process' "$ROOT/module/service.sh"
 grep -Fq 'if [ -s "$DATA/mcs-monitor.lock.owner" ] && ! stop_monitor_owner; then' "$ROOT/module/service.sh"
 grep -Fq 'if prepare_patrol_start; then' "$ROOT/module/service.sh"
 grep -Fq 'patrol_restart_blocked reason=monitor_owner_cleanup_unconfirmed' "$ROOT/module/service.sh"
@@ -918,8 +920,9 @@ test ! -d "$TMP/data/service.lock"
 echo 'PASS: service shutdown reaps the maintenance owner and its ctl child'
 
 
-# A replacement patrol must not start while the previous monitor owner cannot
-# be identity-verified/cleaned; once the stale owner record is cleared it may start.
+# A replacement patrol must not start while a recorded monitor process
+# cannot be identity-verified; after that process exits, the stale record is
+# cleared and the supervisor resumes patrol automatically.
 touch "$TMP/module/module.prop"
 echo 0 > "$TMP/data/enabled"
 echo passive > "$TMP/data/wake-mode"
@@ -936,8 +939,17 @@ done
 [ "$(grep -c 'patrol_supervisor_start' "$TMP/data/guard.log")" -eq 1 ]
 patrol_pid="$(awk '{print $1}' "$TMP/data/service.lock/patrol")"
 [ "$patrol_pid" -gt 1 ]
-kill -KILL "$patrol_pid"
+cat > "$TMP/fcm-monitor.sh" <<'MOCK'
+#!/bin/sh
+while :; do :; done
+MOCK
+chmod +x "$TMP/fcm-monitor.sh"
+sh "$TMP/fcm-monitor.sh" &
+dummy_monitor_pid=$!
+/bin/sleep 0.1
+kill -0 "$dummy_monitor_pid"
 printf 'not-a-pid not-a-starttime\n' > "$TMP/data/mcs-monitor.lock.owner"
+kill -KILL "$patrol_pid"
 n=0
 while ! grep -q 'patrol_restart_blocked reason=monitor_owner_cleanup_unconfirmed' "$TMP/data/guard.log" 2>/dev/null && [ "$n" -lt 80 ]; do
     /bin/sleep 0.1
@@ -945,14 +957,16 @@ while ! grep -q 'patrol_restart_blocked reason=monitor_owner_cleanup_unconfirmed
 done
 grep -q 'patrol_restart_blocked reason=monitor_owner_cleanup_unconfirmed' "$TMP/data/guard.log"
 [ "$(grep -c 'patrol_supervisor_start' "$TMP/data/guard.log")" -eq 1 ]
-rm -f "$TMP/data/mcs-monitor.lock.owner"
+kill -TERM "$dummy_monitor_pid"
+wait "$dummy_monitor_pid" 2>/dev/null || :
 n=0
 while [ "$(grep -c 'patrol_supervisor_start' "$TMP/data/guard.log" 2>/dev/null || true)" -lt 2 ] && [ "$n" -lt 80 ]; do
     /bin/sleep 0.1
     n=$((n + 1))
 done
 [ "$(grep -c 'patrol_supervisor_start' "$TMP/data/guard.log")" -ge 2 ]
+grep -q 'stale_monitor_owner_record_cleared reason=no_monitor_process' "$TMP/data/guard.log"
 kill -TERM "$service_pid"
 wait "$service_pid" 2>/dev/null || :
 test ! -d "$TMP/data/service.lock"
-echo 'PASS: supervisor blocks replacement patrol until stale monitor owner cleanup is confirmed'
+echo 'PASS: supervisor waits for monitor exit, then clears stale owner and resumes patrol'
