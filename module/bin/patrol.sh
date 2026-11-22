@@ -81,6 +81,16 @@ maintenance_child_alive() {
     fi
     process_group_alive "$maintenance_child_pgid"
 }
+bounded_process_identity_alive() {
+    [ -n "$bounded_pid" ] && [ -n "$bounded_stamp" ] &&
+        kill -0 "$bounded_pid" 2>/dev/null &&
+        [ "$(proc_start_time "$bounded_pid")" = "$bounded_stamp" ]
+}
+bounded_group_identity_alive() {
+    bounded_process_identity_alive &&
+        [ "$bounded_pgid" = "$bounded_pid" ] &&
+        [ "$(proc_group_id "$bounded_pid")" = "$bounded_pgid" ]
+}
 run_bounded() {
     seconds="$1"; shift
     if [ -x "$TOYBOX_BIN" ] &&
@@ -137,25 +147,43 @@ run_bounded() {
             BERRY_FCM_ISOLATED_GROUP=0 "$@" &
         fi
         bounded_pid=$!
+        bounded_stamp="$(proc_start_time "$bounded_pid")"
+        bounded_pgid="$(proc_group_id "$bounded_pid")"
+        if [ -n "$group_tool" ] && [ "$bounded_pgid" != "$bounded_pid" ]; then
+            # setsid did not establish the expected private group; signal only
+            # the verified direct child, never its inherited process group.
+            group_tool=
+        fi
         (
             sleep "$seconds" &
             watchdog_sleep_pid=$!
             trap 'kill "$watchdog_sleep_pid" 2>/dev/null || :' EXIT HUP INT TERM
             wait "$watchdog_sleep_pid" || exit 0
-            if kill -0 "$bounded_pid" 2>/dev/null; then
+            if bounded_process_identity_alive; then
                 : > "$marker"
                 if [ -n "$group_tool" ]; then
-                    "$group_tool" kill -TERM "-$bounded_pid" 2>/dev/null || :
+                    if bounded_group_identity_alive; then
+                        "$group_tool" kill -TERM "-$bounded_pid" 2>/dev/null || :
+                    else
+                        echo 'bounded_watchdog_group_identity_unverified_before_term' >> "$DATA/guard.log"
+                        exit 0
+                    fi
                 else
                     kill -TERM "$bounded_pid" 2>/dev/null || :
                 fi
                 sleep "$MONITOR_KILL_GRACE"
                 if [ -n "$group_tool" ]; then
-                    if process_group_alive "$bounded_pid"; then
-                        "$group_tool" kill -KILL "-$bounded_pid" 2>/dev/null || :
+                    if process_group_alive "$bounded_pgid"; then
+                        if bounded_group_identity_alive; then
+                            "$group_tool" kill -KILL "-$bounded_pgid" 2>/dev/null || :
+                        else
+                            echo 'bounded_watchdog_group_identity_unverified_before_kill' >> "$DATA/guard.log"
+                        fi
                     fi
-                elif kill -0 "$bounded_pid" 2>/dev/null; then
+                elif bounded_process_identity_alive; then
                     kill -KILL "$bounded_pid" 2>/dev/null || :
+                else
+                    echo 'bounded_watchdog_process_identity_unverified_before_kill' >> "$DATA/guard.log"
                 fi
             fi
         ) >/dev/null 2>&1 &
