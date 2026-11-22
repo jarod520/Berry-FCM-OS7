@@ -6,7 +6,7 @@
 > - 当前 KSU 监控唯一决策来源是 GMS UID 归属的内核 TCP Socket 证据：优先使用 `ss -tinpe` 获取 UID/状态/端点及可用的 TCP_INFO；不支持时降级 `ss -tnpe`，再不可用时回退读取 `/proc/net/tcp` 与 `/proc/net/tcp6`。无法取得 GMS UID 或无法读取 Socket 表时，结果是“本轮证据不可用”，不是断联，也不是连接正常。
 > - 明确区分 TCP ESTABLISHED（只证明传输层连接）、SYN-SENT（连接建立中）、TCP_INFO 中 unacked>0 且连续 retransmits>=3，或 lastrcv>=1,800,000ms（30 分钟没有收到 TCP 数据，按内核 awake time 计）的疑似卡死 Socket、已成功读取 UID/Socket 表且 MCS Socket 连续缺失（达到阈值后再复采确认）、以及检测源不可用。TCP_INFO 只在 `ss -i`/内核提供相关字段时启用；字段不可读不能伪造健康或断联。不得将 TCP 建立冒充 FCM 心跳 ACK 或消息送达。
 > - 当前断联判定要求连续缺失至少 45 秒；连接中持续 60 秒后进入二次确认。采样空档超过 90 秒重置连续性锚点。未知/不可用样本不阻断下一轮巡检，也不伪造确定状态。
-> - 自动恢复按轮次尝试四个既有 GMS 定向动作：`GCM_RECONNECT` → `MCS_HEARTBEAT` → `ACTION_HEARTBEAT_NOW` → `GTALK_HEARTBEAT`。每次命令后继续采样；仍断联时按 30/45/60/90 秒递增退避进入下一动作，后续循环保持 90 秒。命令返回成功只表示广播请求已提交，不代表 GMS 已恢复；必须由后续内核 Socket 样本验证。四个动作均无效时继续按退避周期轮换，不停止巡检。
+> - 每次确认断联后立即启动一个有界四动作恢复序列：`GCM_RECONNECT` → `MCS_HEARTBEAT` → `ACTION_HEARTBEAT_NOW` → `GTALK_HEARTBEAT`。广播失败立即尝试下一动作；广播被系统接受后等待约 2 秒并复采内核 Socket，仍明确为 connecting/disconnected 才继续下一动作，connected 立即停止，unknown/复采失败则停止本轮而不把未知当断联。四动作均未恢复时，才按 30/45/60/90 秒退避安排下一轮完整序列；广播返回成功不代表 GMS 已恢复，必须以后续内核 Socket 样本确认。
 > - `dumpsys` 未来如需保留，只能用于独立辅助诊断或展示计时，不得写入连接状态机、恢复门控、巡检心跳或重连动作选择。旧版原生 MCS 主判据、Close 事件判据、connectTime 停滞恢复方案均已废弃。
 > - 后台 patrol 与单轮 monitor 必须解耦：单次检查超时/锁冲突/证据不可用/某个广播失败，都不能退出 patrol 主循环。service watchdog 继续分别监督 patrol 心跳和有效采样心跳；身份无法确认时不得误杀无关进程，也不得启动重复巡检。
 
@@ -16,11 +16,24 @@
 - **监控主脚本**：`module/bin/fcm-monitor.sh` 已删除 GMS service dump 轮询、dump 解析器、wrapper 重试、package stopped dump 门控、原生 Close 事件降级判据和 connectTime 停滞恢复分支。当前脚本不再调用 `dumpsys`。`ctl.sh` 仍将 `dumpsys package` 用于独立的应用 stopped/suspended/hidden 管理状态，将 `dumpsys activity broadcasts` 用于接收器诊断；这些数据不进入 MCS 状态机、巡检心跳或重连动作选择。其 GMS UID/installed 查询的 dump fallback 已删除。
 - **连接检测**：以 GMS UID 的 MCS TCP Socket 为唯一决策证据。先用 `ss -tinpe` 请求 Socket + TCP_INFO；该参数失败或未暴露 GMS UID 时再试 `ss -tnpe`，仍无法验证 UID 才回退 `/proc/net/tcp`、`tcp6`。精确 MCS 端口 5228–5230 和经过验证的 mtalk :443 候选继续区分；普通 GMS HTTPS 不作为 MCS。TCP ESTABLISHED 只记为传输层连接。TCP_INFO 可用时，unacked>0 且 retransmits>=3，或 `lastrcv>=1,800,000ms`（30 分钟没有收到 TCP 数据，不计系统 suspend 时间）才标记 stalled，并经过持续时间与第二次采样确认后进入恢复。实现通过 `ss -i` 暴露的 `unacked`、`retrans`、`lastrcv` 读取，不硬编码目标内核的 struct 偏移；字段不可用则不启用该分支。
 - **状态与计时**：已读取到 UID/Socket 表但无 MCS socket 时先累计连续缺失 45 秒，再复采确认；SYN-SENT 保留首次观察时间，达到 60 秒后复采确认。检测源不可用时记录 unavailable/unknown 样本，但 patrol 继续运行；超过 90 秒的采样空档重置连续性锚点。
-- **多阶段恢复**：依次尝试四种既有 GMS 定向广播动作 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、`GTALK_HEARTBEAT`。每轮先复采确认，执行后仍由后续 Socket 样本验证；未恢复则按 30/45/60/90 秒退避进入下一动作，之后每 90 秒继续轮换。广播失败同样消耗当前阶段并进入下一阶段，避免某个动作永久卡住恢复流程。
-- **后台 watchdog**：`patrol.sh` 的 bounded child 身份判断新增 zombie 状态排除，避免已退出但尚未 wait 回收的子进程被误认为仍存活、造成误超时。若目标系统既无可用 timeout applet，也无 setsid，watchdog 会先快照 monitor 子进程树的 PID/starttime，TERM 后再按身份复核 KILL，避免只杀 monitor 父进程、遗留子进程继续持有 flock。service 仍分别监督 patrol heartbeat 与有效 sample heartbeat。
+- **多阶段恢复**：每个确认断联周期内按 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、`GTALK_HEARTBEAT` 顺序执行；广播失败立即进入下一动作，广播被接受后约 2 秒复采内核 Socket，仍明确 connecting/disconnected 才继续，connected 立即停止，unknown 或复采失败则安全停止。四动作全部无效后，下一轮完整序列才按 30/45/60/90 秒退避；不再把四种动作拆到多个巡检周期。
+- **后台 watchdog**：`patrol.sh` 的 bounded child 身份判断排除 zombie。若目标系统既无可用 timeout applet，也无 setsid，watchdog 会先快照 monitor 子进程树的 PID/starttime，TERM 后再按身份复核 KILL。复审修复了进程树快照中对 `/proc/PID/stat` 路径使用错误转义 awk 正则的问题，改为按路径分段提取 PID；此前该 awk 可能语法错误，导致后代进程未被快照。service 仍分别监督 patrol heartbeat 与有效 sample heartbeat。
 - **回归测试更新**：`tests/fcm-monitor-smoke.sh` 改为 kernel socket fixture，覆盖 connected、持续 SYN-SENT、TCP_INFO unacked/retrans 与 30 分钟 lastrcv stalled、首个广播失败后继续下一动作、多阶段四动作、后续 Socket 恢复、连续缺失阈值、检测源不可用，以及 monitor 不调用 dumpsys；`tests/ksu-wake-smoke.sh` 增加 bounded child zombie 与无 timeout、无 setsid 时进程树身份清理运行夹具。
 - **验证边界**：GitHub connector 仅提供源码读写，本轮没有本地 checkout/设备 Shell 执行能力；因此 smoke 脚本、全仓 `sh -n`、TCP_INFO 在目标 ROM 的实际输出、OriginOS 7/KSU 真机长时间后台验证尚未执行。`ss -i` 不提供 TCP_INFO 字段时，stalled 分支不可用，仍会继续使用 TCP 状态与缺失证据巡检，不伪造 TCP_INFO 结果。当前只能确认源码已更新并完成文本级结构核对，不能宣称测试通过。未编译、未打包、未触发 Actions、未合并、未发布。
 - **本轮提交**：监控主逻辑 `46dc0e5`、遗留路径清理 `2db2b72`、Socket/TCP_INFO scanner `ff8d634`、`41cb12f`、`5d122e1`、状态计时修正 `fd20e45` / `e198efb`、patrol zombie/进程树清理 `2a2fd54` / `2e47de3`、`a53fe4d`、`5da6a49`、`d83f996`、`665d19c`、`7abd34b`、`38edbd7`、`17dbc95`、`f1fd48b`、`7258237`、`b05e145`、`b6135e7`、`f1fd48b`、`7258237`、`17dbc95`、kernel socket smoke `2d306f2` / `c4cff1b` / `46bf4e7` / `a2df8eb` / `1a7dd48` / `da6e8fe` / `801d609`、`8b31915`、`dea4937`、`f2acfaf`、KSU watchdog 回归断言 `03a574f` / `a53fe4d` / `4276b02` / `ae2314e` / `e924bdd` / `ed79b3f`、`b6135e7`、ctl UID 查询清理 `69f344e`。交接文档以本次提交为准。
+
+---
+
+## 2026-11-23 复审修正：同周期恢复序列与无 setsid watchdog
+
+- **实际缺陷 1：恢复动作被错误拆分到多个巡检周期**。旧实现每次 `request_reconnect()` 只发一个广播；即使广播被接受但内核 Socket 仍明确断联，也要等 30/45/60/90 秒才尝试下一种动作，不符合“一个动作无效就继续下一种”的恢复要求。
+- **修正**：一次已确认断联触发一个有界序列，按 `GCM_RECONNECT` → `MCS_HEARTBEAT` → `ACTION_HEARTBEAT_NOW` → `GTALK_HEARTBEAT` 逐项执行。广播失败直接升级；广播成功后约 2 秒复采内核 Socket，仍明确为 connecting/disconnected 才升级；connected 停止；unknown/复采失败安全停止，不把未知伪装成断联。四项均无效后才按 30/45/60/90 秒退避重试完整序列。attempts 现在按实际广播动作计数，retry_streak 按完整恢复序列计数。
+- **开源方案依据**：参考 `grimseraph/HeartbeatFixerForFCM` 对 `GTALK_HEARTBEAT` / `MCS_HEARTBEAT` 的显式 GMS 定向广播，以及其他 FCM keeper 对 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW` 的使用。以上均为 GMS 内部、未公开稳定契约的动作；广播被系统接受不代表接收器处理成功，必须以本项目的内核 Socket 复采为准。不同 GMS 版本可能不支持其中部分动作。
+- **实际缺陷 2：无 timeout、无 setsid 时的进程树快照路径解析**。`bounded_descendants_snapshot()` 对 `/proc/PID/stat` 的 awk 路径正则含错误转义，可能使 awk 解析失败；原测试仅有静态字符串断言，未实际执行完整 smoke，因此未及时发现。
+- **修正**：不再使用易错的 slash-escaped awk 正则，从 `FILENAME` 按 `/` 分段取倒数第二项作为 PID；KSU smoke 增加该解析方式的固定源码断言，原有无 timeout/无 setsid 挂起子进程场景保留。
+- **新增/调整测试夹具**：FCM smoke 要求首个 `GCM_RECONNECT` 失败后，在同一次恢复序列中继续执行后三种动作；另模拟第二种动作使 socket 恢复，要求立即停止后续动作；覆盖退避窗口内不重复触发。KSU smoke 固定断言检查 `/proc` 路径解析修复。
+- **本轮提交**：patrol 路径解析 `1a0b03f8f5af06a1486ff05599822ea9a47945f7`；恢复序列 `82a0e312692fe4a9b5ab18919639d6e822bee980`；FCM smoke `f08ac01bf8d9fbb24bf97e274686898a982469b6`、`568866d335984a2445e236888605a4ba519b5aa2`、`81d541f8b5028d128bd5927fed1b7c753afad6cf`；KSU smoke `118661cb708b146df36cf4d0429e30d95e78015f`。
+- **验证边界**：已复读修改后的源码与测试夹具，检查动作顺序、成功后复采、断联继续、connected 停止、unknown 停止及退避状态字段；但当前连接器不能在仓库中执行 Shell，因此两个完整 smoke、全仓 `sh -n` 和 Android/KernelSU 设备验证仍未执行。不能据此宣称测试通过，也不触发编译、打包、Actions、合并或发布。
 
 ---
 
