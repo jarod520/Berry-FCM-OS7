@@ -123,6 +123,7 @@ test -e "$TMP/fix.done"
 test -e "$TMP/samples_during_fix"
 test "$(cat "$TMP/data/wake-status")" = fallback
 test "$(wc -l < "$TMP/samples")" -ge 3
+test -s "$TMP/data/patrol.sample.heartbeat"
 test "$(wc -l < "$TMP/timer")" -eq 2
 grep -qx 3 "$TMP/timer"
 test -s "$TMP/sleeps"
