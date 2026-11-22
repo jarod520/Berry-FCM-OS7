@@ -218,11 +218,11 @@ parse_mcs() {
         }
         if(line~/^SERVICE /){
           service_seen=1
-          scoped=(line~/^SERVICE com\\.google\\.android\\.gms\\/(\\.gcm\\.GcmService|com\\.google\\.android\\.gms\\.gcm\\.GcmService)([[:space:]]|$)/)
+          scoped=(line~/^SERVICE com\.google\\.android\\.gms\\/(\\.gcm\\.GcmService|com\.google\\.android\\.gms\\.gcm\\.GcmService)([[:space:]]|$)/)
           next
         }
         # Once ActivityManager exposes service blocks, never borrow a state
-        # field from another app's service. Legacy dumps without SERVICE
+        # field from another service. Legacy dumps without SERVICE
         # headings retain their existing DeviceID/current-field parsing.
         if(service_seen && !scoped) next
         if(done) next
