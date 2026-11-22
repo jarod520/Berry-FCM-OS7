@@ -666,7 +666,7 @@ EOF_SOCKET
         # socket ownership is unreadable; a later Connected event supersedes it.
         if [ "$observed" = unknown ] && native_close_fallback_ready; then
             observed=disconnected; source=gms_native_event_fallback
-            duration="$native_hint_age"
+            duration=-1
             close_code=
             new_transport=; new_remote=
             [ "$previous_down_state" = disconnected ] ||
@@ -732,6 +732,10 @@ EOF_SOCKET
         if [ "$duration" -ge 0 ] && [ "$duration" -le "$nowe" ]; then
             missing_epoch=$((nowe-duration))
             [ "$duration" -lt "$nowm" ] && missing_since=$((nowm-duration))
+        elif [ "$source" = gms_native_event_fallback ] && [ "$native_hint_age" -ge 0 ] && [ "$native_hint_age" -le "$nowm" ]; then
+            missing_since=$((nowm-native_hint_age))
+            missing_epoch=$((nowe-native_hint_age))
+            down_observed="$missing_since"
         fi
         state="$observed"; last_down="$missing_epoch"; conn_key=; conn_since=0; conn_since_mono=0
         ;;
