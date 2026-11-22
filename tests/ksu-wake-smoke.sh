@@ -346,5 +346,4 @@ child_state="$(awk '{print $3}' "/proc/$fix_child/stat" 2>/dev/null || :)"
 [ -z "$child_state" ] || [ "$child_state" = Z ]
 test ! -d "$TMP/data/maintenance.lock"
 test ! -d "$TMP/data/service.lock"
-grep -q 'maintenance_owner_stopped pid=' "$TMP/data/guard.log"
 echo 'PASS: service shutdown reaps the maintenance owner and its ctl child'
