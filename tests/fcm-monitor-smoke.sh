@@ -139,6 +139,26 @@ run monitor; requests 0
 j="$(run snapshot)"; assert_json "$j" fcm_recovery_decision=confirmation_changed
 unset MCS_NEXT_FIXTURE
 
+# Sample freshness and age use monotonic uptime, not wall-clock time.
+# A backward NTP/manual clock correction must not make a fresh GMS sample stale.
+export BERRY_FCM_DATA="$TMP/clock-rollback-data"
+mkdir -p "$BERRY_FCM_DATA"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+export MCS_SS_MODE=connected
+settime 20000
+printf '%s\n' 'DeviceID: [fixture]' 'connected=mtalk.google.com/142.250.157.188,port=5228' 'connectTime=00:10/00:00' > "$MCS_FIXTURE"
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_sample_uptime=20000
+assert_json "$j" fcm_sample_age_seconds=0
+echo 20010 > "$TMP/uptime"
+echo 1600000000 > "$MCS_CLOCK"
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_sample_uptime=20010
+assert_json "$j" fcm_sample_age_seconds=0
+echo 'PASS: wall-clock rollback does not stale a fresh monotonic GMS sample'
+
 # Unknown is not a confirmed down state: a retained outage hint must not
 # produce a false recovery event when the next usable observation is connected.
 export BERRY_FCM_DATA="$TMP/unknown-to-connected-data"
