@@ -334,13 +334,33 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     maintenance_child_pgid=
                     maintenance_group_tool=
                     maintenance_watchdog_pid=
+                    maintenance_child_group_identity_alive() {
+                        [ -n "$maintenance_child_pid" ] && [ -n "$maintenance_child_stamp" ] &&
+                            [ -n "$maintenance_child_pgid" ] || return 1
+                        kill -0 "$maintenance_child_pid" 2>/dev/null || return 1
+                        [ "$(proc_start_time "$maintenance_child_pid")" = "$maintenance_child_stamp" ] &&
+                            [ "$(proc_group_id "$maintenance_child_pid")" = "$maintenance_child_pgid" ] || return 1
+                        [ "$(proc_state "$maintenance_child_pid" 2>/dev/null)" = Z ] ||
+                            tr -d '\000' < "/proc/$maintenance_child_pid/cmdline" 2>/dev/null | grep -Fq '/bin/ctl.sh'
+                    }
                     maintenance_stop_child() {
+                        maintenance_child_stop_result=0
                         if [ -n "$maintenance_child_pgid" ] && [ -n "$maintenance_group_tool" ] &&
                            process_group_alive "$maintenance_child_pgid"; then
-                            "$maintenance_group_tool" kill -TERM "-$maintenance_child_pgid" 2>/dev/null || :
-                            sleep 1
-                            if process_group_alive "$maintenance_child_pgid"; then
-                                "$maintenance_group_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
+                            if maintenance_child_group_identity_alive; then
+                                "$maintenance_group_tool" kill -TERM "-$maintenance_child_pgid" 2>/dev/null || :
+                                sleep 1
+                                if process_group_alive "$maintenance_child_pgid"; then
+                                    if maintenance_child_group_identity_alive; then
+                                        "$maintenance_group_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
+                                    else
+                                        echo 'maintenance_child_group_identity_unverified_before_kill; refusing group signal' >> "$DATA/guard.log"
+                                        maintenance_child_stop_result=1
+                                    fi
+                                fi
+                            else
+                                echo 'maintenance_child_group_identity_unverified_before_term; refusing group signal' >> "$DATA/guard.log"
+                                maintenance_child_stop_result=1
                             fi
                         fi
                         [ -z "$maintenance_watchdog_pid" ] || {
@@ -352,16 +372,22 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                             wait "$maintenance_child_pid" 2>/dev/null || :
                             child_file_pid=; child_file_stamp=; child_file_pgid=; child_file_tool=
                             IFS=' ' read -r child_file_pid child_file_stamp child_file_pgid child_file_tool < "$MAINTENANCE_LOCK/child" 2>/dev/null || :
-                            if [ "$child_file_pid" = "$maintenance_child_pid" ] &&
-                               [ "$child_file_stamp" = "$maintenance_child_stamp" ] &&
-                               [ "$child_file_pgid" = "$maintenance_child_pgid" ]; then
-                                rm -f "$MAINTENANCE_LOCK/child"
+                            if process_group_alive "$maintenance_child_pgid"; then
+                                echo 'maintenance_child_group_stop_unconfirmed; preserving child owner record' >> "$DATA/guard.log"
+                                maintenance_child_stop_result=1
+                            else
+                                if [ "$child_file_pid" = "$maintenance_child_pid" ] &&
+                                   [ "$child_file_stamp" = "$maintenance_child_stamp" ] &&
+                                   [ "$child_file_pgid" = "$maintenance_child_pgid" ]; then
+                                    rm -f "$MAINTENANCE_LOCK/child"
+                                fi
+                                maintenance_child_pid=; maintenance_child_stamp=; maintenance_child_pgid=
                             fi
-                            maintenance_child_pid=; maintenance_child_stamp=; maintenance_child_pgid=
                         }
+                        return "$maintenance_child_stop_result"
                     }
                     maintenance_cleanup() {
-                        maintenance_stop_child
+                        maintenance_stop_child || return 1
                         current_owner=; current_stamp=
                         IFS=' ' read -r current_owner current_stamp < "$MAINTENANCE_LOCK/owner" 2>/dev/null || :
                         if [ "$current_owner" = "$maintenance_owner_pid" ] &&
@@ -404,9 +430,17 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     fi
                     printf '%s %s %s %s\n' "$maintenance_child_pid" "$maintenance_child_stamp" "$maintenance_child_pgid" "$maintenance_group_tool" > "$MAINTENANCE_LOCK/child.tmp.$maintenance_owner_pid" &&
                         mv -f "$MAINTENANCE_LOCK/child.tmp.$maintenance_owner_pid" "$MAINTENANCE_LOCK/child" || {
-                            "$maintenance_group_tool" kill -TERM "-$maintenance_child_pgid" 2>/dev/null || :
-                            sleep 1
-                            "$maintenance_group_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
+                            if process_group_alive "$maintenance_child_pgid" &&
+                               maintenance_child_group_identity_alive; then
+                                "$maintenance_group_tool" kill -TERM "-$maintenance_child_pgid" 2>/dev/null || :
+                                sleep 1
+                                if process_group_alive "$maintenance_child_pgid" &&
+                                   maintenance_child_group_identity_alive; then
+                                    "$maintenance_group_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
+                                fi
+                            else
+                                echo 'maintenance_child_publish_failed_identity_unverified; refusing group signal' >> "$DATA/guard.log"
+                            fi
                             wait "$maintenance_child_pid" 2>/dev/null || :
                             exit 1
                         }
@@ -417,12 +451,20 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                         wait "$watchdog_sleep_pid" || exit 0
                         watchdog_sleep_pid=
                         if process_group_alive "$maintenance_child_pgid"; then
+                            maintenance_child_group_identity_alive || {
+                                echo 'maintenance_watchdog_identity_unverified_before_term' >> "$DATA/guard.log"
+                                exit 0
+                            }
                             "$maintenance_group_tool" kill -TERM "-$maintenance_child_pgid" 2>/dev/null || :
                             sleep "$MONITOR_KILL_GRACE" &
                             watchdog_sleep_pid=$!
                             wait "$watchdog_sleep_pid" || exit 0
                             watchdog_sleep_pid=
                             if process_group_alive "$maintenance_child_pgid"; then
+                                maintenance_child_group_identity_alive || {
+                                    echo 'maintenance_watchdog_identity_unverified_before_kill' >> "$DATA/guard.log"
+                                    exit 0
+                                }
                                 "$maintenance_group_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
                             fi
                         fi
@@ -430,24 +472,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     maintenance_watchdog_pid=$!
                     wait "$maintenance_child_pid"
                     fix_rc=$?
-                    if process_group_alive "$maintenance_child_pgid"; then
-                        "$maintenance_group_tool" kill -TERM "-$maintenance_child_pgid" 2>/dev/null || :
-                        sleep 1
-                        if process_group_alive "$maintenance_child_pgid"; then
-                            "$maintenance_group_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
-                        fi
-                    fi
-                    kill "$maintenance_watchdog_pid" 2>/dev/null || :
-                    wait "$maintenance_watchdog_pid" 2>/dev/null || :
-                    maintenance_watchdog_pid=
-                    child_file_pid=; child_file_stamp=; child_file_pgid=; child_file_tool=
-                    IFS=' ' read -r child_file_pid child_file_stamp child_file_pgid child_file_tool < "$MAINTENANCE_LOCK/child" 2>/dev/null || :
-                    if [ "$child_file_pid" = "$maintenance_child_pid" ] &&
-                       [ "$child_file_stamp" = "$maintenance_child_stamp" ] &&
-                       [ "$child_file_pgid" = "$maintenance_child_pgid" ]; then
-                        rm -f "$MAINTENANCE_LOCK/child"
-                    fi
-                    maintenance_child_pid=; maintenance_child_stamp=; maintenance_child_pgid=
+                    maintenance_stop_child || :
                     fix_finished_epoch="$(date +%s 2>/dev/null)"
                     case "$fix_finished_epoch" in ''|*[!0-9]*) fix_finished_epoch=0;; esac
                     fix_elapsed=unknown
