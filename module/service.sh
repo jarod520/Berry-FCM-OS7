@@ -87,20 +87,6 @@ maintenance_owner_identity() {
     [ "$(proc_start_time "$maintenance_pid")" = "$maintenance_stamp" ] || return 1
     [ "$(proc_state "$maintenance_pid")" != Z ]
 }
-maintenance_child_identity() {
-    maintenance_child_pid=; maintenance_child_stamp=; maintenance_child_pgid=; maintenance_child_tool=
-    IFS=' ' read -r maintenance_child_pid maintenance_child_stamp maintenance_child_pgid maintenance_child_tool < "$MAINTENANCE_LOCK/child" 2>/dev/null || return 1
-    case "$maintenance_child_pid:$maintenance_child_stamp:$maintenance_child_pgid" in *[!0-9:]*|:*|*:) return 1;; esac
-    [ "$maintenance_child_pid" -gt 1 ] && [ "$maintenance_child_stamp" -gt 0 ] &&
-        [ "$maintenance_child_pgid" = "$maintenance_child_pid" ] || return 1
-    case "$maintenance_child_tool" in "$TOYBOX_BIN"|"$KSU_BUSYBOX") :;; *) return 1;; esac
-    [ -x "$maintenance_child_tool" ] &&
-        "$maintenance_child_tool" --list 2>/dev/null | grep -qx kill || return 1
-    kill -0 "$maintenance_child_pid" 2>/dev/null || return 1
-    [ "$(proc_start_time "$maintenance_child_pid")" = "$maintenance_child_stamp" ] || return 1
-    [ "$(proc_group_id "$maintenance_child_pid")" = "$maintenance_child_pgid" ] || return 1
-    [ "$(proc_state "$maintenance_child_pid")" != Z ]
-}
 maintenance_child_group_alive() {
     [ -n "$maintenance_child_tool" ] && [ -n "$maintenance_child_pgid" ] &&
         process_group_alive "$maintenance_child_pgid"
