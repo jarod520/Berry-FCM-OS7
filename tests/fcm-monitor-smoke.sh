@@ -5,8 +5,19 @@ MON="${BERRY_MONITOR_SCRIPT:-$ROOT/module/bin/fcm-monitor.sh}"
 grep -Fq '"$TOYBOX_BIN" timeout --foreground -k 1 3 nslookup "$host"' "$MON"
 grep -Fq 'timeout --foreground 3 nslookup "$host"' "$MON"
 grep -Fq '*"Run PROG."*) timeout 3 nslookup "$host"' "$MON"
+grep -Fq '"$@" -xn 9 sh "$0" "$command" --locked "$lock_result"' "$MON"
+grep -Fq '(run_monitor_command "$command")' "$MON"
+grep -Fq 'case "$lock_result" in "$DATA"/mcs-monitor.lock.result.*)' "$MON"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT HUP INT TERM
+cleanup() {
+    if [ -n "${first_monitor_pid:-}" ]; then
+        kill "$first_monitor_pid" 2>/dev/null || :
+        wait "$first_monitor_pid" 2>/dev/null || :
+    fi
+    rm -rf "$TMP"
+}
+trap cleanup EXIT
+trap 'cleanup; exit 1' HUP INT TERM
 mkdir -p "$TMP/bin" "$TMP/data"
 cat > "$TMP/bin/dumpsys" <<'MOCK'
 #!/bin/sh
@@ -682,5 +693,6 @@ if sh "$MON" reconnect > "$TMP/flock-second.out" 2>&1; then
 fi
 grep -q '后台正在检查 GMS' "$TMP/flock-second.out"
 wait "$first_monitor_pid"
+first_monitor_pid=
 [ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d ' ')" = 1 ]
 echo 'PASS: flock remains held for the full monitor operation and rejects concurrent requests'
