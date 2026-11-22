@@ -99,9 +99,10 @@ bounded_descendants_snapshot() {
     root="$1"; output="$2"
     awk -v root="$root" '
       FNR==1 {
-        pid=FILENAME
-        sub(/\\/stat$/,"",pid)
-        sub(/^.*\\//,"",pid)
+        # /proc/PID/stat: take the parent directory name without fragile
+        # slash-escaped awk regexes (some Android awk builds reject them).
+        path_count=split(FILENAME,path_parts,"/")
+        pid=path_parts[path_count-1]
         stat=$0; sub(/^.*[)] /,"",stat); split(stat,f," ")
         state[pid]=f[1]; parent[pid]=f[2]; stamp[pid]=f[20]
       }
