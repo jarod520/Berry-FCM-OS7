@@ -214,10 +214,19 @@ assert_json "$(run snapshot)" fcm_source=gms
 [ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 2 ]
 grep -q '|socket_native_conflict|' "$BERRY_FCM_DATA/mcs-monitor-events.log"
 requests 0
+settime 70075
+export MCS_SS_MODE=absent
+run monitor
+assert_json "$(run snapshot)" fcm_state=disconnected
+assert_json "$(run snapshot)" fcm_source=gms
+[ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 2 ]
 settime 70080
+export MCS_SS_MODE=unknown
 j="$(run status)"
 assert_json "$j" fcm_state=disconnected
+assert_json "$j" fcm_source=gms
 [ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 2 ]
+export MCS_SS_MODE=connected
 : > "$MCS_AM_LOG"
 settime 70140
 printf "%s\n" "DeviceID: [fixture]" "Not connected" "disconnectTime=00:20/00:00" > "$MCS_FIXTURE"
