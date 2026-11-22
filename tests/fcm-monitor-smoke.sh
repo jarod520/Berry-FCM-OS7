@@ -62,7 +62,7 @@ if [ -n "${MCS_AM_CONNECT_ON_ACTION:-}" ] && printf '%s' "$*" | grep -Fq "$MCS_A
     echo connected > "$MCS_MODE_FILE"
 fi
 if [ -n "${MCS_AM_ADVANCE_UPTIME:-}" ]; then
-    printf '%s\\n' "$MCS_AM_ADVANCE_UPTIME" > "$MCS_UPTIME_FILE"
+    printf '%s\n' "$MCS_AM_ADVANCE_UPTIME" > "$MCS_UPTIME_FILE"
 fi
 echo 'Broadcast completed: result=0'
 MOCK
