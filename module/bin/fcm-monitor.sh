@@ -580,7 +580,7 @@ write_decision_evidence() {
         return 0
     }
     decision_tmp="$EVIDENCE.decision.$"
-    if printf '%s|%s|%s|%s|%s|%s|%s\\n' "$committed_source" "$committed_duration" "$committed_close" "$committed_tcp" "$committed_reason" "$decision" "$committed_evidence_mono" > "$decision_tmp" &&
+    if printf '%s|%s|%s|%s|%s|%s|%s\n' "$committed_source" "$committed_duration" "$committed_close" "$committed_tcp" "$committed_reason" "$decision" "$committed_evidence_mono" > "$decision_tmp" &&
        mv -f "$decision_tmp" "$EVIDENCE"; then
         return 0
     fi
