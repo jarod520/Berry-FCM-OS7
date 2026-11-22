@@ -631,3 +631,11 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **已完成的验证**：核对了上述上游实现；在 Linux 容器模拟了 timeout wrapper 为组 leader、monitor PID 与 PGID 不同的情形，按新身份校验向该组发送信号后 wrapper 和 monitor 子进程均退出；另模拟 BusyBox timeout 经 setsid 后 monitor PID 即 PGID，组信号能终止 monitor 与子进程。静态核对了新增 owner 字段、服务端校验和 timeout 分支。 另外模拟 GNU/Coreutils `timeout --foreground` 与 BusyBox direct-PID timeout 的进程组继承，并执行了 PATH timeout 帮助信息识别分支；修改过的 patrol/service/DNS 代码片段及新增 KSU/FCM 测试 heredoc 片段通过 POSIX `sh -n`。这些仅是片段语法和 Linux 行为模拟，不等于完整 smoke 或 Android 实机通过。
 - **尚未完成**：完整 `tests/ksu-wake-smoke.sh`、`tests/fcm-monitor-smoke.sh`、所有 Shell 文件 `sh -n` 以及 OriginOS/KernelSU/GMS 实机测试尚未执行。Linux 模拟不能替代 Android Toybox/BusyBox 版本和目标 shell 的实测。
 - **构建约束**：本轮没有触发 GitHub Actions、编译、打包或 Release；PR #1 仍保持 open / not merged。待完整静态审查与 smoke 测试结束后，再通知用户手动构建测试。
+
+### 2026-11-22 monitor flock 锁生命周期修正
+- **发现的问题**：旧 `with_flock()` 通过命令替换单独执行 `flock -xn 9`，flock 子进程在检查后立即退出，文件锁没有覆盖后续 monitor/reconnect 操作；此前的并发用例只验证“外部持锁时请求被拒绝”，没有验证 BerryFCM 自己是否持锁到操作结束。
+- **修正方式**：改为让 flock 以子命令方式启动同一脚本的 `--locked` 分支，锁由 flock 进程持有直到整个监控操作结束。子进程将真实命令退出码写入独立结果文件，避免 flock 的锁冲突退出码与 monitor 自身退出码混淆；临时文件 PID 从 `/proc/self/stat` 读取，不依赖 `$$` 展开。
+- **回归用例**：FCM smoke 增加阻塞 dumpsys 的并发测试：第一个 monitor 正在执行时，第二个 reconnect 必须收到“后台正在检查 GMS”，且 dumpsys 只执行一次。测试清理钩子会在异常退出时终止尚未结束的第一条 monitor 进程。
+- **局部验证**：KSU/FCM smoke 的源码字面断言均能匹配当前源码；两份 smoke、相关 Shell 文件及 HANDOFF 均无尾随空白和冲突标记。Linux 容器中用 util-linux flock 模拟了完整持锁子命令：并发请求返回锁冲突，包装逻辑返回 13；另验证子命令真实退出码 12 能被保留。BusyBox 上游 `flock` 实现同样支持 FD 加子命令形式（参考：[BusyBox flock.c](https://github.com/brgl/busybox/blob/master/util-linux/flock.c)）。
+- **尚未完成**：完整 `tests/fcm-monitor-smoke.sh`、`tests/ksu-wake-smoke.sh` 和所有 Shell 文件 `sh -n` 尚未在完整仓库环境执行；Linux 模拟不替代设备上的 KernelSU BusyBox、Android mksh 和 GMS 实测。
+- **构建纪律**：未触发任何 workflow、编译、打包、合并或 Release。PR #1 仍保持 open / not merged；继续审查完成后再通知用户手动构建。
