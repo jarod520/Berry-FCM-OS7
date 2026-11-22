@@ -49,6 +49,12 @@ grep -Fq 'stop_patrol || cleanup_ok=0' "$ROOT/module/service.sh"
 grep -Fq 'service_cleanup_incomplete; preserving lock' "$ROOT/module/service.sh"
 grep -Fq 'maintenance_owner_alive()' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'proc_start_time "$maintenance_pid"' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'maintenance_stop_child()' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'trap maintenance_cleanup EXIT' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'stop_maintenance_owner()' "$ROOT/module/service.sh"
+grep -Fq 'stop_maintenance_owner || cleanup_ok=0' "$ROOT/module/service.sh"
+grep -Fq 'stop_maintenance_owner || exit 0' "$ROOT/module/service.sh"
+grep -Fq 'maintenance_owner_stop_unconfirmed' "$ROOT/module/service.sh"
 grep -Fq 'proc_state "$maintenance_pid")" != Z' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'read -r maintenance_owner_pid _ < /proc/self/stat' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'current_stamp" = "$maintenance_owner_stamp"' "$ROOT/module/bin/patrol.sh"
@@ -155,7 +161,11 @@ exec /usr/bin/timeout -k "$grace" "$duration" "$@"
 MOCK
 cat > "$TMP/module/bin/ctl.sh" <<'MOCK'
 #!/bin/sh
-if [ ! -e "$TEST_DIR/fix.done" ]; then
+if [ "${TEST_BLOCK_FIX:-0}" = 1 ]; then
+    /bin/sleep 30 &
+    echo "$!" > "$TEST_DIR/fix-child-pid"
+    wait
+elif [ ! -e "$TEST_DIR/fix.done" ]; then
     /bin/sleep 4
     touch "$TEST_DIR/fix.done"
 fi
@@ -310,3 +320,29 @@ test "$(wc -l < "$TMP/samples")" -ge 2
 grep -q 'fcm_check_end rc=124' "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: watchdog fallback keeps bounded patrol active without timeout applets'
+
+# Service shutdown must stop an in-flight maintenance wrapper and its ctl child.
+touch "$TMP/module/module.prop"
+echo 1 > "$TMP/data/enabled"
+echo passive > "$TMP/data/wake-mode"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+export TEST_BLOCK_FIX=1
+sh "$TMP/module/service.sh" &
+service_pid=$!
+n=0
+while ! grep -q 'maintenance_start .*operation=guard_fix' "$TMP/data/guard.log" 2>/dev/null && [ "$n" -lt 60 ]; do
+    /bin/sleep 0.1
+    n=$((n + 1))
+done
+grep -q 'maintenance_start .*operation=guard_fix' "$TMP/data/guard.log"
+fix_child="$(cat "$TMP/fix-child-pid")"
+kill -TERM "$service_pid"
+wait "$service_pid" 2>/dev/null || :
+unset TEST_BLOCK_FIX
+child_state="$(awk '{print $3}' "/proc/$fix_child/stat" 2>/dev/null || :)"
+[ -z "$child_state" ] || [ "$child_state" = Z ]
+test ! -d "$TMP/data/maintenance.lock"
+test ! -d "$TMP/data/service.lock"
+grep -q 'maintenance_owner_stopped pid=' "$TMP/data/guard.log"
+echo 'PASS: service shutdown reaps the maintenance owner and its ctl child'
