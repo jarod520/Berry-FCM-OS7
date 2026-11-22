@@ -398,6 +398,11 @@ stop_monitor_owner() {
                         printf '[%s] monitor_owner_pid_reused_or_moved pid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
                         return 1
                     }
+                if [ "$(proc_state "$monitor_pid" 2>/dev/null)" != Z ] &&
+                   ! tr -d '\\000' < "/proc/$monitor_pid/cmdline" 2>/dev/null | grep -Fq 'fcm-monitor.sh'; then
+                    printf '[%s] monitor_owner_cmdline_mismatch pid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
+                    return 1
+                fi
             fi
             if process_group_alive "$monitor_pgid"; then
                 "$monitor_group_tool" kill -TERM "-$monitor_pgid" 2>/dev/null || :
