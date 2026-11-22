@@ -42,13 +42,23 @@ proc_start_time() {
     [ -r "/proc/$1/stat" ] || return 1
     tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $20}'
 }
+proc_group_id() {
+    [ -r "/proc/$1/stat" ] || return 1
+    tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $3}'
+}
 write_lock_owner() {
     lock_owner_pid=
     IFS=' ' read -r lock_owner_pid _ < /proc/self/stat 2>/dev/null || return 1
     case "$lock_owner_pid" in ''|*[!0-9]*) return 1;; esac
     lock_owner_stamp="$(proc_start_time "$lock_owner_pid")"
-    [ -n "$lock_owner_stamp" ] || return 1
-    printf "%s %s\n" "$lock_owner_pid" "$lock_owner_stamp" > "$LOCK_OWNER.tmp.$lock_owner_pid" &&
+    lock_owner_pgid="$(proc_group_id "$lock_owner_pid")"
+    [ -n "$lock_owner_stamp" ] && [ -n "$lock_owner_pgid" ] || return 1
+    lock_owner_isolated=0
+    if [ "${BERRY_FCM_ISOLATED_GROUP:-0}" = 1 ] &&
+       [ "$lock_owner_pgid" = "$lock_owner_pid" ]; then
+        lock_owner_isolated=1
+    fi
+    printf "%s %s %s %s\n" "$lock_owner_pid" "$lock_owner_stamp" "$lock_owner_pgid" "$lock_owner_isolated" > "$LOCK_OWNER.tmp.$lock_owner_pid" &&
         mv -f "$LOCK_OWNER.tmp.$lock_owner_pid" "$LOCK_OWNER"
 }
 clear_lock_owner() {
