@@ -5,7 +5,7 @@
 - 自动恢复按连续未恢复轮次依次尝试 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、`GTALK_HEARTBEAT`；每轮只发送一种动作，后续轮次必须由新采样再次确认仍断联并经过退避。广播返回成功只记录为已请求，不等于 GMS 已恢复；恢复必须由后续原生状态或精确 MCS Socket 证据确认。
 - service 独立监督 patrol：PID/starttime/cmdline 身份校验；同时监控 patrol 进程心跳和成功完成的 FCM 样本心跳，避免 patrol 循环仍在运行、但监控锁长期被占用时被误判为健康；记录 monitor 锁所有者 PID/starttime，样本超时后只终止身份核验通过的卡死 monitor。service 清理 worker 未确认退出时保留锁；新 service 回收旧锁前先核验并终止遗留 patrol，无法确认退出则拒绝启动重复巡检。首次心跳缺失也有 90 秒兜底。停止 monitor/timer/patrol 使用有界 TERM/KILL 等待，未确认退出时不启动重复 worker。热安装/卸载等待旧 service 最长 24 秒，KILL 后再复核；热安装若旧进程仍存活则取消新启动。保留数据目录配置与历史，不强制重启。
 - 开源参考：继续参考 microG GmsCore 的 MCS 连接/心跳恢复模型及 AOSP Toybox `timeout` 的进程组超时清理。本项目当前第四阶段使用 `GTALK_HEARTBEAT`；未将 HyperOS 专用 Chimera Provider 查询直接移植到 OriginOS。DNS 解析失败也缓存 10 分钟，避免每轮重复等待。
-- 本轮巡检兜底修复：没有可用 `timeout` applet 时不再返回 125 并跳过采样；改用 watchdog 限时，若 Toybox / KernelSU BusyBox 同时提供 `setsid` 与 `kill`，按独立进程组清理 monitor 子进程。后台每轮读取 Socket，原生 `GcmService` dumpsys 默认每 60 秒刷新一次；手动恢复及原生二次确认强制刷新，`no_current_state` 额外重试也限制为每 60 秒最多一次。最近一次原生状态若为断开/连接中，中间周期的 ESTABLISHED Socket 不得覆盖该断联状态，必须等新鲜原生采样确认恢复。新增对应 smoke 用例；目前尚未执行整套 smoke 或完整构建，不能记为测试通过。
+- 本轮巡检兜底修复：没有可用 `timeout` applet 时不再返回 125 并跳过采样；改用 watchdog 限时，若 Toybox / KernelSU BusyBox 同时提供 `setsid` 与 `kill`，按独立进程组清理 monitor 子进程。后台每轮读取 Socket，原生 `GcmService` dumpsys 默认每 60 秒刷新一次；手动恢复及原生二次确认强制刷新，`no_current_state` 额外重试也限制为每 60 秒最多一次。最近一次原生状态若为断开/连接中，中间周期的 ESTABLISHED Socket 不得覆盖该断联状态；Socket 缺失或所有权不可读时也保留该状态，直到新鲜原生采样确认或连续缺失达到独立阈值。新增对应 smoke 用例；目前尚未执行整套 smoke 或完整构建，不能记为测试通过。
 - 当前进度：源码与回归用例仍在集中修复，尚未执行本轮完整 smoke 套件、完整构建或 OriginOS 7 实机验证。`.github/workflows/` 下所有工作流已改为仅 `workflow_dispatch`，不再由 push/PR 自动触发。按用户要求，全部代码修改与静态检查完成后，只手动触发一次完整构建；不自动编译、不自动打包、不合并、不发布。
 
 # Berry-FCM-OS7 开发进度与接续交接
