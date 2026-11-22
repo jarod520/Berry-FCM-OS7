@@ -609,3 +609,22 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - 已将 `service_cleanup()` 顺序调整为：停止 timer → 停止 patrol → 清理 monitor owner → 清理 maintenance owner。patrol 停止后不再产生新的 monitor 检查，再读取 owner 锁清理在停止窗口内发布的 monitor 身份。
 - KSU smoke 增加静态顺序断言，要求 `stop_patrol` 必须位于 `stop_monitor_owner` 之前。
 - 此项目前完成源码和断言静态核对；尚未执行完整 KSU smoke，因此退出竞态的动态回归仍待完整测试验证。
+
+
+### 2026-11-22 RC7 进程组隔离复审：timeout 实现差异与退出清理
+
+- **上游源码核实**：
+  - Toybox `timeout` 默认通过 `setpgid(0, 0)` 将被执行命令放入独立进程组；`--foreground` 才不创建新组。源码：[Toybox timeout.c](https://github.com/landley/toybox/blob/master/toys/other/timeout.c)。
+  - BusyBox `timeout` 的实现是建立 watchdog 子进程并在主进程中 `exec` 被监控命令，超时信号发给直接 PID；它本身不创建独立进程组。源码：[BusyBox timeout.c](https://github.com/mirror/busybox/blob/master/coreutils/timeout.c)。
+  - BusyBox/Toybox `setsid` 在调用者已经是进程组 leader 时可能 fork；当前 `run_bounded()` 位于命令替换子 shell 中，外部 `setsid` 进程正常情况下不是该进程组 leader。源码：[BusyBox setsid.c](https://github.com/mirror/busybox/blob/master/util-linux/setsid.c)、[Toybox setsid.c](https://github.com/landley/toybox/blob/master/toys/other/setsid.c)。
+- **发现的实际风险**：原 `patrol.sh` 将 BusyBox `timeout` 也设置 `BERRY_FCM_ISOLATED_GROUP=1`。BusyBox 不创建独立组时，monitor 会继承 service 所在进程组；`service.sh` 若按该标记对负 PGID 发信号，可能误杀整个 service 进程组。与此同时，Toybox/coreutils timeout 的进程组 leader 可能与 monitor PID 不同，旧逻辑只接受 `PGID == monitor PID`，导致实际独立组被降级为只杀 monitor shell，探测子进程可能遗留。
+- **本次修正**：
+  - Toybox timeout 保留其原生独立进程组标记。
+  - BusyBox timeout 与 PATH 来源不确定的 timeout，优先通过 Toybox/BusyBox `setsid` 建立私有会话后才标记为 isolated；没有可用 `setsid` 时明确标记 `BERRY_FCM_ISOLATED_GROUP=0`，禁止把继承的 service 组当作 monitor 组。
+  - `fcm-monitor.sh` 的 owner 文件扩展为五字段：monitor PID、monitor starttime、PGID、isolated 标记、PGID leader starttime。这样兼容 PGID 与 monitor PID 相同或不同的隔离方式。
+  - `service.sh` 在组信号前核验 PGID leader 的 starttime/PGID/cmdline，并再次核验 monitor PID/starttime/PGID；旧四字段 isolated owner 仅在 monitor 自身就是组 leader 时兼容推断，不能把旧的未知组号当作安全组。
+  - 正常 `service_cleanup()` 和巡检 watchdog 回收都改为先停止 patrol，再读取并清理 monitor owner，避免 patrol 在 owner 检查后才发布新的 monitor。
+  - `tests/ksu-wake-smoke.sh` 新增 Toybox/coreutils 风格 `PGID != monitor PID` 退出用例、BusyBox timeout 经 setsid 隔离用例，以及 watchdog 清理顺序断言。
+- **已完成的验证**：核对了上述上游实现；在 Linux 容器模拟了 timeout wrapper 为组 leader、monitor PID 与 PGID 不同的情形，按新身份校验向该组发送信号后 wrapper 和 monitor 子进程均退出；另模拟 BusyBox timeout 经 setsid 后 monitor PID 即 PGID，组信号能终止 monitor 与子进程。静态核对了新增 owner 字段、服务端校验和 timeout 分支。
+- **尚未完成**：完整 `tests/ksu-wake-smoke.sh`、`tests/fcm-monitor-smoke.sh`、所有 Shell 文件 `sh -n` 以及 OriginOS/KernelSU/GMS 实机测试尚未执行。Linux 模拟不能替代 Android Toybox/BusyBox 版本和目标 shell 的实测。
+- **构建约束**：本轮没有触发 GitHub Actions、编译、打包或 Release；PR #1 仍保持 open / not merged。待完整静态审查与 smoke 测试结束后，再通知用户手动构建测试。
