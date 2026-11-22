@@ -63,8 +63,13 @@ write_lock_owner() {
             lock_owner_isolated=1
         fi
     fi
-    printf "%s %s %s %s %s\n" "$lock_owner_pid" "$lock_owner_stamp" "$lock_owner_pgid" "$lock_owner_isolated" "$lock_owner_group_stamp" > "$LOCK_OWNER.tmp.$lock_owner_pid" &&
-        mv -f "$LOCK_OWNER.tmp.$lock_owner_pid" "$LOCK_OWNER"
+    owner_tmp="$LOCK_OWNER.tmp.$lock_owner_pid"
+    if printf "%s %s %s %s %s\n" "$lock_owner_pid" "$lock_owner_stamp" "$lock_owner_pgid" "$lock_owner_isolated" "$lock_owner_group_stamp" > "$owner_tmp" &&
+       mv -f "$owner_tmp" "$LOCK_OWNER"; then
+        return 0
+    fi
+    rm -f "$owner_tmp"
+    return 1
 }
 clear_lock_owner() {
     [ -n "$lock_owner_pid" ] && [ -n "$lock_owner_stamp" ] || return 0
