@@ -211,7 +211,7 @@ j="$(run snapshot)"
 assert_json "$j" fcm_state=disconnected
 assert_json "$j" fcm_source=gms_socket_fallback
 assert_json "$j" fcm_recovery_decision=requested
-grep -q '|recovery_socket_confirmed|' "$BERRY_FCM_DATA/mcs-monitor-events.log"
+grep -q '|tcp_absence_confirmed|' "$BERRY_FCM_DATA/mcs-monitor-events.log"
 grep -q '|reconnect_requested|auto UID=0 GCM_RECONNECT' "$BERRY_FCM_DATA/mcs-monitor-events.log"
 unset MCS_SS_MODE
 echo 'PASS: recent native down + root TCP absence recovers through unreadable dumps'
@@ -232,7 +232,7 @@ settime 12560
 run monitor; requests 7
 assert_json "$(run snapshot)" fcm_state=disconnected
 assert_json "$(run snapshot)" fcm_source=gms_socket_fallback
-grep -q '|recovery_socket_confirmed|' "$BERRY_FCM_DATA/mcs-monitor-events.log"
+grep -q '|tcp_absence_confirmed|' "$BERRY_FCM_DATA/mcs-monitor-events.log"
 grep -q '|reconnect_requested|auto UID=0 GCM_RECONNECT' "$BERRY_FCM_DATA/mcs-monitor-events.log"
 unset MCS_SS_MODE
 echo 'PASS: unknown-only state ages continuous Root socket absence into confirmed auto recovery'
