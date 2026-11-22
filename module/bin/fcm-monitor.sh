@@ -331,8 +331,8 @@ scan_sockets() {
         unacked=field_number("unacked",$0); retrans=field_number("retrans",$0)
       }
       current && $1!~/^(ESTAB|ESTABLISHED|SYN-SENT|SYN_SENT)$/ {
-        if (unacked<0) unacked=field_number("unacked",$0)
-        if (retrans<0) retrans=field_number("retrans",$0)
+        value=field_number("unacked",$0); if (value>=0) unacked=value
+        value=field_number("retrans",$0); if (value>=0) retrans=value
       }
       END {
         emit()
