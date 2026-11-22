@@ -244,13 +244,13 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
             "$(date '+%F %T')" "$$" "$now" "$wake_event" "$check_wake_mode" >> "$DATA/guard.log"
         result="$(run_bounded "$MONITOR_TIMEOUT" sh "$MODDIR/bin/fcm-monitor.sh" monitor 2>&1)"
         monitor_rc=$?
-        if [ "$monitor_rc" -eq 0 ]; then
-            sample_now="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
-            case "$sample_now" in ""|*[!0-9]*) sample_now=0;; esac
-            if [ "$sample_now" -gt 0 ]; then
-                printf '%s\n' "$sample_now" > "$DATA/patrol.sample.heartbeat.tmp" &&
-                    mv -f "$DATA/patrol.sample.heartbeat.tmp" "$DATA/patrol.sample.heartbeat"
-            fi
+        # This heartbeat means the bounded monitor attempt returned, not that GMS was readable.
+        # A nonzero result (for example, a busy lock) is a failed sample, not a stalled patrol.
+        sample_now="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
+        case "$sample_now" in ""|*[!0-9]*) sample_now=0;; esac
+        if [ "$sample_now" -gt 0 ]; then
+            printf '%s\n' "$sample_now" > "$DATA/patrol.sample.heartbeat.tmp" &&
+                mv -f "$DATA/patrol.sample.heartbeat.tmp" "$DATA/patrol.sample.heartbeat"
         fi
         sample="$(run_bounded 5 sh "$MODDIR/bin/fcm-monitor.sh" snapshot 2>/dev/null)"
 
