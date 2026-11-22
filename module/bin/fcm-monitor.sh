@@ -1182,7 +1182,7 @@ if [ "${2:-}" = --locked ]; then
     lock_result="${3:-}"
     case "$lock_result" in "$DATA"/mcs-monitor.lock.result.*) :;; *) exit 14;; esac
     if write_lock_owner; then trap 'clear_lock_owner' EXIT; fi
-    run_monitor_command "$command"
+    (run_monitor_command "$command")
     monitor_rc=$?
     clear_lock_owner
     trap - EXIT
