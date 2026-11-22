@@ -163,6 +163,7 @@ patrol_alive() {
     tr "\000" " " 2>/dev/null < "/proc/$patrol_pid/cmdline" | grep -Fq "patrol.sh"
 }
 start_patrol() {
+    rm -f "$DATA/patrol.heartbeat"
     sh "$MODDIR/bin/patrol.sh" </dev/null >> "$DATA/patrol.log" 2>&1 &
     patrol_pid=$!
     patrol_stamp=
@@ -237,9 +238,15 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ]; do
         now_up="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
         case "$hb" in ""|*[!0-9]*) hb=0;; esac
         case "$now_up" in ""|*[!0-9]*) now_up=0;; esac
+        patrol_stale=0
         if [ "$hb" -gt 0 ] && [ "$now_up" -ge "$hb" ] && [ $((now_up - hb)) -gt 90 ]; then
-            printf '[%s] patrol_watchdog_stale pid=%s heartbeat=%s uptime=%s\n' "$(date '+%F %T')" "$patrol_pid" "$hb" "$now_up" >> "$DATA/guard.log"
-            stop_patrol
+            patrol_stale=1
+        elif [ "$hb" -eq 0 ] && [ "$patrol_started" -gt 0 ] && [ "$now_up" -ge "$patrol_started" ] && [ $((now_up - patrol_started)) -gt 90 ]; then
+            patrol_stale=1
+        fi
+        if [ "$patrol_stale" = 1 ]; then
+            printf '[%s] patrol_watchdog_stale pid=%s heartbeat=%s started=%s uptime=%s\n' "$(date '+%F %T')" "$patrol_pid" "$hb" "$patrol_started" "$now_up" >> "$DATA/guard.log"
+            stop_patrol || :
             patrol_started="$now_up"
         fi
     fi
