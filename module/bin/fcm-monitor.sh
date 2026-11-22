@@ -456,10 +456,10 @@ retry_interval() {
     case "$retry_streak" in 0) echo 30;; 1) echo 60;; 2) echo 120;; *) echo 180;; esac
 }
 
-# A down/absence sample remains useful for at most 15 minutes. Root can see the
-# GMS UID's dedicated MCS TCP socket even when dumpsys returns only a wrapper.
-# A fresh MCS socket means connected/connecting; repeated socket absence means
-# disconnected. A single absence sample never creates an outage.
+# A continuous absence of the exact GMS UID-owned MCS TCP socket can confirm
+# a down state after 30 seconds, even when the native dump has no current fields.
+# A fresh MCS socket means connected/connecting; one absence sample alone never
+# creates an outage. Sampling gaps reset the continuity anchor.
 socket_fallback_ready() {
     [ "$tcp_hint" = absent ] || return 1
     socket_down_age=0
