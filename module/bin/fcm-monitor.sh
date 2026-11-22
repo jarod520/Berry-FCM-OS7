@@ -637,8 +637,14 @@ EOF_SOCKET
           connecting)
             observed=connecting; source=gms_socket
             new_transport="$socket_transport"; new_remote="$socket_remote"
-            down_observed="$socket_now"; outage_hint_mono="$socket_now"
-            previous_down_observed="$socket_now"
+            # Preserve the start of one continuous SYN-SENT period. Reset only
+            # when entering a new connecting state or the monotonic clock moves back.
+            if [ "$previous_down_state" != connecting ] || [ "$outage_hint_mono" -le 0 ] ||
+               [ "$socket_now" -lt "$outage_hint_mono" ]; then
+                down_observed="$socket_now"
+                outage_hint_mono="$socket_now"
+            fi
+            previous_down_observed="$outage_hint_mono"
             [ "$previous_down_state" = connecting ] ||
                 record_event socket_connecting 'dumpsys 本次无状态字段；UID0 已观察到 GMS MCS TCP 正在连接'
             ;;
