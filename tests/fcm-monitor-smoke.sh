@@ -39,7 +39,7 @@ case "$mode" in
   connecting) echo 'SYN-SENT 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:101';;
   absent) echo 'TIME-WAIT 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:102';;
   stalled)
-    echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:103'
+    echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:103 unacked:0 retrans:0/0'
     echo ' cubic wscale:7,7 rto:204 rtt:20/2 unacked:1 retrans:3/10'
     ;;
   unknown|proc_connected) echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228';;
