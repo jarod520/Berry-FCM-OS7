@@ -84,7 +84,11 @@ exit 1
 MOCK
 cat > "$TMP/module/bin/fcm-monitor.sh" <<'MOCK'
 if [ "$1" = snapshot ]; then
-    echo '{"fcm_state":"connected","fcm_sample_time":1234,"fcm_recovery_decision":"not_disconnected"}'
+    if [ "${TEST_MONITOR_UNKNOWN:-0}" = 1 ]; then
+        echo '{"fcm_state":"unknown","fcm_sample_time":1234,"fcm_recovery_decision":"sample_unavailable"}'
+    else
+        echo '{"fcm_state":"connected","fcm_sample_time":1234,"fcm_recovery_decision":"not_disconnected"}'
+    fi
 else
     before="$(wc -l < "$TEST_DIR/samples")"
     echo "$1" >> "$TEST_DIR/samples"
@@ -181,3 +185,18 @@ test -e "$TMP/kill.done"
 test "$(grep -c patrol_supervisor_start "$TMP/data/guard.log")" -ge 2
 test ! -d "$TMP/data/service.lock"
 echo "PASS: independent patrol, bounded timeout, process-group cleanup and patrol restart"
+
+# An unknown GMS state is still a successful sample; it must keep refreshing
+# the sample heartbeat rather than disabling the independent patrol.
+touch "$TMP/module/module.prop"
+echo 1 > "$TMP/data/enabled"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+export TEST_MONITOR_UNKNOWN=1
+timeout 8 sh "$TMP/module/service.sh"
+unset TEST_MONITOR_UNKNOWN
+test -s "$TMP/data/patrol.sample.heartbeat"
+grep -q 'fcm_check_end rc=0 .*state=unknown' "$TMP/data/guard.log"
+! grep -q 'patrol_watchdog_stale reason=monitor_sample' "$TMP/data/guard.log"
+test ! -d "$TMP/data/service.lock"
+echo 'PASS: unknown GMS state does not stop successful patrol sampling'
