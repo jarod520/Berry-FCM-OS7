@@ -281,4 +281,4 @@ assert_json "$j" fcm_recovery_decision=sample_unavailable
 rm -f "$TMP/bin/mv"
 
 [ ! -s "$TMP/dumpsys.log" ] || fail "dumpsys was invoked by the monitor"
-echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO retransmission and 30-minute receive-idle recovery, same-cycle four-trigger escalation, and dump independence"
+echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO stall recovery, same-cycle four-trigger escalation, evidence-first commit protection, and dump independence"
