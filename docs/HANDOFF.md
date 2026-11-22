@@ -644,3 +644,9 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - `parse_mcs()` 原先只接受 `Is client connected: true/false`（冒号后有空格）；为兼容 dumpsys 输出紧凑形式 `Is client connected:true/false`，现改为接受冒号后零个或多个空白字符，再严格匹配 true/false。
 - FCM smoke 增加无空格 true/false 两个夹具；静态检查确认 parser 与两项夹具均已落地，独立 AWK 正则模拟对有空格、无空格和多空格三种输入均得到预期结果。
 - 完整 FCM/KSU smoke、所有脚本 `sh -n` 和设备端 GMS dumpsys 样本仍未执行；不能据此宣布整套测试通过。
+
+### 2026-11-22 GMS stopped 状态与 Socket absence 边界
+- **发现的问题**：当原生 GMS service 返回 `No services match`，且 `dumpsys package` 明确报告 `stopped=true` 时，旧逻辑虽把原因标记为 `gms_stopped`，但后续仍可能把连续 Socket absent 升级成 disconnected；未知状态的自动/手动恢复确认也可能据此发广播。GMS 套件被用户停止时没有 MCS Socket 是预期状态，不应当作网络断联。
+- **修正方式**：`gms_stopped` 时不再将 Socket absence 或历史 Close 提升为断联；自动恢复直接返回 `gms_stopped_unknown`；手动恢复二次采样后再次检查 stopped 原因，禁止发送重连。native poll 间隔内保留上一次确认的 `gms_stopped`，避免第二次确认恰好遇到 deferred poll 时丢失保护。
+- **回归用例**：保留 stopped + Socket unknown 测试；新增 stopped + Socket absent 测试，检查状态保持 unknown、原因显示 gms_stopped、自动和手动请求次数均不增加，并覆盖第二次确认落在 deferred native poll 的路径。
+- **尚未完成**：以上是源码与测试夹具修正，完整 FCM/KSU smoke、Shell 语法 gate 和设备验证尚未执行。
