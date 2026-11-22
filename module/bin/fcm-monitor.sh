@@ -234,7 +234,7 @@ scan_sockets() {
     raw=
     if command -v "$SS_BIN" >/dev/null 2>&1; then
         raw="$("$SS_BIN" -tinpe 2>/dev/null)" || raw=
-        if [ -z "$raw" ] || ! printf '%s\\n' "$raw" | grep -Eq "uid:${uid}([^0-9]|$)"; then
+        if [ -z "$raw" ] || ! printf '%s\n' "$raw" | grep -Eq "uid:${uid}([^0-9]|$)"; then
             raw="$("$SS_BIN" -tnpe 2>/dev/null)" || raw=
         fi
     fi
@@ -252,7 +252,7 @@ scan_sockets() {
                 } else if (port=="01BB" && st=="01") {unverified443=1}
               }
               END {
-                if (rank>0) printf "%s|%s||%s|\\n",kind,transport,key
+                if (rank>0) printf "%s|%s||%s|\n",kind,transport,key
                 else if (unverified443) print "unknown||||proc_net_443_unverified"
                 else print "absent||||proc_net_no_mcs_socket"
               }' "$table"
@@ -288,7 +288,7 @@ scan_sockets() {
     # ss -i exposes TCP_INFO counters where supported. A socket is considered
     # stalled only when it has unacked data and at least three retransmissions.
     printf '%s\n' "$raw" | awk -v u="$uid" -v ips="|$ips|" -v ip_count="$ip_count" '
-      function normip(v){sub(/:[0-9]+$/, "", v);gsub(/^\\[|\\]$/, "", v);sub(/^::ffff:/, "", v);return tolower(v)}
+      function normip(v){sub(/:[0-9]+$/, "", v);gsub(/^\[|\]$/, "", v);sub(/^::ffff:/, "", v);return tolower(v)}
       function known(v){return index(ips,"|" normip(v) "|")>0}
       function field_number(name, text, value) {
         if (match(text, name ":[0-9]+")) {
@@ -330,9 +330,9 @@ scan_sockets() {
       }
       END {
         emit()
-        if(rank==4) printf "connected|%s|%s|%s|\\n",transport,remote,bestkey
-        else if(rank==3) printf "connecting|%s|%s|%s|\\n",transport,remote,bestkey
-        else if(rank==2) printf "stalled|%s|%s|%s|tcp_info_unacked_retrans\\n",transport,remote,bestkey
+        if(rank==4) printf "connected|%s|%s|%s|\n",transport,remote,bestkey
+        else if(rank==3) printf "connecting|%s|%s|%s|\n",transport,remote,bestkey
+        else if(rank==2) printf "stalled|%s|%s|%s|tcp_info_unacked_retrans\n",transport,remote,bestkey
         else if(untrusted) print "unknown||||unverified_443_no_mtalk_dns"
         else print "absent||||no_fcm_socket_observed"
       }'
