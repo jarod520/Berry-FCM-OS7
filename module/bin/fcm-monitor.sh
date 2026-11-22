@@ -878,24 +878,30 @@ EOF_SOCKET
     fi
     case "$observed" in
       connected)
-        if [ "$previous_down_state" = connecting ] || [ "$previous_down_state" = disconnected ] ||
-           [ "$previous_down_observed" -gt 0 ]; then
+        case "$previous_down_state" in
+          connecting|disconnected)
             last_restore="$nowe"
             if [ "$last_result" = requested ] && [ "$last_try_epoch" -ge "$previous_missing_epoch" ] && [ "$last_try_epoch" -gt 0 ]; then last_result=restored; fi
-            if [ "$gap_detected" = 1 ] || [ "$previous_down_state" = unknown ]; then
+            if [ "$gap_detected" = 1 ]; then
                 if [ "$source" = gms_socket ]; then
-                    record_event connection_restored 'UID0 重新观察到 GMS MCS TCP；本次 GMS 原生状态字段仍未读到'
+                    record_event connection_restored '采样空档后重新观察到 GMS MCS TCP；恢复具体时刻未能定位'
                 else
                     record_event connection_restored '采样空档后发现 GMS 已恢复连接；恢复具体时刻未能定位'
                 fi
+            elif [ "$source" = gms_socket ]; then
+                record_event connection_restored 'UID0 观察到 GMS MCS TCP 已建立；本次原生字段未读到'
             else
-                if [ "$source" = gms_socket ]; then
-                    record_event connection_restored 'UID0 观察到 GMS MCS TCP 已建立；本次原生字段未读到'
-                else
-                    record_event connection_restored 'GMS 已确认重新连接'
-                fi
+                record_event connection_restored 'GMS 已确认重新连接'
             fi
-        fi
+            ;;
+          unknown)
+            # A retained outage hint is not a confirmed down state. Do not
+            # turn unknown -> connected into a recovery event or timestamp.
+            if [ "$previous_down_observed" -gt 0 ]; then
+                record_event connection_observed_after_unknown 'GMS 当前已观察到连接；此前状态为 unknown，不能确认本次属于断联恢复'
+            fi
+            ;;
+        esac
         # The native GMS 00:00 can be real immediately after connection.
         # Separately track a bounded sequence of online observations, NOT
         # the precise connection lifetime. Reset after gaps or endpoint changes.
