@@ -199,6 +199,8 @@ settime 70020
 printf "%s\n" "DeviceID: [fixture]" "Not connected" > "$MCS_FIXTURE"
 run monitor
 assert_json "$(run snapshot)" fcm_state=connected
+assert_json "$(run snapshot)" fcm_source=gms_socket
+! grep -q "|sample_unknown|reason=not_polled" "$BERRY_FCM_DATA/mcs-monitor-events.log"
 [ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 1 ]
 settime 70060
 run monitor
