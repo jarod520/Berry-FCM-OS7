@@ -715,9 +715,12 @@ case "${1:-status}" in
         write_evidence || exit $?
         case "$decision" in
           requested) echo "已请求 GMS 恢复，等待下一次连接采样确认";;
-          request_failed) echo "Root 重连广播未确认，请查看恢复事件";;
+          request_failed) echo "四种恢复广播均未被系统接受，请查看恢复事件";;
+          recovery_exhausted) echo "四种恢复动作已依次执行，内核仍未确认恢复；将按退避周期重试";;
+          confirmation_unavailable) echo "恢复请求已发送，但后续内核复采不可用；等待下一轮巡检";;
           cooldown) echo "仍在重连冷却期";;
-          confirmation_recovered) echo "二次内核采样已观察到 MCS TCP，取消本轮恢复";;
+          confirmation_recovered) echo "内核复采已观察到 MCS TCP，停止后续恢复动作";;
+          confirmation_changed) echo "复采状态变为未知，已停止本轮后续恢复动作";;
           *) echo "GMS 已连接或状态不可确认，未发送重连";;
         esac
         ;;
