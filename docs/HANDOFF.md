@@ -10,6 +10,14 @@
 > - `fcm-monitor.sh` 的连接检测和恢复决策禁止调用 `dumpsys`。当前仅 `ctl.sh` 的独立应用管理路径仍使用 `dumpsys package` 读取 stopped/suspended/hidden 状态以决定应用解冻，并用 `dumpsys activity broadcasts` 做接收器诊断；这些不是 MCS 连接状态证据，不得进入 MCS 状态机、巡检心跳或重连动作选择。若要求连独立应用管理也完全取消 dump 决策，则会同时取消 stopped-state 自动解冻功能，不能把它与 FCM 主检测混为一谈。旧版原生 MCS 主判据、Close 事件判据、connectTime 停滞恢复方案均已废弃。
 > - 后台 patrol 与单轮 monitor 必须解耦：单次检查超时/锁冲突/证据不可用/某个广播失败，都不能退出 patrol 主循环。service watchdog 继续分别监督 patrol 心跳和有效采样心跳；patrol 退出后，只有确认旧 monitor owner/process group 已清理，才允许启动替代 patrol，避免残留 monitor 导致重复巡检反复撞锁。身份无法确认时不得误杀无关进程，也不得启动重复巡检。
 
+## 2026-11-23 本轮复审：恢复失败时 evidence 代次保护与 443 误判
+
+- **复审发现 1**：`request_reconnect()` 中恢复广播后的二次 `observe()` 若 evidence 原子发布失败，会返回 `confirmation_unavailable`，但 `run_monitor_command monitor` 原先仍无条件调用 `write_evidence()`。这会把失败采样的内存字段写入 evidence，覆盖上一份已提交证据；虽然 state/evidence 代次检查能将结果标 stale，却损失了上一份有效样本。
+- **修正**：新增 `write_decision_evidence()`。它只读取已提交 state 与 evidence，确认第 28 列 `sample_mono` 和 evidence 第 7 列一致后，仅更新 decision 字段，其余样本字段和 generation 原样保留。若代次本身不一致则拒绝更新。monitor 与手动 reconnect 的恢复决策写回均使用该路径；`observe()` 的 evidence-first 样本提交仍使用原 `write_evidence()`。
+- **回归夹具**：调整 evidence `mv` 故障注入场景：第 3 次样本 evidence 发布失败后，第 4 次只允许写入“决策更新”，最终 evidence sample_mono 必须仍等于已提交 state sample_mono=10380；snapshot 应保留 `connecting`，并展示 `confirmation_unavailable`，不得变成 stale，也不得接受失败采样的 10381。
+- **复审发现 2**：当 `ss` 已能显示 GMS UID，但只观察到一个非 mtalk 对端的 GMS HTTPS :443 socket 时，若 DNS 已有 mtalk 候选地址，旧逻辑会将该连接漏过且返回 absent；连续计时后可能误报断联。
+- **修正**：只要 GMS :443 已建立但对端不匹配已验证 mtalk 地址，就保留 `unknown/unavailable`，不把普通 HTTPS 连接当 MCS，也不把它当作 MCS 缺失。新增有 DNS 候选、但 GMS :443 对端为 1.1.1.1 的回归场景。
+- **验证边界**：本轮已通过 GitHub 源码复读，确认 monitor/patrol/service 三条关键路径没有 `dumpsys` 引用，新增两个回归夹具与代码分支均已落入当前分支。这里是静态源码核对，不是完整 smoke 执行或 Shell 语法验证。完整 `fcm-monitor-smoke.sh`、`ksu-wake-smoke.sh`、全仓 Shell syntax gate 和 OriginOS 7 / KernelSU 真机长时间后台验证仍未执行；未触发 Actions、编译、打包、合并或发布。
 ## 2026-11-23 KSU RC5 初始记录（后续复审修正见下节）
 
 - **代码分支**：`fix/rc5-mcs-patrol-20261122`。本轮只修改该分支，不合并 main、不发布、不触发 GitHub Actions。
