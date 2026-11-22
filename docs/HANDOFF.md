@@ -670,3 +670,9 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **回归用例**：保留 stopped + Socket unknown 测试；新增 stopped + Socket absent 测试，检查状态保持 unknown、原因显示 gms_stopped、自动和手动请求次数均不增加，并覆盖第二次确认落在 deferred native poll 的路径。
 - **尚未完成**：以上是源码与测试夹具修正，完整 FCM/KSU smoke、Shell 语法 gate 和设备验证尚未执行。
 - **连续缺失计时边界**：确认 stopped 后同时清零 Socket absence 的连续计时锚点；否则 GMS 停止期间累计的长空档会在用户重新启动 GMS 后被误当作新一轮持续断联。新增状态文件字段断言，确保 stopped + absent 时 `outage_hint_mono=0`；手动重连在 stopped 状态下明确返回 `gms_stopped_unknown`。- 若 stopped 期间仍观察到真实 ESTABLISHED MCS Socket，Socket 的 connected 证据优先：不触发恢复，状态决策保持 `not_disconnected`；只有非 connected 状态才返回 `gms_stopped_unknown`，避免把仍存活的连接误报为不可用。- **并发夹具自检**：发现并修正阻塞标记原先创建为空文件、却用 `-s` 等待非空的测试错误；现在 mock 写入 `started` 内容，等待条件与标记语义一致。该 smoke 仍未整体执行。
+
+### 2026-11-22 maintenance 进程组退出后的二次 KILL 保护
+- **复审发现**：patrol 的 maintenance_stop_child() 在 TERM 后固定等待 1 秒，再无条件向原 PGID 发送 KILL；即使进程组已正常退出，也会多发一次负 PGID 信号，扩大 PID/PGID 快速复用竞态下的误伤窗口。
+- **修正**：TERM 前先确认进程组仍有存活成员；等待 1 秒后再次检查，只有进程组仍存活才发送 KILL。保持现有 TERM→宽限→KILL 清理策略，不改维护超时和任务行为。
+- **回归约束**：KSU smoke 从 maintenance_stop_child() 函数体提取代码，检查 TERM、二次存活检查、KILL 的顺序，防止恢复成无条件 KILL。
+- **验证边界**：完成源码替换与测试断言静态检查；完整 ksu-wake-smoke.sh、fcm-monitor-smoke.sh、全仓 Shell syntax gate 和 Android/KernelSU 实机仍未执行。未触发 Actions、编译、打包、合并或 Release。
