@@ -685,7 +685,7 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 ### 2026-11-22 采样心跳与 monitor 结果解耦
 - **复审发现**：patrol 仅在 `fcm-monitor.sh monitor` 返回 0 时更新 `patrol.sample.heartbeat`。monitor 因并发锁占用（例如返回 13）或其他可恢复错误而快速返回时，巡检循环仍在正常运行，但 service 会把采样心跳过期误判为 patrol 卡死，随后重启整个 patrol。
 - **修正**：采样心跳现在表示“有界 monitor 调用已返回”，不再表示“GMS 状态读取成功”。无论 monitor 返回码如何，只要 `run_bounded()` 返回，就更新该心跳；若 monitor 真正卡住，`run_bounded()` 尚未返回，心跳仍不会刷新，service watchdog 仍可检测到停滞。实际样本是否成功仍由 `fcm_check_end rc`、monitor 状态与 `fcm_sample_time` 表达。
-- **回归用例**：KSU smoke 的 monitor mock 新增可配置非零返回码；新增 rc=13 场景，要求仍写入巡检心跳、保留错误返回日志，且不得触发 `monitor_sample` watchdog 重启。
+- **回归用例**：KSU smoke 的 monitor mock 新增可配置非零返回码；新增 rc=13 场景，要求仍写入巡检心跳并保留错误返回日志；静态断言同时确保心跳更新不再被 `monitor_rc == 0` 条件包裹。该 8 秒夹具不模拟 90 秒 watchdog 时钟，不将其描述为 watchdog 超时动态验证。
 - **验证边界**：完成源码与 smoke 夹具更新；待做局部 POSIX shell 语法检查和静态断言核对。完整 KSU/FCM smoke、全仓语法 gate、Android/KernelSU 实机尚未执行；不触发构建或 Actions。
 
 ### 2026-11-22 monitor 进程组强制回收前的身份复核
