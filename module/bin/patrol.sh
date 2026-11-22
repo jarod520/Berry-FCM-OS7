@@ -33,20 +33,41 @@ run_bounded() {
     elif command -v timeout >/dev/null 2>&1; then
         timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
     else
-        # Last-resort watchdog when no timeout applet exists. The monitor's
-        # own external probes are bounded; terminate its shell if it exceeds
-        # the patrol budget instead of silently skipping every sample.
+        # Last-resort watchdog when no timeout applet exists. Use a private
+        # session when the available applet supports it, so timeout cleanup
+        # also reaches child probes instead of leaving orphan processes.
         marker="$DATA/monitor-timeout.$SERVICE_PID"
         rm -f "$marker"
-        "$@" &
+        group_tool=
+        if [ -x "$TOYBOX_BIN" ] &&
+           "$TOYBOX_BIN" --list 2>/dev/null | grep -qx setsid &&
+           "$TOYBOX_BIN" --list 2>/dev/null | grep -qx kill; then
+            group_tool="$TOYBOX_BIN"
+            "$TOYBOX_BIN" setsid "$@" &
+        elif [ -x "$KSU_BUSYBOX" ] &&
+             "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx setsid &&
+             "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx kill; then
+            group_tool="$KSU_BUSYBOX"
+            "$KSU_BUSYBOX" setsid "$@" &
+        else
+            "$@" &
+        fi
         bounded_pid=$!
         (
             sleep "$seconds"
             if kill -0 "$bounded_pid" 2>/dev/null; then
                 : > "$marker"
-                kill -TERM "$bounded_pid" 2>/dev/null || :
+                if [ -n "$group_tool" ]; then
+                    "$group_tool" kill -TERM "-$bounded_pid" 2>/dev/null || :
+                else
+                    kill -TERM "$bounded_pid" 2>/dev/null || :
+                fi
                 sleep "$MONITOR_KILL_GRACE"
-                kill -KILL "$bounded_pid" 2>/dev/null || :
+                if [ -n "$group_tool" ]; then
+                    "$group_tool" kill -KILL "-$bounded_pid" 2>/dev/null || :
+                else
+                    kill -KILL "$bounded_pid" 2>/dev/null || :
+                fi
             fi
         ) >/dev/null 2>&1 &
         watchdog_pid=$!
