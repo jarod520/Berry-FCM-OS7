@@ -202,7 +202,7 @@ resolve_mtalk() {
 }
 
 normalize_ip() {
-    printf '%s' "$1" | tr 'A-F' 'a-f' | sed 's/^\[//;s/\]$//;s/^::ffff://' 
+    printf '%s' "$1" | tr 'A-F' 'a-f' | sed 's/^\[//;s/\]$//;s/^::ffff://'
 }
 
 gms_uid() {
