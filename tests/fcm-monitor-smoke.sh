@@ -262,7 +262,6 @@ fi
 test ! -e "$BERRY_FCM_DATA/mcs-monitor.state"
 test -e "$BERRY_FCM_DATA/mcs-evidence"
 test "$(awk -F'|' '{print NF}' "$BERRY_FCM_DATA/mcs-evidence")" = 7
-test ! -e "$BERRY_FCM_DATA/mcs-monitor.state.$(pgrep -f 'fcm-monitor.sh' | head -n 1)"
 if find "$BERRY_FCM_DATA" -maxdepth 1 -name 'mcs-monitor.state.*' | grep -q .; then
     echo 'state temporary file leaked after failed rename' >&2
     exit 1
