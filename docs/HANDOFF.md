@@ -830,7 +830,7 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **复审发现**：`observe()` 先原子发布 evidence，再原子保存 state。若 evidence 发布成功但 state 的 rename 失败，旧 state 可能与新 evidence 配对；此前 sample uptime gate 能阻止 heartbeat 前进，但 snapshot 仍可能展示不一致的 source/decision。
 - **修正**：evidence 追加第 7 列 `sample_mono`，与 state 第 28 列绑定同一采样代次。snapshot 比较两者；只要任一侧存在新代次但两者不一致，就返回 stale / sample_unavailable，不把新 evidence 当作有效状态。所有 evidence 读取点同步读取第 7 列，确保 prior_decision 不被额外字段污染。
 - **state 临时文件清理**：`save_state()` 的写入或 rename 失败时，立即删除本次临时文件并返回原错误码。
-- **回归夹具**：FCM smoke 分别注入 evidence rename 失败和 state rename 失败。后者要求 evidence 文件存在且为 7 列、state 文件未发布、state 临时文件已清理，snapshot 必须报告 stale、sample uptime=0、decision=sample_unavailable。
+- **回归夹具**：FCM smoke 分别注入 evidence rename 失败和 state rename 失败。后者先提交一个正常样本，再注入 state rename 失败；要求旧 state 的 sample_mono 保持不变、新 evidence 的 sample_mono 前进、state 临时文件已清理，snapshot 必须报告 stale / sample_unavailable，并保留旧 state 的 sample uptime。
 - **定向模拟**：POSIX sh 隔离模拟确认 state rename 失败会清理临时文件，7 列 evidence 与旧 state 的 sample_mono 不一致时会被标记 stale；同时验证旧 6 列 evidence 的 decision 字段仍正确读取。
 - **验证边界**：新增用例尚未运行完整 `fcm-monitor-smoke.sh`；当前只完成源码静态断言和局部 POSIX sh 语法/行为模拟。未触发 workflow、构建、编译、打包、合并或发布。
 - 最终固定源码断言复核：KSU smoke **136/136 正向、5/5 负向**；FCM smoke **21/21 正向、1/1 负向**，均无缺失或误匹配。完整 smoke 与全仓 Shell 语法 gate 仍未执行。
