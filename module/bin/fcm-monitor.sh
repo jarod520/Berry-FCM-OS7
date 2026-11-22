@@ -316,7 +316,7 @@ scan_sockets() {
           }
         } else if (!established && relevant && (socket_state=="SYN-SENT" || socket_state=="SYN_SENT")) {
           if (rank<3) {rank=3;kind="connecting";transport="tcp" port;remote=ip ":" port;bestkey=key}
-        } else if (established && port==443 && ip_count==0) {
+        } else if (established && port==443 && !known(peer)) {
           untrusted=1
         }
       }
