@@ -92,6 +92,46 @@ bounded_group_identity_alive() {
         [ "$bounded_pgid" = "$bounded_pid" ] &&
         [ "$(proc_group_id "$bounded_pid")" = "$bounded_pgid" ]
 }
+# When neither timeout nor setsid exists, snapshot only the monitor's own
+# descendants by PID/starttime. Revalidate each PID before signaling to avoid
+# killing a reused PID or an unrelated process.
+bounded_descendants_snapshot() {
+    root="$1"; output="$2"
+    awk -v root="$root" '
+      FNR==1 {
+        pid=FILENAME
+        sub(/^.*\\//,"",pid)
+        sub(/\\/stat$/,"",pid)
+        stat=$0; sub(/^.*[)] /,"",stat); split(stat,f," ")
+        state[pid]=f[1]; parent[pid]=f[2]; stamp[pid]=f[20]
+      }
+      END {
+        queue[1]=root; seen[root]=1; count=1
+        for (i=1;i<=count;i++) {
+          p=queue[i]
+          for (child in parent) {
+            if (parent[child]==p && !seen[child] && state[child]!="Z") {
+              seen[child]=1; queue[++count]=child
+            }
+          }
+        }
+        for (i=count;i>=2;i--) {
+          child=queue[i]
+          if (child~/^[0-9]+$/ && stamp[child]~/^[0-9]+$/) print child,stamp[child]
+        }
+      }
+    ' /proc/[0-9]*/stat > "$output"
+}
+signal_bounded_descendants() {
+    signal="$1"; list="$2"
+    [ -r "$list" ] || return 0
+    while IFS=' ' read -r child_pid child_stamp; do
+        case "$child_pid:$child_stamp" in *[!0-9:]*|:*|*:) continue;; esac
+        [ "$child_pid" -gt 1 ] || continue
+        [ "$(proc_start_time "$child_pid" 2>/dev/null)" = "$child_stamp" ] || continue
+        kill "-$signal" "$child_pid" 2>/dev/null || :
+    done < "$list"
+}
 run_bounded() {
     seconds="$1"; shift
     if [ -x "$TOYBOX_BIN" ] &&
@@ -162,6 +202,7 @@ run_bounded() {
             wait "$watchdog_sleep_pid" || exit 0
             if bounded_process_identity_alive; then
                 : > "$marker"
+                descendants_file="$DATA/monitor-descendants.$bounded_pid"
                 if [ -n "$group_tool" ]; then
                     if bounded_group_identity_alive; then
                         "$group_tool" kill -TERM "-$bounded_pid" 2>/dev/null || :
@@ -175,6 +216,8 @@ run_bounded() {
                         fi
                     fi
                 else
+                    bounded_descendants_snapshot "$bounded_pid" "$descendants_file"
+                    signal_bounded_descendants TERM "$descendants_file"
                     kill -TERM "$bounded_pid" 2>/dev/null || :
                 fi
                 sleep "$MONITOR_KILL_GRACE"
@@ -191,10 +234,12 @@ run_bounded() {
                             fi
                         fi
                     fi
-                elif bounded_process_identity_alive; then
-                    kill -KILL "$bounded_pid" 2>/dev/null || :
                 else
-                    echo 'bounded_watchdog_process_identity_unverified_before_kill' >> "$DATA/guard.log"
+                    signal_bounded_descendants KILL "$descendants_file"
+                    if bounded_process_identity_alive; then
+                        kill -KILL "$bounded_pid" 2>/dev/null || :
+                    fi
+                    rm -f "$descendants_file"
                 fi
             fi
         ) >/dev/null 2>&1 &
