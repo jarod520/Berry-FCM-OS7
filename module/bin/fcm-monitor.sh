@@ -1155,7 +1155,10 @@ with_flock() {
     # Keep the descriptor lock held by flock for the entire monitor command.
     # The child writes its real command status to a private result file and
     # exits zero so flock's status remains reserved for lock/launcher errors.
-    lock_result="$DATA/mcs-monitor.lock.result.$"
+    lock_result_pid=
+    IFS=' ' read -r lock_result_pid _ < /proc/self/stat || return 14
+    case "$lock_result_pid" in ''|*[!0-9]*) return 14;; esac
+    lock_result="$DATA/mcs-monitor.lock.result.$lock_result_pid"
     rm -f "$lock_result" "$lock_result.tmp."*
     "$@" -xn 9 sh "$0" "$command" --locked "$lock_result"
     flock_rc=$?
@@ -1183,8 +1186,11 @@ if [ "${2:-}" = --locked ]; then
     monitor_rc=$?
     clear_lock_owner
     trap - EXIT
-    printf '%s\n' "$monitor_rc" > "$lock_result.tmp.$" &&
-        mv -f "$lock_result.tmp.$" "$lock_result" || exit 14
+    result_writer_pid=
+    IFS=' ' read -r result_writer_pid _ < /proc/self/stat || exit 14
+    case "$result_writer_pid" in ''|*[!0-9]*) exit 14;; esac
+    printf '%s\n' "$monitor_rc" > "$lock_result.tmp.$result_writer_pid" &&
+        mv -f "$lock_result.tmp.$result_writer_pid" "$lock_result" || exit 14
     exit 0
 fi
 case "$command" in
