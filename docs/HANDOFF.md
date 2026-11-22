@@ -639,7 +639,7 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **下一批改进建议（只登记）**：(1) `sample_gap` 日志拆分“预期 Doze 延迟”和“可能异常停摆”，降低每 90s 以上反复报错的误导；(2) 统计每轮 `rescue_started` / `rescue_request` / `rescue_restored` / `rescue_finished` 及每次请求后原生连接时间，确保脚本与 Java 重名 `rescue_finished` 在诊断界面不混淆；(3) 继续以 GMS 原生连接证据为门槛，切勿仅因 watchdog 延迟就发心跳；(4) 连同已登记的诊断页图标和通知计时去秒一次处理。本次**只保存诊断结论，不改代码、不构建、不发布新 Release**。
 
 
-### 2026-11-22 RC7 后续静态审查：GMS 状态解析与 monitor/service 生命周期
+### 历史审查（已废弃）：2026-11-22 RC7 GMS 状态解析与 monitor/service 生命周期
 - **GMS 原生状态解析**：目标 `SERVICE com.google.android.gms/.gcm.GcmService` 区块本身作为当前状态作用域；即使没有前置 `DeviceID:`、`disconnectTime` 等字段，区块内精确的裸 `Not connected` 也不再被误判为 `unknown`。增加了该格式的回归样例。未知状态仍不等于断联，不允许仅凭未知直接重连。
 - **重复 GMS service 区块**：若同一份 dumpsys 中出现多个目标 GMS `SERVICE` 区块，解析器保守返回 `unknown`，不沿用前一个区块的 Connected/Disconnected 字段；新增“前块 Connected、后块无状态”和“前后块状态矛盾”两项回归夹具。
 - **monitor 进程组身份**：Toybox timeout 使用其原生独立组；BusyBox/PATH timeout 只有经 setsid 建立私有会话后才传递隔离标记，无隔离能力时明确标记为非隔离。`fcm-monitor.sh` 原子记录五字段：monitor PID/starttime、PGID、隔离标记、PGID leader starttime；PGID 可以等于或不同于 monitor PID。
@@ -685,12 +685,12 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **尚未完成**：完整 `tests/fcm-monitor-smoke.sh`、`tests/ksu-wake-smoke.sh` 和所有 Shell 文件 `sh -n` 尚未在完整仓库环境执行；Linux 模拟不替代设备上的 KernelSU BusyBox、Android mksh 和 GMS 实测。
 - **构建纪律**：未触发任何 workflow、编译、打包、合并或 Release。PR #1 仍保持 open / not merged；继续审查完成后再通知用户手动构建。
 
-### 2026-11-22 GMS client 状态字段空格兼容
+### 历史解析器记录（已废弃）：2026-11-22 GMS client 状态字段空格兼容
 - `parse_mcs()` 原先只接受 `Is client connected: true/false`（冒号后有空格）；为兼容 dumpsys 输出紧凑形式 `Is client connected:true/false`，现改为接受冒号后零个或多个空白字符，再严格匹配 true/false。
 - FCM smoke 增加无空格 true/false 两个夹具；静态检查确认 parser 与两项夹具均已落地，独立 AWK 正则模拟对有空格、无空格和多空格三种输入均得到预期结果。
 - 完整 FCM/KSU smoke、所有脚本 `sh -n` 和设备端 GMS dumpsys 样本仍未执行；不能据此宣布整套测试通过。
 
-### 2026-11-22 GMS stopped 状态与 Socket absence 边界
+### 历史 stopped 门控记录（已废弃）：2026-11-22 GMS stopped 状态与 Socket absence 边界
 - **发现的问题**：当原生 GMS service 返回 `No services match`，且 `dumpsys package` 明确报告 `stopped=true` 时，旧逻辑虽把原因标记为 `gms_stopped`，但后续仍可能把连续 Socket absent 升级成 disconnected；未知状态的自动/手动恢复确认也可能据此发广播。GMS 套件被用户停止时没有 MCS Socket 是预期状态，不应当作网络断联。
 - **修正方式**：`gms_stopped` 时不再将 Socket absence 或历史 Close 提升为断联；自动恢复直接返回 `gms_stopped_unknown`；手动恢复二次采样后再次检查 stopped 原因，禁止发送重连。native poll 间隔内保留上一次确认的 `gms_stopped`，避免第二次确认恰好遇到 deferred poll 时丢失保护。
 - **回归用例**：保留 stopped + Socket unknown 测试；新增 stopped + Socket absent 测试，检查状态保持 unknown、原因显示 gms_stopped、自动和手动请求次数均不增加，并覆盖第二次确认落在 deferred native poll 的路径。
@@ -826,7 +826,7 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **定向验证**：当前 patrol 条件的逻辑静态复核通过；unknown/connected/down 仍不因 stale gate 被排除，只有 stale 或缺失状态不刷新。尚未运行完整 KSU smoke 或设备验证。
 - **验证边界**：未触发 Actions、构建、编译、打包或发布。
 
-### 2026-11-22 sample gap 后重置 native connectTime 停滞锚点
+### 历史 native connectTime 计时记录（已废弃）：2026-11-22 sample gap
 - **复审发现**：observe() 检测到超过 90 秒的采样空档时会将连接状态置为 unknown，并重置在线/断联可观测计时；但 native_timer_since 原先保留空档前的锚点。如果恢复后的第一条 native 样本仍报告相同 connectTime，后续 auto_recovery 可能把空档前的计时当作连续有效样本，过早触发 stalled_timer 检查。
 - **修正**：检测到 sample_gap 时，同时清零 native_timer_duration、native_timer_since、native_timer_last_request 和 native_timer_key。恢复后的第一条 native connected 样本重新建立计时锚点。
 - **回归夹具**：新增相同 native connectTime 的 gap 前/后样本，检查状态文件第 25 列 native_timer_since 从空档前 uptime 更新为恢复后的 uptime，避免旧锚点跨空档沿用。
