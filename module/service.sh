@@ -77,7 +77,7 @@ stop_maintenance_owner() {
         sleep 1; n=$((n + 1))
     done
     if [ ! -s "$MAINTENANCE_LOCK/owner" ]; then
-        printf '[%s] maintenance_owner_unpublished; refusing to clear maintenance lock\\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+        printf '[%s] maintenance_owner_unpublished; refusing to clear maintenance lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
         return 1
     fi
     if ! maintenance_owner_identity; then
@@ -107,7 +107,7 @@ stop_maintenance_owner() {
     if maintenance_owner_identity &&
        [ "$maintenance_pid" = "$maintenance_stop_pid" ] &&
        [ "$maintenance_stamp" = "$maintenance_stop_stamp" ]; then
-        printf '[%s] maintenance_owner_stop_unconfirmed pid=%s start=%s\\n' \
+        printf '[%s] maintenance_owner_stop_unconfirmed pid=%s start=%s\n' \
             "$(date '+%F %T')" "$maintenance_stop_pid" "$maintenance_stop_stamp" >> "$DATA/guard.log"
         return 1
     fi
@@ -116,7 +116,7 @@ stop_maintenance_owner() {
        [ "$(awk '{print $2}' "$MAINTENANCE_LOCK/owner" 2>/dev/null)" = "$maintenance_stop_stamp" ]; then
         rm -rf "$MAINTENANCE_LOCK"
     fi
-    printf '[%s] maintenance_owner_stopped pid=%s start=%s\\n' \
+    printf '[%s] maintenance_owner_stopped pid=%s start=%s\n' \
         "$(date '+%F %T')" "$maintenance_stop_pid" "$maintenance_stop_stamp" >> "$DATA/guard.log"
     return 0
 }
