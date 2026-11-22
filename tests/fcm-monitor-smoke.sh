@@ -270,8 +270,8 @@ echo 'PASS: unverified IPv6 443 evidence is not downgraded to IPv4 absence'
 
 # The /proc/net/tcp6 fallback must also recognize an established exact MCS port.
 mkdir -p "$TMP/proc-positive"
-printf '%s\\n' 'sl local_address rem_address st tx_queue:rx_queue tr:tm->when retrnsmt uid timeout inode' > "$TMP/proc-positive/tcp"
-printf '%s\\n' 'sl local_address rem_address st tx_queue:rx_queue tr:tm->when retrnsmt uid timeout inode' \\
+printf '%s\n' 'sl local_address rem_address st tx_queue:rx_queue tr:tm->when retrnsmt uid timeout inode' > "$TMP/proc-positive/tcp"
+printf '%s\n' 'sl local_address rem_address st tx_queue:rx_queue tr:tm->when retrnsmt uid timeout inode' \
   '0: 00000000000000000000000000000000:C001 8EFA0000000000000000000000000000:146C 01 00000000:00000000 00:00000000 00000000 10200 0 12346' > "$TMP/proc-positive/tcp6"
 export BERRY_PROC_NET_DIR="$TMP/proc-positive"
 j="$(run status)"
