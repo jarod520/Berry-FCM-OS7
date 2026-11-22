@@ -187,6 +187,20 @@ test ! -e "$BERRY_FCM_DATA/mcs-evidence"
 test ! -e "$BERRY_FCM_DATA/mcs-evidence.tmp"
 echo 'PASS: failed evidence publication cannot advance the sample timestamp'
 
+# A sampling gap breaks continuity of the native connectTime stall timer.
+export BERRY_FCM_DATA="$TMP/native-timer-gap-data"
+mkdir -p "$BERRY_FCM_DATA"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+export MCS_SS_MODE=connected
+settime 10200
+printf '%s\n' 'DeviceID: [fixture]' 'connected=mtalk.google.com/142.250.157.188,port=5228' 'connectTime=00:30/00:00' > "$MCS_FIXTURE"
+run status
+test "$(awk -F'|' '{print $25}' "$BERRY_FCM_DATA/mcs-monitor.state")" = 10200
+settime 10300
+run status
+test "$(awk -F'|' '{print $25}' "$BERRY_FCM_DATA/mcs-monitor.state")" = 10300
+echo 'PASS: native timer stall anchor restarts after a sampling gap'
+
 # A fresh native timer after resume permits a double check in the same window.
 settime 10360
 printf "%s\n" "DeviceID: [fixture]" "Not connected" "disconnectTime=02:00/00:00" > "$MCS_FIXTURE"
