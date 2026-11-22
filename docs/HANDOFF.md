@@ -6,7 +6,7 @@
 > - 当前 KSU 监控唯一决策来源是 GMS UID 归属的内核 TCP Socket 证据：优先使用 `ss -tinpe` 获取 UID/状态/端点及可用的 TCP_INFO；不支持时降级 `ss -tnpe`，再不可用时回退读取 `/proc/net/tcp` 与 `/proc/net/tcp6`。无法取得 GMS UID 或无法读取 Socket 表时，结果是“本轮证据不可用”，不是断联，也不是连接正常。
 > - 明确区分 TCP ESTABLISHED（只证明传输层连接）、SYN-SENT（连接建立中）、TCP_INFO 中 unacked>0 且连续 retransmits>=3，或 lastrcv>=1,800,000ms（30 分钟没有收到 TCP 数据，按内核 awake time 计）的疑似卡死 Socket、已成功读取 UID/Socket 表且 MCS Socket 连续缺失（达到阈值后再复采确认）、以及检测源不可用。TCP_INFO 只在 `ss -i`/内核提供相关字段时启用；字段不可读不能伪造健康或断联。不得将 TCP 建立冒充 FCM 心跳 ACK 或消息送达。
 > - 当前断联判定要求连续缺失至少 45 秒；连接中持续 60 秒后进入二次确认。采样空档超过 90 秒重置连续性锚点。未知/不可用样本不阻断下一轮巡检，也不伪造确定状态。
-> - 每次确认断联后立即启动一个有界四动作恢复序列：`GCM_RECONNECT` → `MCS_HEARTBEAT` → `ACTION_HEARTBEAT_NOW` → `GTALK_HEARTBEAT`。广播失败立即尝试下一动作；广播被系统接受后等待约 2 秒并复采内核 Socket，仍明确为 connecting/disconnected 才继续下一动作，connected 立即停止，unknown/复采失败则停止本轮而不把未知当断联。四动作均未恢复时，才按 30/45/60/90 秒退避安排下一轮完整序列；广播返回成功不代表 GMS 已恢复，必须以后续内核 Socket 样本确认。
+> - 每次确认断联后立即启动一个有界四动作恢复序列：`GCM_RECONNECT` → `MCS_HEARTBEAT` → `ACTION_HEARTBEAT_NOW` → `GTALK_HEARTBEAT`。广播失败立即尝试下一动作；广播被系统接受后等待约 2 秒并复采内核 Socket；只有明确观察到 connected 才停止。connecting/disconnected 继续下一动作；unknown/复采失败既不伪装断联，也不当作恢复，继续下一个有界触发。四动作均未恢复时，才按 30/45/60/90 秒退避安排下一轮完整序列；广播返回成功不代表 GMS 已恢复，必须以后续内核 Socket 样本确认。
 > - `fcm-monitor.sh` 的连接检测和恢复决策禁止调用 `dumpsys`。当前仅 `ctl.sh` 的独立应用管理路径仍使用 `dumpsys package` 读取 stopped/suspended/hidden 状态以决定应用解冻，并用 `dumpsys activity broadcasts` 做接收器诊断；这些不是 MCS 连接状态证据，不得进入 MCS 状态机、巡检心跳或重连动作选择。若要求连独立应用管理也完全取消 dump 决策，则会同时取消 stopped-state 自动解冻功能，不能把它与 FCM 主检测混为一谈。旧版原生 MCS 主判据、Close 事件判据、connectTime 停滞恢复方案均已废弃。
 > - 后台 patrol 与单轮 monitor 必须解耦：单次检查超时/锁冲突/证据不可用/某个广播失败，都不能退出 patrol 主循环。service watchdog 继续分别监督 patrol 心跳和有效采样心跳；patrol 退出后，只有确认旧 monitor owner/process group 已清理，才允许启动替代 patrol，避免残留 monitor 导致重复巡检反复撞锁。身份无法确认时不得误杀无关进程，也不得启动重复巡检。
 
@@ -19,13 +19,19 @@
 - **修正**：只要 GMS :443 已建立但对端不匹配已验证 mtalk 地址，就保留 `unknown/unavailable`，不把普通 HTTPS 连接当 MCS，也不把它当作 MCS 缺失。新增有 DNS 候选、但 GMS :443 对端为 1.1.1.1 的回归场景。
 - **验证边界**：本轮已通过 GitHub 源码复读，确认 monitor/patrol/service 三条关键路径没有 `dumpsys` 引用，新增两个回归夹具与代码分支均已落入当前分支。这里是静态源码核对，不是完整 smoke 执行或 Shell 语法验证。
 - **范围边界**：按当前任务“先以 KSU RC5 为主、APK 暂不处理”的既定范围，`app/src/main/assets/fcm-monitor.sh` 的旧 APK dump 主判据未修改，`tests/apk-native-fcm-smoke.sh` 也未改动。KSU 模块目录中，唯一仍含 `dumpsys` 的 `module/bin/ctl.sh` 是独立的 stopped/suspended/hidden 应用管理与 Receiver 诊断；它不参与 MCS 状态机、patrol sample heartbeat 或恢复动作选择。完整 `fcm-monitor-smoke.sh`、`ksu-wake-smoke.sh`、全仓 Shell syntax gate 和 OriginOS 7 / KernelSU 真机长时间后台验证仍未执行；未触发 Actions、编译、打包、合并或发布。
+## 2026-11-23 恢复序列复审：未知或复采失败不得截断剩余触发
+
+- **用户要求落实**：一次确认断联后，四种触发必须在同一有界序列内依次尝试；某个动作没有确认恢复、仍在连接中/断联，或复采变成 unknown/失败，都不能让剩余触发永久跳过。
+- **修正**：恢复序列现在只有在内核复采明确观察到 `connected` 时提前结束。复采为 `connecting` / `disconnected` 时继续；复采为 `unknown` 或 `observe()` 失败时记录 `recovery_sequence_unverified` / `recovery_confirmation_unavailable`，保留已提交样本并继续下一种触发。四个动作都执行完且未观察到 connected 后，记录 `recovery_exhausted` 并按 30/45/60/90 秒退避下一轮。未知仍然不是断联判据。
+- **回归测试**：FCM smoke 增加“首个动作后状态变 unknown，仍必须执行余下三种动作”的场景；证据发布失败场景改为最后一个动作的复采失败，验证决策写回只更新已提交 evidence 的 decision 字段，不能写入未提交样本代次。
+- **验证边界**：已复核代码分支、四动作顺序、只有 connected 才提前停止的条件，以及测试断言结构。完整 smoke 和设备测试仍未执行；不得把静态复核写成动态测试通过。
 ## 2026-11-23 KSU RC5 初始记录（后续复审修正见下节）
 
 - **代码分支**：`fix/rc5-mcs-patrol-20261122`。本轮只修改该分支，不合并 main、不发布、不触发 GitHub Actions。
 - **监控主脚本**：`module/bin/fcm-monitor.sh` 已删除 GMS service dump 轮询、dump 解析器、wrapper 重试、package stopped dump 门控、原生 Close 事件降级判据和 connectTime 停滞恢复分支。当前脚本不再调用 `dumpsys`。`ctl.sh` 仍将 `dumpsys package` 用于独立的应用 stopped/suspended/hidden 管理状态，将 `dumpsys activity broadcasts` 用于接收器诊断；这些数据不进入 MCS 状态机、巡检心跳或重连动作选择。其 GMS UID/installed 查询的 dump fallback 已删除。
 - **连接检测**：以 GMS UID 的 MCS TCP Socket 为唯一决策证据。先用 `ss -tinpe` 请求 Socket + TCP_INFO；该参数失败或未暴露 GMS UID 时再试 `ss -tnpe`，仍无法验证 UID 才回退 `/proc/net/tcp`、`tcp6`。精确 MCS 端口 5228–5230 和经过验证的 mtalk :443 候选继续区分；普通 GMS HTTPS 不作为 MCS。TCP ESTABLISHED 只记为传输层连接。TCP_INFO 可用时，unacked>0 且 retransmits>=3，或 `lastrcv>=1,800,000ms`（30 分钟没有收到 TCP 数据，不计系统 suspend 时间）才标记 stalled，并经过持续时间与第二次采样确认后进入恢复。实现通过 `ss -i` 暴露的 `unacked`、`retrans`、`lastrcv` 读取，不硬编码目标内核的 struct 偏移；字段不可用则不启用该分支。
 - **状态与计时**：已读取到 UID/Socket 表但无 MCS socket 时先累计连续缺失 45 秒，再复采确认；SYN-SENT 保留首次观察时间，达到 60 秒后复采确认。检测源不可用时记录 unavailable/unknown 样本，但 patrol 继续运行；超过 90 秒的采样空档重置连续性锚点。
-- **多阶段恢复**：每个确认断联周期内按 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、`GTALK_HEARTBEAT` 顺序执行；广播失败立即进入下一动作，广播被接受后约 2 秒复采内核 Socket，仍明确 connecting/disconnected 才继续，connected 立即停止，unknown 或复采失败则安全停止。四动作全部无效后，下一轮完整序列才按 30/45/60/90 秒退避；不再把四种动作拆到多个巡检周期。
+- **多阶段恢复**：每个确认断联周期内按 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、`GTALK_HEARTBEAT` 顺序执行；广播失败立即进入下一动作，广播被接受后约 2 秒复采内核 Socket；只有 connected 才停止，connecting/disconnected/unknown/复采失败均继续下一个有界触发，不把 unknown 当作断联。四动作全部无效后，下一轮完整序列才按 30/45/60/90 秒退避；不再把四种动作拆到多个巡检周期。
 - **后台 watchdog（初始实现）**：`patrol.sh` 的 bounded child 身份判断排除 zombie。后续复审又修正了 `/proc/PID/stat` 路径解析、BusyBox timeout 缺少 setsid 时仍错误走直杀路径、旧 monitor owner 未清理就启动替代 patrol 等问题；当前规则与最新验证边界以紧接着的“复审修正”章节为准。
 - **回归测试更新（初始记录）**：`tests/fcm-monitor-smoke.sh` 与 `tests/ksu-wake-smoke.sh` 的当前覆盖项和新增故障夹具，以紧接着的“复审修正”章节为准；该章节补充同周期四动作升级、证据原子提交失败、owner 自恢复及 BusyBox timeout 无 setsid 的场景。
 - **验证边界（初始记录）**：完整 `tests/fcm-monitor-smoke.sh`、`tests/ksu-wake-smoke.sh`、全仓 `sh -n`、目标 ROM TCP_INFO 输出和 OriginOS 7/KSU 长时间后台验证仍未完成。后续复审在临时 Linux 容器中执行的局部语法与进程模型验证，见下节；不能把局部验证等同完整 smoke 或真机通过。未编译、未打包、未触发 Actions、未合并、未发布。
