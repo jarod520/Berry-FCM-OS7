@@ -2,12 +2,12 @@
 
 > **最高优先级架构约束（2026-11-23 起生效，覆盖下方所有旧记录）**
 >
-> - KernelSU FCM 连接检测与自动/手动重连决策，**不得使用 `dumpsys` 作为状态来源或必要前提**。读取失败、超时、解析失败、无输出都不得改变连接状态、阻断巡检或阻止下一种恢复动作。
+> - **全项目全局规则（KSU + APK）**：`dumpsys` 绝不参与 FCM 连接状态、断联确认、自动/手动重连、退避计时、patrol 存活或 watchdog 决策。dump 只能是独立、只读、非阻塞的辅助诊断；失败、超时、权限拒绝、空输出、解析未知都不得改变主状态、延迟采样、阻断恢复动作或阻止后台巡检。不得把 dump 结果作为执行 `unstop` 或发送心跳的前置条件。
 > - 当前 KSU 监控唯一决策来源是 GMS UID 归属的内核 TCP Socket 证据：优先使用 `ss -tinpe` 获取 UID/状态/端点及可用的 TCP_INFO；不支持时降级 `ss -tnpe`，再不可用时回退读取 `/proc/net/tcp` 与 `/proc/net/tcp6`。无法取得 GMS UID 或无法读取 Socket 表时，结果是“本轮证据不可用”，不是断联，也不是连接正常。
 > - 明确区分 TCP ESTABLISHED（只证明传输层连接）、SYN-SENT（连接建立中）、TCP_INFO 中 unacked>0 且连续 retransmits>=3，或 lastrcv>=1,800,000ms（30 分钟没有收到 TCP 数据，按内核 awake time 计）的疑似卡死 Socket、已成功读取 UID/Socket 表且 MCS Socket 连续缺失（达到阈值后再复采确认）、以及检测源不可用。TCP_INFO 只在 `ss -i`/内核提供相关字段时启用；字段不可读不能伪造健康或断联。不得将 TCP 建立冒充 FCM 心跳 ACK 或消息送达。
 > - 当前断联判定要求连续缺失至少 45 秒；连接中持续 60 秒后进入二次确认。采样空档超过 90 秒重置连续性锚点。未知/不可用样本不阻断下一轮巡检，也不伪造确定状态。
 > - 每次确认断联后立即启动一个有界四动作恢复序列：`GCM_RECONNECT` → `MCS_HEARTBEAT` → `ACTION_HEARTBEAT_NOW` → `GTALK_HEARTBEAT`。广播失败立即尝试下一动作；广播被系统接受后等待约 2 秒并复采内核 Socket；只有明确观察到 connected 才停止。connecting/disconnected 继续下一动作；unknown/复采失败既不伪装断联，也不当作恢复，继续下一个有界触发。四动作均未恢复时，才按 30/45/60/90 秒退避安排下一轮完整序列；广播返回成功不代表 GMS 已恢复，必须以后续内核 Socket 样本确认。
-> - `fcm-monitor.sh` 的连接检测和恢复决策禁止调用 `dumpsys`。当前仅 `ctl.sh` 的独立应用管理路径仍使用 `dumpsys package` 读取 stopped/suspended/hidden 状态以决定应用解冻，并用 `dumpsys activity broadcasts` 做接收器诊断；这些不是 MCS 连接状态证据，不得进入 MCS 状态机、巡检心跳或重连动作选择。若要求连独立应用管理也完全取消 dump 决策，则会同时取消 stopped-state 自动解冻功能，不能把它与 FCM 主检测混为一谈。旧版原生 MCS 主判据、Close 事件判据、connectTime 停滞恢复方案均已废弃。
+> - KSU `ctl.sh check` 可保留 package stopped/suspended/hidden 与 Receiver 的 dump 只读展示；这些数据不得控制操作。当前 `ctl.sh fix` 对已安装目标直接提交 `cmd package unstop`，不查询 stopped dump；GMS 心跳独立发送。APK monitor 不调用 dump。旧版原生 MCS 主判据、Close 事件判据、connectTime 停滞恢复方案均已废弃。
 > - 后台 patrol 与单轮 monitor 必须解耦：单次检查超时/锁冲突/证据不可用/某个广播失败，都不能退出 patrol 主循环。service watchdog 继续分别监督 patrol 心跳和有效采样心跳；patrol 退出后，只有确认旧 monitor owner/process group 已清理，才允许启动替代 patrol，避免残留 monitor 导致重复巡检反复撞锁。身份无法确认时不得误杀无关进程，也不得启动重复巡检。
 
 ## 2026-11-23 本轮复审：恢复失败时 evidence 代次保护与 443 误判
