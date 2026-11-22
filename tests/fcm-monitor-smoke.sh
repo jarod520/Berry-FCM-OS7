@@ -25,7 +25,7 @@ case "$*" in
   *"activity service"*)
     [ -z "${MCS_DUMPSYS_LOG:-}" ] || echo "$*" >> "$MCS_DUMPSYS_LOG"
     if [ -n "${MCS_DUMPSYS_BLOCK:-}" ]; then
-      : > "$MCS_DUMPSYS_BLOCK"
+      echo started > "$MCS_DUMPSYS_BLOCK"
       /bin/sleep "${MCS_DUMPSYS_BLOCK_SECONDS:-2}"
     fi
     if [ -n "${MCS_NEXT_FIXTURE:-}" ] && [ -f "$MCS_NEXT_FIXTURE" ]; then
