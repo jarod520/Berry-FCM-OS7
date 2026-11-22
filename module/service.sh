@@ -96,10 +96,10 @@ monitor_group_tool() {
 }
 stop_monitor_owner() {
     [ -s "$DATA/mcs-monitor.lock.owner" ] || { rm -f "$DATA/mcs-monitor.lock.owner"; return 0; }
-    monitor_pid=; monitor_stamp=; monitor_pgid=; monitor_isolated=
-    IFS=' ' read -r monitor_pid monitor_stamp monitor_pgid monitor_isolated < "$DATA/mcs-monitor.lock.owner" 2>/dev/null || :
+    monitor_pid=; monitor_stamp=; monitor_pgid=; monitor_isolated=; monitor_group_stamp=
+    IFS=' ' read -r monitor_pid monitor_stamp monitor_pgid monitor_isolated monitor_group_stamp < "$DATA/mcs-monitor.lock.owner" 2>/dev/null || :
     case "$monitor_pid:$monitor_stamp" in *[!0-9:]*|:*|*:)
-        printf '[%s] monitor_owner_identity_invalid; preserving owner lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+        printf '[%s] monitor_owner_identity_invalid; preserving owner lock\\n' "$(date '+%F %T')" >> "$DATA/guard.log"
         return 1
         ;;
     esac
@@ -108,29 +108,51 @@ stop_monitor_owner() {
        [ "$(proc_start_time "$monitor_pid")" = "$monitor_stamp" ] &&
        [ "$(proc_group_id "$monitor_pid")" = "$monitor_pid" ]; then
         if [ "$(proc_state "$monitor_pid" 2>/dev/null)" = Z ] ||
-           tr -d '\000' < "/proc/$monitor_pid/cmdline" 2>/dev/null | grep -Fq 'fcm-monitor.sh'; then
+           tr -d '\\000' < "/proc/$monitor_pid/cmdline" 2>/dev/null | grep -Fq 'fcm-monitor.sh'; then
             monitor_pgid="$monitor_pid"
             monitor_isolated=1
-            printf '[%s] monitor_legacy_group_inferred pid=%s pgid=%s\n' "$(date '+%F %T')" "$monitor_pid" "$monitor_pgid" >> "$DATA/guard.log"
+            monitor_group_stamp="$monitor_stamp"
+            printf '[%s] monitor_legacy_group_inferred pid=%s pgid=%s\\n' "$(date '+%F %T')" "$monitor_pid" "$monitor_pgid" >> "$DATA/guard.log"
         fi
     fi
     case "$monitor_isolated" in
         1)
-            [ "$monitor_pgid" = "$monitor_pid" ] || return 1
+            case "$monitor_pgid:$monitor_group_stamp" in *[!0-9:]*|:*|*:)
+                # Old isolated owners used the monitor itself as group leader.
+                [ "$monitor_pgid" = "$monitor_pid" ] || return 1
+                monitor_group_stamp="$monitor_stamp"
+                ;;
+            esac
+            [ "$monitor_pgid" -gt 1 ] && [ "$monitor_group_stamp" -gt 0 ] || return 1
             monitor_group_tool="$(monitor_group_tool)"
             [ -n "$monitor_group_tool" ] || {
-                printf '[%s] monitor_group_tool_unavailable pid=%s; preserving owner lock\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
+                printf '[%s] monitor_group_tool_unavailable pid=%s; preserving owner lock\\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
                 return 1
             }
+            if kill -0 "$monitor_pgid" 2>/dev/null; then
+                [ "$(proc_start_time "$monitor_pgid")" = "$monitor_group_stamp" ] &&
+                    [ "$(proc_group_id "$monitor_pgid")" = "$monitor_pgid" ] || {
+                    printf '[%s] monitor_group_leader_reused_or_moved pgid=%s; refusing group signal\\n' "$(date '+%F %T')" "$monitor_pgid" >> "$DATA/guard.log"
+                    return 1
+                }
+                if [ "$(proc_state "$monitor_pgid" 2>/dev/null)" != Z ]; then
+                    group_cmdline="$(tr -d '\\000' < "/proc/$monitor_pgid/cmdline" 2>/dev/null)"
+                    case "$group_cmdline" in *timeout*|*fcm-monitor.sh*) :;; *)
+                        printf '[%s] monitor_group_leader_cmdline_mismatch pgid=%s; refusing group signal\\n' "$(date '+%F %T')" "$monitor_pgid" >> "$DATA/guard.log"
+                        return 1
+                        ;;
+                    esac
+                fi
+            fi
             if kill -0 "$monitor_pid" 2>/dev/null; then
                 [ "$(proc_start_time "$monitor_pid")" = "$monitor_stamp" ] &&
                     [ "$(proc_group_id "$monitor_pid")" = "$monitor_pgid" ] || {
-                        printf '[%s] monitor_owner_pid_reused_or_moved pid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
-                        return 1
-                    }
+                    printf '[%s] monitor_owner_pid_reused_or_moved pid=%s; refusing group signal\\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
+                    return 1
+                }
                 if [ "$(proc_state "$monitor_pid" 2>/dev/null)" != Z ] &&
-                   ! tr -d '\000' < "/proc/$monitor_pid/cmdline" 2>/dev/null | grep -Fq 'fcm-monitor.sh'; then
-                    printf '[%s] monitor_owner_cmdline_mismatch pid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
+                   ! tr -d '\\000' < "/proc/$monitor_pid/cmdline" 2>/dev/null | grep -Fq 'fcm-monitor.sh'; then
+                    printf '[%s] monitor_owner_cmdline_mismatch pid=%s; refusing group signal\\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
                     return 1
                 fi
             fi
