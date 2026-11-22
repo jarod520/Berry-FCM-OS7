@@ -8,7 +8,7 @@
 > - 当前断联判定要求连续缺失至少 45 秒；连接中持续 60 秒后进入二次确认。采样空档超过 90 秒重置连续性锚点。未知/不可用样本不阻断下一轮巡检，也不伪造确定状态。
 > - 每次确认断联后立即启动一个有界四动作恢复序列：`GCM_RECONNECT` → `MCS_HEARTBEAT` → `ACTION_HEARTBEAT_NOW` → `GTALK_HEARTBEAT`。广播失败立即尝试下一动作；广播被系统接受后等待约 2 秒并复采内核 Socket，仍明确为 connecting/disconnected 才继续下一动作，connected 立即停止，unknown/复采失败则停止本轮而不把未知当断联。四动作均未恢复时，才按 30/45/60/90 秒退避安排下一轮完整序列；广播返回成功不代表 GMS 已恢复，必须以后续内核 Socket 样本确认。
 > - `dumpsys` 未来如需保留，只能用于独立辅助诊断或展示计时，不得写入连接状态机、恢复门控、巡检心跳或重连动作选择。旧版原生 MCS 主判据、Close 事件判据、connectTime 停滞恢复方案均已废弃。
-> - 后台 patrol 与单轮 monitor 必须解耦：单次检查超时/锁冲突/证据不可用/某个广播失败，都不能退出 patrol 主循环。service watchdog 继续分别监督 patrol 心跳和有效采样心跳；身份无法确认时不得误杀无关进程，也不得启动重复巡检。
+> - 后台 patrol 与单轮 monitor 必须解耦：单次检查超时/锁冲突/证据不可用/某个广播失败，都不能退出 patrol 主循环。service watchdog 继续分别监督 patrol 心跳和有效采样心跳；patrol 退出后，只有确认旧 monitor owner/process group 已清理，才允许启动替代 patrol，避免残留 monitor 导致重复巡检反复撞锁。身份无法确认时不得误杀无关进程，也不得启动重复巡检。
 
 ## 2026-11-23 KSU RC5：移除 dumpsys 决策链、内核 Socket 主检测与多阶段恢复
 
@@ -32,7 +32,8 @@
 - **实际缺陷 2：无 timeout、无 setsid 时的进程树快照路径解析**。`bounded_descendants_snapshot()` 对 `/proc/PID/stat` 的 awk 路径正则含错误转义，可能使 awk 解析失败；原测试仅有静态字符串断言，未实际执行完整 smoke，因此未及时发现。
 - **修正**：不再使用易错的 slash-escaped awk 正则，从 `FILENAME` 按 `/` 分段取倒数第二项作为 PID；KSU smoke 增加该解析方式的固定源码断言，原有无 timeout/无 setsid 挂起子进程场景保留。
 - **新增/调整测试夹具**：FCM smoke 要求首个 `GCM_RECONNECT` 失败后，在同一次恢复序列中继续执行后三种动作；另模拟第二种动作使 socket 恢复，要求立即停止后续动作；覆盖退避窗口内不重复触发。KSU smoke 固定断言检查 `/proc` 路径解析修复。
-- **本轮提交**：patrol 路径解析 `1a0b03f8f5af06a1486ff05599822ea9a47945f7`；恢复序列 `82a0e312692fe4a9b5ab18919639d6e822bee980`；FCM smoke `f08ac01bf8d9fbb24bf97e274686898a982469b6`、`568866d335984a2445e236888605a4ba519b5aa2`、`81d541f8b5028d128bd5927fed1b7c753afad6cf`；KSU smoke `118661cb708b146df36cf4d0429e30d95e78015f`。
+- **后台重启门控补充**：复审发现 service watchdog 在停止旧 patrol 成功、但 monitor owner 清理失败时，仍可能因 `patrol_pid` 已清空而立即启动新 patrol；新 patrol 会持续撞上残留 monitor 锁，形成没有新样本的重启循环。现新增 `prepare_patrol_start()`：每次启动替代 patrol 前，若 monitor owner 记录仍存在，必须先通过 `stop_monitor_owner()` 完成 PID/starttime/PGID 身份核验与清理；失败则延迟重试，不启动重复 patrol。KSU smoke 增加对应源码门控断言。
+- **本轮提交**：patrol 路径解析 `1a0b03f8f5af06a1486ff05599822ea9a47945f7`；恢复序列 `82a0e312692fe4a9b5ab18919639d6e822bee980`；FCM smoke `f08ac01bf8d9fbb24bf97e274686898a982469b6`、`568866d335984a2445e236888605a4ba519b5aa2`、`81d541f8b5028d128bd5927fed1b7c753afad6cf`；KSU smoke `118661cb708b146df36cf4d0429e30d95e78015f`、`6c0aa4392b720984618e7f95d57f0526634971a6`；CLI 恢复结果文案 `52a3587d882e502a1d6accf9d09a0ace180150b1`；service 重启门控 `f0ed8b5db498397aa29eb24f32a53cb736bf3aae`。
 - **验证边界**：已复读修改后的源码与测试夹具，检查动作顺序、成功后复采、断联继续、connected 停止、unknown 停止及退避状态字段；但当前连接器不能在仓库中执行 Shell，因此两个完整 smoke、全仓 `sh -n` 和 Android/KernelSU 设备验证仍未执行。不能据此宣称测试通过，也不触发编译、打包、Actions、合并或发布。
 
 ---
