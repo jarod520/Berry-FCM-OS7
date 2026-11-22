@@ -820,5 +820,6 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **修正**：在 `mcs-monitor.state` 末尾追加第 28 列 `sample_mono`，记录 `/proc/uptime` 单调时间；旧 27 列状态文件读取时将其初始化为 0，仍用旧 epoch 兼容读取，下一次有效采样自动升级为 28 列。snapshot 新增 `fcm_sample_uptime`；新状态的 `fcm_sample_age_seconds` 由 monotonic uptime 计算，wall-clock `fcm_sample_time` 仅保留为时间展示值。
 - **patrol freshness gate**：采样前 snapshot 必须成功解析出 `fcm_sample_uptime`；采样后要求状态字段存在且不为 stale、样本 uptime 严格大于前一 snapshot，并且不早于本轮检查开始 uptime。仍排除 rc=10/11/12/13/14/124；unknown 是有效样本，不能因为状态未知停止巡检。若前置 snapshot 读取失败，即使后置 snapshot 仍有一个看似新鲜的旧值，也不刷新 heartbeat。
 - **回归夹具**：KSU smoke 覆盖未变化的旧 sample uptime、前置 snapshot 读取失败、wall-clock 回拨但 monotonic 样本前进、rc=14 前置失败、stale snapshot 和非零但已提交新样本。FCM smoke 覆盖 wall-clock 回拨后状态仍 connected、sample age 仍为 0，以及旧 27 列状态读取并升级为 28 列。
+- **采样空档同步修正**：sample-gap 判定也改为比较 `nowm - sample_mono`，不再用 wall-clock 差值；旧 27 列状态仅在缺少 monotonic 字段时暂时回退 epoch 判断。新增 FCM smoke：wall-clock 大幅前跳但 uptime 只前进 10 秒不产生 sample_gap；wall-clock 不变而 uptime 前进 100 秒则必须产生 sample_gap。
 - **定向验证**：KSU smoke 固定源码断言正向 **136/136**、负向 **5/5** 匹配；FCM smoke 固定源码断言 **2/2** 匹配。对 sample-age、patrol gate、KSU mock 做了 POSIX sh 片段语法和行为模拟；验证了旧 27 列/新 28 列 state 的读取兼容。以上不是完整 smoke 执行。
 - **验证边界**：完整 `ksu-wake-smoke.sh`、`fcm-monitor-smoke.sh`、全仓 Shell syntax gate 和 Android/KernelSU 实机测试仍未执行。未触发 Actions、构建、编译、打包、合并或发布。
