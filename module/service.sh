@@ -70,6 +70,63 @@ maintenance_owner_identity() {
     [ "$(proc_start_time "$maintenance_pid")" = "$maintenance_stamp" ] || return 1
     [ "$(proc_state "$maintenance_pid")" != Z ]
 }
+maintenance_child_identity() {
+    maintenance_child_pid=; maintenance_child_stamp=
+    IFS=' ' read -r maintenance_child_pid maintenance_child_stamp < "$MAINTENANCE_LOCK/child" 2>/dev/null || return 1
+    case "$maintenance_child_pid:$maintenance_child_stamp" in *[!0-9:]*|:*|*:) return 1;; esac
+    [ "$maintenance_child_pid" -gt 1 ] && [ "$maintenance_child_stamp" -gt 0 ] &&
+        kill -0 "$maintenance_child_pid" 2>/dev/null || return 1
+    [ "$(proc_start_time "$maintenance_child_pid")" = "$maintenance_child_stamp" ] || return 1
+    [ "$(proc_state "$maintenance_child_pid")" != Z ]
+}
+stop_maintenance_child() {
+    [ -s "$MAINTENANCE_LOCK/child" ] || return 0
+    child_file_pid=; child_file_stamp=
+    IFS=' ' read -r child_file_pid child_file_stamp < "$MAINTENANCE_LOCK/child" 2>/dev/null || :
+    case "$child_file_pid:$child_file_stamp" in
+        *[!0-9:]*|:*|*:)
+            printf '[%s] maintenance_child_identity_invalid; refusing to clear maintenance lock\\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+            return 1
+            ;;
+    esac
+    [ "$child_file_pid" -gt 1 ] && [ "$child_file_stamp" -gt 0 ] || return 1
+    if ! maintenance_child_identity; then
+        rm -f "$MAINTENANCE_LOCK/child"
+        return 0
+    fi
+    maintenance_child_stop_pid="$maintenance_child_pid"
+    maintenance_child_stop_stamp="$maintenance_child_stamp"
+    kill -TERM "$maintenance_child_stop_pid" 2>/dev/null || :
+    n=0
+    while maintenance_child_identity &&
+          [ "$maintenance_child_pid" = "$maintenance_child_stop_pid" ] &&
+          [ "$maintenance_child_stamp" = "$maintenance_child_stop_stamp" ] && [ "$n" -lt 4 ]; do
+        sleep 1; n=$((n + 1))
+    done
+    if maintenance_child_identity &&
+       [ "$maintenance_child_pid" = "$maintenance_child_stop_pid" ] &&
+       [ "$maintenance_child_stamp" = "$maintenance_child_stop_stamp" ]; then
+        kill -KILL "$maintenance_child_stop_pid" 2>/dev/null || :
+        n=0
+        while maintenance_child_identity &&
+              [ "$maintenance_child_pid" = "$maintenance_child_stop_pid" ] &&
+              [ "$maintenance_child_stamp" = "$maintenance_child_stop_stamp" ] && [ "$n" -lt 3 ]; do
+            sleep 1; n=$((n + 1))
+        done
+    fi
+    if maintenance_child_identity &&
+       [ "$maintenance_child_pid" = "$maintenance_child_stop_pid" ] &&
+       [ "$maintenance_child_stamp" = "$maintenance_child_stop_stamp" ]; then
+        printf '[%s] maintenance_child_stop_unconfirmed pid=%s start=%s\\n' \\
+            "$(date '+%F %T')" "$maintenance_child_stop_pid" "$maintenance_child_stop_stamp" >> "$DATA/guard.log"
+        return 1
+    fi
+    if [ "$(awk '{print $1}' "$MAINTENANCE_LOCK/child" 2>/dev/null)" = "$maintenance_child_stop_pid" ] &&
+       [ "$(awk '{print $2}' "$MAINTENANCE_LOCK/child" 2>/dev/null)" = "$maintenance_child_stop_stamp" ]; then
+        rm -f "$MAINTENANCE_LOCK/child"
+    fi
+    return 0
+}
 stop_maintenance_owner() {
     [ -d "$MAINTENANCE_LOCK" ] || return 0
     n=0
@@ -96,6 +153,7 @@ stop_maintenance_owner() {
         rm -rf "$MAINTENANCE_LOCK"
         return 0
     fi
+    stop_maintenance_child || return 1
     maintenance_stop_pid="$maintenance_pid"
     maintenance_stop_stamp="$maintenance_stamp"
     kill -TERM "$maintenance_stop_pid" 2>/dev/null || :
