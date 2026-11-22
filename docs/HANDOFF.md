@@ -812,3 +812,13 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - KSU 回归场景覆盖 stale snapshot、同秒旧样本和 pre-observe rc=14；patrol 只有在样本 epoch 相对前快照增长、时间属于本轮窗口且 snapshot state 非 stale 时才刷新心跳。
 - 在隔离 Linux 环境对本轮修改的状态转换、evidence 失败清理、patrol freshness 条件、snapshot mock 和 native timer 字段片段执行 POSIX sh 语法/行为模拟，均通过。**这些不是完整项目脚本语法 gate，也不是 smoke 全量执行。**
 - 当前分支 HEAD：547b3eafc1f7568a1a11a91b8defd3df399f3b7b。完整 fcm-monitor-smoke.sh、ksu-wake-smoke.sh、全仓 Shell syntax gate 和 Android/KernelSU 实机验证仍待执行；未触发 Actions、构建、编译、打包或发布。
+
+
+## 2026-11-22 sample freshness 改用 monotonic uptime
+
+- **复审发现**：即使 sample epoch 前后比较正确，wall-clock 被 NTP/人工校时回拨时，新样本的 `fcm_sample_time` 也可能小于上一样本；若 patrol 仍用 epoch 判断新鲜度，就会拒绝真实的新样本，最终把正常巡检误判为空档。
+- **修正**：在 `mcs-monitor.state` 末尾追加第 28 列 `sample_mono`，记录 `/proc/uptime` 单调时间；旧 27 列状态文件读取时将其初始化为 0，仍用旧 epoch 兼容读取，下一次有效采样自动升级为 28 列。snapshot 新增 `fcm_sample_uptime`；新状态的 `fcm_sample_age_seconds` 由 monotonic uptime 计算，wall-clock `fcm_sample_time` 仅保留为时间展示值。
+- **patrol freshness gate**：采样前 snapshot 必须成功解析出 `fcm_sample_uptime`；采样后要求状态字段存在且不为 stale、样本 uptime 严格大于前一 snapshot，并且不早于本轮检查开始 uptime。仍排除 rc=10/11/12/13/14/124；unknown 是有效样本，不能因为状态未知停止巡检。若前置 snapshot 读取失败，即使后置 snapshot 仍有一个看似新鲜的旧值，也不刷新 heartbeat。
+- **回归夹具**：KSU smoke 覆盖未变化的旧 sample uptime、前置 snapshot 读取失败、wall-clock 回拨但 monotonic 样本前进、rc=14 前置失败、stale snapshot 和非零但已提交新样本。FCM smoke 覆盖 wall-clock 回拨后状态仍 connected、sample age 仍为 0，以及旧 27 列状态读取并升级为 28 列。
+- **定向验证**：KSU smoke 固定源码断言正向 **136/136**、负向 **5/5** 匹配；FCM smoke 固定源码断言 **2/2** 匹配。对 sample-age、patrol gate、KSU mock 做了 POSIX sh 片段语法和行为模拟；验证了旧 27 列/新 28 列 state 的读取兼容。以上不是完整 smoke 执行。
+- **验证边界**：完整 `ksu-wake-smoke.sh`、`fcm-monitor-smoke.sh`、全仓 Shell syntax gate 和 Android/KernelSU 实机测试仍未执行。未触发 Actions、构建、编译、打包、合并或发布。
