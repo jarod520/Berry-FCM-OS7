@@ -52,6 +52,8 @@ grep -Fq 'elif [ "$hb" -eq 0 ]' "$ROOT/module/service.sh"
 grep -Fq 'patrol.sample.heartbeat' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'sample_heartbeat_not_refreshed rc=%s sample_epoch=%s check_started=%s' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'observed_sample_epoch' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'observed_sample_state' "$ROOT/module/bin/patrol.sh"
+grep -Fq '[ "$observed_sample_state" != stale ]' "$ROOT/module/bin/patrol.sh"
 grep -Fq '[ "$observed_sample_epoch" -ge "$check_started_epoch" ]' "$ROOT/module/bin/patrol.sh"
 grep -Fq '[ "$observed_sample_epoch" -gt "$previous_sample_epoch" ]' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'monitor_rc" -ne 10' "$ROOT/module/bin/patrol.sh"
@@ -225,7 +227,11 @@ MOCK
 cat > "$TMP/module/bin/fcm-monitor.sh" <<'MOCK'
 if [ "$1" = snapshot ]; then
     sample_epoch="$(cat "$TEST_DIR/sample-epoch" 2>/dev/null || echo 0)"
+    if [ "${TEST_MONITOR_STALE:-0}" = 1 ]; then
+        echo "{\\"fcm_state\\":\\"stale\\",\\"fcm_sample_time\\":$sample_epoch,\\"fcm_recovery_decision\\":\\"sample_unavailable\\"}"
+    elif [ "${TEST_MONITOR_UNKNOWN:-0}" = 1 ]; then
     if [ "${TEST_MONITOR_UNKNOWN:-0}" = 1 ]; then
+    elif [ "${TEST_MONITOR_UNKNOWN:-0}" = 1 ]; then
         echo "{\"fcm_state\":\"unknown\",\"fcm_sample_time\":$sample_epoch,\"fcm_recovery_decision\":\"sample_unavailable\"}"
     else
         echo "{\"fcm_state\":\"connected\",\"fcm_sample_time\":$sample_epoch,\"fcm_recovery_decision\":\"not_disconnected\"}"
@@ -431,6 +437,24 @@ test ! -s "$TMP/data/patrol.sample.heartbeat"
 grep -q 'sample_heartbeat_not_refreshed rc=14 .*previous_sample_epoch=' "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: pre-observe owner failure cannot refresh heartbeat from a same-second old sample'
+
+# A newly written timestamp is still not sufficient when snapshot marks it
+# stale (for example, because wall-clock age cannot be validated).
+touch "$TMP/module/module.prop"
+echo 1 > "$TMP/data/enabled"
+echo passive > "$TMP/data/wake-mode"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+rm -f "$TMP/data/patrol.sample.heartbeat"
+date +%s > "$TMP/sample-epoch"
+/bin/sleep 1
+export TEST_MONITOR_RC=42 TEST_MONITOR_STALE=1
+timeout 8 sh "$TMP/module/service.sh"
+unset TEST_MONITOR_RC TEST_MONITOR_STALE
+test ! -s "$TMP/data/patrol.sample.heartbeat"
+grep -q 'sample_heartbeat_not_refreshed rc=42' "$TMP/data/guard.log"
+test ! -d "$TMP/data/service.lock"
+echo 'PASS: stale snapshot state cannot refresh sample heartbeat'
 
 touch "$TMP/module/module.prop"
 echo 1 > "$TMP/data/enabled"
