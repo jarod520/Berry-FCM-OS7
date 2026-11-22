@@ -340,6 +340,7 @@ parse_mcs() {
             conflict=0; header=0; done=0
           }
           scoped=(line~/^SERVICE com\.google\.android\.gms\/(\.gcm\.GcmService|com\.google\.android\.gms\.gcm\.GcmService)([[:space:]]|$)/)
+          if(scoped) header=1
           next
         }
         # Once ActivityManager exposes service blocks, never borrow a state
