@@ -871,10 +871,10 @@ if [ "$1" = --list ]; then
     exit 0
 fi
 if [ "$1" = timeout ]; then
-    echo called > "$TEST_DIR/busybox-timeout-called"
     shift
     if [ "$1" = -k ]; then shift 2; fi
     duration="$1"; shift
+    case "$*" in *fcm-monitor.sh*) echo called > "$TEST_DIR/busybox-timeout-called";; esac
     exec /usr/bin/timeout -k 1 "$duration" "$@"
 fi
 if [ "$1" = kill ]; then shift; exec /bin/kill "$@"; fi
