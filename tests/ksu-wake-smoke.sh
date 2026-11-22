@@ -103,6 +103,8 @@ grep -Fq 'monitor_group_identity_unverified_before_kill' "$ROOT/module/service.s
 grep -Fq 'stop_monitor_owner()' "$ROOT/module/service.sh"
 grep -Fq 'prepare_patrol_start()' "$ROOT/module/service.sh"
 grep -Fq 'monitor_process_exists()' "$ROOT/module/service.sh"
+grep -Fq 'case "$monitor_cmdline_text" in *fcm-monitor.sh*) return 0;; esac' "$ROOT/module/service.sh"
+! grep -Fq 'grep -Fq "fcm-monitor.sh"' "$ROOT/module/service.sh"
 grep -Fq 'stale_monitor_owner_record_cleared reason=no_monitor_process' "$ROOT/module/service.sh"
 grep -Fq 'if [ -s "$DATA/mcs-monitor.lock.owner" ] && ! stop_monitor_owner; then' "$ROOT/module/service.sh"
 grep -Fq 'if prepare_patrol_start; then' "$ROOT/module/service.sh"
