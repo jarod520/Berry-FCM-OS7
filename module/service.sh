@@ -322,12 +322,12 @@ if ! mkdir "$LOCK" 2>/dev/null; then
     if mv "$LOCK" "$stale" 2>/dev/null; then rm -rf "$stale"; fi
     mkdir "$LOCK" 2>/dev/null || exit 0
 fi
-stop_monitor_owner || exit 0
 IFS=' ' read -r service_pid _ < /proc/self/stat
 case "$service_pid" in ""|*[!0-9]*) exit 0;; esac
 echo "$service_pid" > "$LOCK/pid"
 proc_start_time "$service_pid" > "$LOCK/starttime"
 echo "$service_pid" > "$LOCK/wake-pid"
+stop_monitor_owner || exit 0
 cgroup_path() {
     while IFS=: read -r hierarchy controllers group; do
         if [ "$hierarchy" = 0 ] && [ -z "$controllers" ]; then
