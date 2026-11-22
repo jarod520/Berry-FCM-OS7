@@ -24,6 +24,8 @@ cat > "$TMP/bin/ss" <<'MOCK'
 #!/bin/sh
 if [ "${MCS_SS_MODE:-connected}" = unknown ]; then
     echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228'
+elif [ "${MCS_SS_MODE:-connected}" = connecting ]; then
+    echo 'SYN-SENT 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:203'
 elif [ "${MCS_SS_MODE:-connected}" = absent ]; then
     echo 'TIME-WAIT 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:202'
 else
@@ -323,6 +325,25 @@ run monitor
 j="$(run snapshot)"; assert_json "$j" fcm_state=unknown
 grep -q '|sample_gap|' "$BERRY_FCM_DATA/mcs-monitor-events.log"
 echo 'PASS: long continuous absence remains disconnected; suspend gap resets evidence'
+
+# A persistent SYN-SENT socket must retain its first-seen time and eventually
+# request recovery; each poll must not restart the 60-second connecting timer.
+export BERRY_FCM_DATA="$TMP/connecting-data"
+mkdir -p "$BERRY_FCM_DATA"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+: > "$MCS_AM_LOG"
+export MCS_SS_MODE=connecting
+settime 16000
+run monitor; requests 0
+settime 16020
+run monitor; requests 0
+settime 16040
+run monitor; requests 0
+settime 16060
+run monitor; requests 1
+test "$(tail -n 1 "$MCS_AM_LOG")" = 'broadcast --user 0 -a com.google.android.intent.action.GCM_RECONNECT -p com.google.android.gms'
+grep -q '|reconnect_requested|auto UID=0 GCM_RECONNECT' "$BERRY_FCM_DATA/mcs-monitor-events.log"
+echo 'PASS: continuous GMS SYN-SENT state ages into recovery'
 
 # A frozen positive native GMS connection timer is checked twice, then receives
 # one targeted reconnect request. It does not force-stop the GMS package.
