@@ -582,6 +582,7 @@ observe() {
     fi
     outage_hint_mono="$previous_down_observed"
     previous_native_reason=
+    old_source=; old_duration=-1; old_close=; old_tcp=; old_decision=
     if [ -f "$EVIDENCE" ]; then
         IFS='|' read -r old_source old_duration old_close old_tcp previous_native_reason old_decision < "$EVIDENCE" || :
     fi
