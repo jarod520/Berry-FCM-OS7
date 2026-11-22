@@ -162,6 +162,7 @@ assert_json "$j" fcm_state=unknown
 assert_json "$j" fcm_tcp_hint=absent
 assert_json "$j" fcm_native_reason=gms_stopped
 assert_json "$j" fcm_recovery_decision=gms_stopped_unknown
+[ "$(awk -F'|' '{print $23}' "$BERRY_FCM_DATA/mcs-monitor.state")" = 0 ]
 # Manual recovery also rechecks the stopped condition after a deferred native poll.
 unset BERRY_FCM_TEST_MODE
 settime 11641
