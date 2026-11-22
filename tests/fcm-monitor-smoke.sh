@@ -203,6 +203,18 @@ assert_json "$(run snapshot)" fcm_state=connected
 assert_json "$(run snapshot)" fcm_source=gms_socket
 ! grep -q "|sample_unknown|reason=not_polled" "$BERRY_FCM_DATA/mcs-monitor-events.log"
 [ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 1 ]
+settime 70030
+export MCS_SS_MODE=absent
+run monitor
+assert_json "$(run snapshot)" fcm_state=connected
+assert_json "$(run snapshot)" fcm_source=gms
+settime 70040
+export MCS_SS_MODE=unknown
+run monitor
+assert_json "$(run snapshot)" fcm_state=connected
+assert_json "$(run snapshot)" fcm_source=gms
+[ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 1 ]
+export MCS_SS_MODE=connected
 settime 70060
 run monitor
 assert_json "$(run snapshot)" fcm_state=disconnected
