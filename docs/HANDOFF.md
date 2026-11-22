@@ -3,7 +3,7 @@
 - 基于 RC6 提交 `d9312e44a6b0c4110a6dbc383c39def40bde131b`；本轮候选版本 `1.0-rc.7 / 10007`，仍属于测试候选，不合并 main、不发布正式 Release。
 - GMS dump 只有 ActivityManager wrapper 时仍保留 unknown；Root 可见的精确 GMS UID MCS TCP 缺失连续 30 秒后才转为断联，并经第二次采样确认。连续巡检超过 15 分钟不会清零断联计时；只有采样空档超过 90 秒才重置连续性锚点。持续 SYN-SENT 会保留首次观察时间，达到 60 秒进入恢复判断。最近 Close 事件在 Socket 所有权不可读、持续 30–900 秒且没有更新的 Connected 事件时，作为有限期辅助证据；单次 Close 不直接触发重连。
 - 自动恢复按连续未恢复轮次依次尝试 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、`GTALK_HEARTBEAT`；每轮只发送一种动作，后续轮次必须由新采样再次确认仍断联并经过退避。广播返回成功只记录为已请求，不等于 GMS 已恢复；恢复必须由后续原生状态或精确 MCS Socket 证据确认。
-- service 独立监督 patrol：PID/starttime/cmdline 身份校验；同时监控 patrol 进程心跳和成功完成的 FCM 样本心跳，避免 patrol 循环仍在运行、但监控锁长期被占用时被误判为健康；记录 monitor 锁所有者 PID/starttime，样本超时后只终止身份核验通过的卡死 monitor。首次心跳缺失也有 90 秒兜底。停止 monitor/timer/patrol 使用有界 TERM/KILL 等待，未确认退出时不启动重复 worker。热安装/卸载等待旧 service 最长 24 秒，KILL 后再复核；热安装若旧进程仍存活则取消新启动。保留数据目录配置与历史，不强制重启。
+- service 独立监督 patrol：PID/starttime/cmdline 身份校验；同时监控 patrol 进程心跳和成功完成的 FCM 样本心跳，避免 patrol 循环仍在运行、但监控锁长期被占用时被误判为健康；记录 monitor 锁所有者 PID/starttime，样本超时后只终止身份核验通过的卡死 monitor。service 清理 worker 未确认退出时保留锁；新 service 回收旧锁前先核验并终止遗留 patrol，无法确认退出则拒绝启动重复巡检。首次心跳缺失也有 90 秒兜底。停止 monitor/timer/patrol 使用有界 TERM/KILL 等待，未确认退出时不启动重复 worker。热安装/卸载等待旧 service 最长 24 秒，KILL 后再复核；热安装若旧进程仍存活则取消新启动。保留数据目录配置与历史，不强制重启。
 - 开源参考：继续参考 microG GmsCore 的 MCS 连接/心跳恢复模型及 AOSP Toybox `timeout` 的进程组超时清理。本项目当前第四阶段使用 `GTALK_HEARTBEAT`；未将 HyperOS 专用 Chimera Provider 查询直接移植到 OriginOS。DNS 解析失败也缓存 10 分钟，避免每轮重复等待。
 - 当前进度：源码与回归用例仍在集中修复，尚未执行本轮完整 smoke 套件、完整构建或 OriginOS 7 实机验证。`.github/workflows/` 下所有工作流已改为仅 `workflow_dispatch`，不再由 push/PR 自动触发。按用户要求，全部代码修改与静态检查完成后，只手动触发一次完整构建；不自动编译、不自动打包、不合并、不发布。
 
