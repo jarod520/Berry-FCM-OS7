@@ -341,6 +341,14 @@ printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService 1234abcd pid=321 u
 j="$(run status)"
 assert_json "$j" fcm_state=disconnected
 assert_json "$j" fcm_source=gms
+settime 13002
+printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService pid=321' '  Is client connected:true' > "$MCS_FIXTURE"
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+settime 13003
+printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService pid=321' '  Is client connected:false' > "$MCS_FIXTURE"
+j="$(run status)"
+assert_json "$j" fcm_state=disconnected
 printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService 1234abcd pid=321 user=0' '  Not connected' > "$MCS_FIXTURE"
 j="$(run status)"
 assert_json "$j" fcm_state=disconnected
