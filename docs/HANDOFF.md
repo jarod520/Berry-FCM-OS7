@@ -10,16 +10,16 @@
 > - `dumpsys` 未来如需保留，只能用于独立辅助诊断或展示计时，不得写入连接状态机、恢复门控、巡检心跳或重连动作选择。旧版原生 MCS 主判据、Close 事件判据、connectTime 停滞恢复方案均已废弃。
 > - 后台 patrol 与单轮 monitor 必须解耦：单次检查超时/锁冲突/证据不可用/某个广播失败，都不能退出 patrol 主循环。service watchdog 继续分别监督 patrol 心跳和有效采样心跳；patrol 退出后，只有确认旧 monitor owner/process group 已清理，才允许启动替代 patrol，避免残留 monitor 导致重复巡检反复撞锁。身份无法确认时不得误杀无关进程，也不得启动重复巡检。
 
-## 2026-11-23 KSU RC5：移除 dumpsys 决策链、内核 Socket 主检测与多阶段恢复
+## 2026-11-23 KSU RC5 初始记录（后续复审修正见下节）
 
 - **代码分支**：`fix/rc5-mcs-patrol-20261122`。本轮只修改该分支，不合并 main、不发布、不触发 GitHub Actions。
 - **监控主脚本**：`module/bin/fcm-monitor.sh` 已删除 GMS service dump 轮询、dump 解析器、wrapper 重试、package stopped dump 门控、原生 Close 事件降级判据和 connectTime 停滞恢复分支。当前脚本不再调用 `dumpsys`。`ctl.sh` 仍将 `dumpsys package` 用于独立的应用 stopped/suspended/hidden 管理状态，将 `dumpsys activity broadcasts` 用于接收器诊断；这些数据不进入 MCS 状态机、巡检心跳或重连动作选择。其 GMS UID/installed 查询的 dump fallback 已删除。
 - **连接检测**：以 GMS UID 的 MCS TCP Socket 为唯一决策证据。先用 `ss -tinpe` 请求 Socket + TCP_INFO；该参数失败或未暴露 GMS UID 时再试 `ss -tnpe`，仍无法验证 UID 才回退 `/proc/net/tcp`、`tcp6`。精确 MCS 端口 5228–5230 和经过验证的 mtalk :443 候选继续区分；普通 GMS HTTPS 不作为 MCS。TCP ESTABLISHED 只记为传输层连接。TCP_INFO 可用时，unacked>0 且 retransmits>=3，或 `lastrcv>=1,800,000ms`（30 分钟没有收到 TCP 数据，不计系统 suspend 时间）才标记 stalled，并经过持续时间与第二次采样确认后进入恢复。实现通过 `ss -i` 暴露的 `unacked`、`retrans`、`lastrcv` 读取，不硬编码目标内核的 struct 偏移；字段不可用则不启用该分支。
 - **状态与计时**：已读取到 UID/Socket 表但无 MCS socket 时先累计连续缺失 45 秒，再复采确认；SYN-SENT 保留首次观察时间，达到 60 秒后复采确认。检测源不可用时记录 unavailable/unknown 样本，但 patrol 继续运行；超过 90 秒的采样空档重置连续性锚点。
 - **多阶段恢复**：每个确认断联周期内按 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、`GTALK_HEARTBEAT` 顺序执行；广播失败立即进入下一动作，广播被接受后约 2 秒复采内核 Socket，仍明确 connecting/disconnected 才继续，connected 立即停止，unknown 或复采失败则安全停止。四动作全部无效后，下一轮完整序列才按 30/45/60/90 秒退避；不再把四种动作拆到多个巡检周期。
-- **后台 watchdog**：`patrol.sh` 的 bounded child 身份判断排除 zombie。若目标系统既无可用 timeout applet，也无 setsid，watchdog 会先快照 monitor 子进程树的 PID/starttime，TERM 后再按身份复核 KILL。复审修复了进程树快照中对 `/proc/PID/stat` 路径使用错误转义 awk 正则的问题，改为按路径分段提取 PID；此前该 awk 可能语法错误，导致后代进程未被快照。service 仍分别监督 patrol heartbeat 与有效 sample heartbeat。
-- **回归测试更新**：`tests/fcm-monitor-smoke.sh` 改为 kernel socket fixture，覆盖 connected、持续 SYN-SENT、TCP_INFO unacked/retrans 与 30 分钟 lastrcv stalled、首个广播失败后继续下一动作、多阶段四动作、后续 Socket 恢复、连续缺失阈值、检测源不可用，以及 monitor 不调用 dumpsys；`tests/ksu-wake-smoke.sh` 增加 bounded child zombie 与无 timeout、无 setsid 时进程树身份清理运行夹具。
-- **验证边界**：GitHub connector 仅提供源码读写，本轮没有本地 checkout/设备 Shell 执行能力；因此 smoke 脚本、全仓 `sh -n`、TCP_INFO 在目标 ROM 的实际输出、OriginOS 7/KSU 真机长时间后台验证尚未执行。`ss -i` 不提供 TCP_INFO 字段时，stalled 分支不可用，仍会继续使用 TCP 状态与缺失证据巡检，不伪造 TCP_INFO 结果。当前只能确认源码已更新并完成文本级结构核对，不能宣称测试通过。未编译、未打包、未触发 Actions、未合并、未发布。
+- **后台 watchdog（初始实现）**：`patrol.sh` 的 bounded child 身份判断排除 zombie。后续复审又修正了 `/proc/PID/stat` 路径解析、BusyBox timeout 缺少 setsid 时仍错误走直杀路径、旧 monitor owner 未清理就启动替代 patrol 等问题；当前规则与最新验证边界以紧接着的“复审修正”章节为准。
+- **回归测试更新（初始记录）**：`tests/fcm-monitor-smoke.sh` 与 `tests/ksu-wake-smoke.sh` 的当前覆盖项和新增故障夹具，以紧接着的“复审修正”章节为准；该章节补充同周期四动作升级、证据原子提交失败、owner 自恢复及 BusyBox timeout 无 setsid 的场景。
+- **验证边界（初始记录）**：完整 `tests/fcm-monitor-smoke.sh`、`tests/ksu-wake-smoke.sh`、全仓 `sh -n`、目标 ROM TCP_INFO 输出和 OriginOS 7/KSU 长时间后台验证仍未完成。后续复审在临时 Linux 容器中执行的局部语法与进程模型验证，见下节；不能把局部验证等同完整 smoke 或真机通过。未编译、未打包、未触发 Actions、未合并、未发布。
 - **本轮提交**：监控主逻辑 `46dc0e5`、遗留路径清理 `2db2b72`、Socket/TCP_INFO scanner `ff8d634`、`41cb12f`、`5d122e1`、状态计时修正 `fd20e45` / `e198efb`、patrol zombie/进程树清理 `2a2fd54` / `2e47de3`、`a53fe4d`、`5da6a49`、`d83f996`、`665d19c`、`7abd34b`、`38edbd7`、`17dbc95`、`f1fd48b`、`7258237`、`b05e145`、`b6135e7`、`f1fd48b`、`7258237`、`17dbc95`、kernel socket smoke `2d306f2` / `c4cff1b` / `46bf4e7` / `a2df8eb` / `1a7dd48` / `da6e8fe` / `801d609`、`8b31915`、`dea4937`、`f2acfaf`、KSU watchdog 回归断言 `03a574f` / `a53fe4d` / `4276b02` / `ae2314e` / `e924bdd` / `ed79b3f`、`b6135e7`、ctl UID 查询清理 `69f344e`。交接文档以本次提交为准。
 
 ---
@@ -72,7 +72,7 @@
 - 已保留第一份完整测试主体（312 行），删除后续三份重复主体和孤立命令。源码复核确认 `hot_enabled_line`、`hot_stop_line`、hung monitor、orphan patrol、no-timeout fallback 等核心场景现在各保留一份。
 - 与前一项 FCM smoke 修复合并核对：学习 IP TTL 区块只有一份；不存在将 learned-IP 数据文件当命令执行的行；TTL 区块单独 `sh -n` 通过。
 - **Toybox 方案核实**：上游 Toybox `timeout` 默认创建独立进程组，并对负 PID 发送 TERM/KILL，因此该 applet 能将超时信号传给命令的进程组及其子进程；当前 patrol 在检测到 Toybox timeout 时优先使用它。来源： https://github.com/landley/toybox/blob/master/toys/other/timeout.c 。这证明上游实现的行为，但尚不能证明用户设备上的具体 Toybox 构建包含该 applet。
-- 无 timeout 时，当前脚本检测 setsid + kill 后自行创建会话并按进程组清理；同时缺少 timeout 与 setsid 时只能直接终止 monitor PID，不能保证所有后代退出。暂不添加复杂递归杀进程实现。
+- **历史限制，已由 2026-11-23 复审修正覆盖**：早期实现缺少 timeout 与 setsid 时只能直接终止 monitor PID，不能保证所有后代退出；当前已增加 PID/starttime 进程树快照与 TERM/KILL 回收。另对 BusyBox timeout 有 `-k` 但没有安全 setsid/kill 组合的情况，现改走进程树 watchdog，不再直接 timeout 主进程。
 - **验证状态**：本轮只做源码结构检查与修复后 TTL 片段 `sh -n`；两个完整 smoke 套件尚未运行，完整 Shell 语法检查、实际 Android/KernelSU 运行均未完成。不得标记测试通过或允许构建。
 - 未触发任何 workflow、编译、打包或发布；PR 未合并。
 ## 2026-11-22 smoke 测试脚本修复：学习 IP TTL 用例
