@@ -14,6 +14,12 @@ grep -Fq 'socket="$(scan_sockets)"' "$APK"
 # A fresh observation must be committed before status/snapshot reloads the state file.
 grep -Fq 'save_state || return $?' "$APK"
 grep -Fq 'write_evidence || return $?' "$APK"
+save_block="$(sed -n '/^save_state() {/,/^}/p' "$APK")"
+evidence_block="$(sed -n '/^write_evidence() {/,/^}/p' "$APK")"
+printf '%s\\n' "$save_block" | grep -Fq 'tmp="$STATE.$"'
+printf '%s\\n' "$evidence_block" | grep -Fq 'tmp="$EVIDENCE.$"'
+printf '%s\\n' "$save_block" | grep -Fq 'rm -f "$tmp"'
+printf '%s\\n' "$evidence_block" | grep -Fq 'rm -f "$tmp"'
 request_block="$(sed -n '/^request_reconnect() {/,/^}/p' "$APK")"
 printf '%s\\n' "$request_block" | grep -Fq 'if ! save_state; then'
 printf '%s\\n' "$request_block" | grep -Fq 'reconnect_aborted'
