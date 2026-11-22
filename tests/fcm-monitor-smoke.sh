@@ -42,7 +42,7 @@ case "$mode" in
     echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:103'
     echo ' cubic wscale:7,7 rto:204 rtt:20/2 unacked:1 retrans:3/10'
     ;;
-  unknown) echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228';;
+  unknown|proc_connected) echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228';;
   *) exit 2;;
 esac
 MOCK
@@ -176,6 +176,24 @@ echo unknown > "$TMP/mode"
 settime 10361
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
+requests 6
+
+# When ss cannot expose UID, the root-readable /proc TCP tables are the fallback.
+mkdir -p "$TMP/proc"
+cat > "$TMP/proc/tcp" <<'PROC'
+  sl  local_address rem_address   st tx_queue:rx_queue tr:tm->when retrnsmt   uid  timeout inode
+   0: 0801A8C0:C350 8EFA9D8E:146C 01 00000000:00000000 00:00000000 00000000 10200 0 12345
+PROC
+cat > "$TMP/proc/tcp6" <<'PROC'
+  sl  local_address rem_address   st tx_queue:rx_queue tr:tm->when retrnsmt   uid  timeout inode
+PROC
+export BERRY_PROC_NET_DIR="$TMP/proc"
+echo proc_connected > "$TMP/mode"
+settime 10362
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_source=gms_socket
+assert_json "$j" fcm_tcp_hint=established
 requests 6
 
 [ ! -s "$TMP/dumpsys.log" ] || fail "dumpsys was invoked by the monitor"
