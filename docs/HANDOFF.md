@@ -625,6 +625,7 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
   - `service.sh` 在组信号前核验 PGID leader 的 starttime/PGID/cmdline，并再次核验 monitor PID/starttime/PGID；旧四字段 isolated owner 仅在 monitor 自身就是组 leader 时兼容推断，不能把旧的未知组号当作安全组。
   - 正常 `service_cleanup()` 和巡检 watchdog 回收都改为先停止 patrol，再读取并清理 monitor owner，避免 patrol 在 owner 检查后才发布新的 monitor。
   - `tests/ksu-wake-smoke.sh` 新增 Toybox/coreutils 风格 `PGID != monitor PID` 退出用例、BusyBox timeout 经 setsid 隔离用例，以及 watchdog 清理顺序断言。
+  - 另修正 monitor 内部 DNS 子查询：Toybox timeout 默认会再创建一层独立进程组，服务只清理外层 monitor 组时可能留下 nslookup；现对 Toybox/GNU timeout 使用 `--foreground`，让 DNS 子进程留在 monitor 组内。PATH timeout 先根据帮助信息识别支持 `--foreground` 的实现；BusyBox 的直接 PID timeout 已确认不创建新组，可在当前 monitor 组内使用；无法识别的实现跳过 DNS 查询，避免误创建不可追踪的子进程组。FCM smoke 增加对应静态断言。
 - **已完成的验证**：核对了上述上游实现；在 Linux 容器模拟了 timeout wrapper 为组 leader、monitor PID 与 PGID 不同的情形，按新身份校验向该组发送信号后 wrapper 和 monitor 子进程均退出；另模拟 BusyBox timeout 经 setsid 后 monitor PID 即 PGID，组信号能终止 monitor 与子进程。静态核对了新增 owner 字段、服务端校验和 timeout 分支。
 - **尚未完成**：完整 `tests/ksu-wake-smoke.sh`、`tests/fcm-monitor-smoke.sh`、所有 Shell 文件 `sh -n` 以及 OriginOS/KernelSU/GMS 实机测试尚未执行。Linux 模拟不能替代 Android Toybox/BusyBox 版本和目标 shell 的实测。
 - **构建约束**：本轮没有触发 GitHub Actions、编译、打包或 Release；PR #1 仍保持 open / not merged。待完整静态审查与 smoke 测试结束后，再通知用户手动构建测试。
