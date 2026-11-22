@@ -300,6 +300,30 @@ grep -q '|reconnect_requested|auto UID=0 GCM_RECONNECT' "$BERRY_FCM_DATA/mcs-mon
 unset MCS_SS_MODE
 echo 'PASS: unknown-only state ages continuous Root socket absence into confirmed auto recovery'
 
+# Continuous absence must not return to unknown after 15 minutes; only a real
+# sampling gap resets the continuity anchor and starts a fresh confirmation.
+export BERRY_FCM_DATA="$TMP/long-absence-data"
+mkdir -p "$BERRY_FCM_DATA"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+export MCS_SS_MODE=absent
+settime 14000
+printf '%s\\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
+run monitor
+n=0
+while [ "$n" -lt 55 ]; do
+    settime $((14020+n*20))
+    run monitor
+    n=$((n+1))
+done
+j="$(run snapshot)"; assert_json "$j" fcm_state=disconnected
+assert_json "$j" fcm_source=gms_socket_fallback
+# A 100-second unobserved gap must not be mistaken for continuous absence.
+settime 15200
+run monitor
+j="$(run snapshot)"; assert_json "$j" fcm_state=unknown
+ grep -q '|sample_gap|' "$BERRY_FCM_DATA/mcs-monitor-events.log"
+echo 'PASS: long continuous absence remains disconnected; suspend gap resets evidence'
+
 # A frozen positive native GMS connection timer is checked twice, then receives
 # one targeted reconnect request. It does not force-stop the GMS package.
 export BERRY_FCM_DATA="$TMP/timer-data"
@@ -361,5 +385,5 @@ run monitor; requests 3
 test "$(sed -n '3p' "$MCS_AM_LOG")" = 'broadcast --user 0 -a com.google.android.gms.gcm.ACTION_HEARTBEAT_NOW -p com.google.android.gms'
 settime 40377
 run monitor; requests 4
-test "$(sed -n '4p' "$MCS_AM_LOG")" = 'broadcast --user 0 -a com.google.android.gcm.intent.SEND -n com.google.android.gms/.gcm.GcmSenderProxy'
+test "$(sed -n '4p' "$MCS_AM_LOG")" = 'broadcast --user 0 -a com.google.android.intent.action.GTALK_HEARTBEAT -p com.google.android.gms'
 echo 'PASS: staged GMS reconnect fallbacks are ordered and independently rate-limited'
