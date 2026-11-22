@@ -460,6 +460,57 @@ test ! -e "$TMP/data/mcs-monitor.lock.owner"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: service cleanup terminates timeout-owned monitor groups when monitor PID differs from PGID'
 
+# BusyBox timeout does not create a process group; setsid must isolate it first.
+touch "$TMP/module/module.prop"
+echo 1 > "$TMP/data/enabled"
+echo passive > "$TMP/data/wake-mode"
+: > "$TMP/data/guard.log"
+cat > "$TMP/bin/busybox" <<'MOCK'
+#!/bin/sh
+if [ "$1" = --list ]; then echo timeout; exit 0; fi
+[ "$1" = timeout ] || exit 2
+shift
+if [ "$1" = -k ]; then shift 2; fi
+shift
+exec "$@"
+MOCK
+chmod +x "$TMP/bin/busybox"
+cat > "$TMP/module/bin/fcm-monitor.sh" <<'MOCK'
+#!/bin/sh
+if [ "$1" = snapshot ]; then
+    echo '{"fcm_state":"unknown","fcm_sample_time":0,"fcm_recovery_decision":"sample_unavailable"}'
+    exit 0
+fi
+IFS=' ' read -r monitor_pid _ < /proc/self/stat
+monitor_stamp="$(tr -d '\n' < "/proc/$monitor_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
+monitor_pgid="$(tr -d '\n' < "/proc/$monitor_pid/stat" | sed 's/^.*) //' | awk '{print $3}')"
+group_stamp="$(tr -d '\n' < "/proc/$monitor_pgid/stat" | sed 's/^.*) //' | awk '{print $20}')"
+printf '%s %s %s 1 %s\n' "$monitor_pid" "$monitor_stamp" "$monitor_pgid" "$group_stamp" > "$TEST_DIR/data/mcs-monitor.lock.owner"
+ /bin/sleep 30 &
+echo "$!" > "$TEST_DIR/busybox-monitor-child-pid"
+wait
+MOCK
+chmod +x "$TMP/module/bin/fcm-monitor.sh"
+TEST_NO_TIMEOUT=1 BERRY_KSU_BUSYBOX="$TMP/bin/busybox" sh "$TMP/module/service.sh" &
+service_pid=$!
+n=0
+while [ ! -s "$TMP/data/mcs-monitor.lock.owner" ] && [ "$n" -lt 80 ]; do
+    /bin/sleep 0.1
+    n=$((n + 1))
+done
+test -s "$TMP/data/mcs-monitor.lock.owner"
+read -r busybox_monitor_pid busybox_monitor_stamp busybox_monitor_pgid busybox_isolated busybox_group_stamp < "$TMP/data/mcs-monitor.lock.owner"
+[ "$busybox_isolated" = 1 ]
+[ "$busybox_monitor_pid" = "$busybox_monitor_pgid" ]
+busybox_monitor_child="$(cat "$TMP/busybox-monitor-child-pid")"
+kill -TERM "$service_pid"
+wait "$service_pid" 2>/dev/null || :
+busybox_child_state="$(awk '{print $3}' "/proc/$busybox_monitor_child/stat" 2>/dev/null || :)"
+[ -z "$busybox_child_state" ] || [ "$busybox_child_state" = Z ]
+test ! -e "$TMP/data/mcs-monitor.lock.owner"
+test ! -d "$TMP/data/service.lock"
+echo 'PASS: BusyBox timeout is isolated by setsid before process-group cleanup'
+
 # A new supervisor must clean an orphaned isolated monitor group before publishing its service lock.
 echo passive > "$TMP/data/wake-mode"
 echo 0 > "$TMP/data/enabled"
