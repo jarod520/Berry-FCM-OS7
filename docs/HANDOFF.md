@@ -805,3 +805,10 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **修正**：检测到 sample_gap 时，同时清零 native_timer_duration、native_timer_since、native_timer_last_request 和 native_timer_key。恢复后的第一条 native connected 样本重新建立计时锚点。
 - **回归夹具**：新增相同 native connectTime 的 gap 前/后样本，检查状态文件第 25 列 native_timer_since 从空档前 uptime 更新为恢复后的 uptime，避免旧锚点跨空档沿用。
 - **验证边界**：源码状态路径和字段位置已复核；完整 fcm-monitor-smoke.sh、ksu-wake-smoke.sh、全仓 Shell 语法 gate、Android/KernelSU 实机仍未执行。未触发 Actions、构建、编译、打包或发布。
+
+### 2026-11-22 本轮追加修改的静态复核汇总
+- KSU smoke 固定源码断言 **137/137** 匹配；FCM smoke 固定源码断言 **2/2** 匹配。覆盖本分支当前测试脚本引用的源码文件。
+- 新增的 FCM 回归场景均已落入测试：unknown → connected 不生成恢复事件；evidence 发布失败不提交 sample state；sample gap 后 native timer anchor 重新建立。
+- KSU 回归场景覆盖 stale snapshot、同秒旧样本和 pre-observe rc=14；patrol 只有在样本 epoch 相对前快照增长、时间属于本轮窗口且 snapshot state 非 stale 时才刷新心跳。
+- 在隔离 Linux 环境对本轮修改的状态转换、evidence 失败清理、patrol freshness 条件、snapshot mock 和 native timer 字段片段执行 POSIX sh 语法/行为模拟，均通过。**这些不是完整项目脚本语法 gate，也不是 smoke 全量执行。**
+- 当前分支 HEAD：547b3eafc1f7568a1a11a91b8defd3df399f3b7b。完整 fcm-monitor-smoke.sh、ksu-wake-smoke.sh、全仓 Shell syntax gate 和 Android/KernelSU 实机验证仍待执行；未触发 Actions、构建、编译、打包或发布。
