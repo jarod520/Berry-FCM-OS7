@@ -435,7 +435,7 @@ socket_fallback_ready() {
     socket_down_now="$(num "$(monotime)")"
     [ "$socket_down_anchor" -gt 0 ] && [ "$socket_down_now" -ge "$socket_down_anchor" ] || return 1
     socket_down_age=$((socket_down_now-socket_down_anchor))
-    [ "$socket_down_age" -ge 30 ] && [ "$socket_down_age" -le 900 ]
+    [ "$socket_down_age" -ge 30 ]
 }
 
 native_close_fallback_ready() {
@@ -535,8 +535,12 @@ observe() {
         [ "$previous_down_observed" -gt 0 ] || previous_down_observed="$down_observed"
         ;;
     esac
-    if [ "$previous_down_observed" -gt "$nowm" ] ||
-       [ $((nowm-previous_down_observed)) -gt 900 ]; then
+    if [ "$previous_down_observed" -gt "$nowm" ]; then
+        previous_down_observed=0
+    fi
+    # Keep continuous absence evidence regardless of total outage length.
+    # A real sampling gap, not an arbitrary 15-minute age cap, resets it.
+    if [ "$sample_epoch" -gt 0 ] && [ "$nowe" -gt "$sample_epoch" ] && [ $((nowe-sample_epoch)) -gt 90 ]; then
         previous_down_observed=0
     fi
     outage_hint_mono="$previous_down_observed"
@@ -639,13 +643,12 @@ EOF_SOCKET
                 record_event socket_connecting 'dumpsys 本次无状态字段；UID0 已观察到 GMS MCS TCP 正在连接'
             ;;
           absent)
-            if [ "$outage_hint_mono" -le 0 ] || [ "$socket_now" -lt "$outage_hint_mono" ] ||
-               [ $((socket_now-outage_hint_mono)) -gt 900 ]; then
+            if [ "$outage_hint_mono" -le 0 ] || [ "$socket_now" -lt "$outage_hint_mono" ]; then
                 outage_hint_mono="$socket_now"
                 record_event tcp_absence_started 'UID0 未观察到 GMS MCS TCP；开始连续缺失计时，暂不据单次缺失重连'
             fi
             socket_down_age=$((socket_now-outage_hint_mono))
-            if [ "$socket_down_age" -ge 30 ] && [ "$socket_down_age" -le 900 ]; then
+            if [ "$socket_down_age" -ge 30 ]; then
                 observed=disconnected; source=gms_socket_fallback
                 new_transport=; new_remote=
                 [ "$previous_down_state" = disconnected ] ||
