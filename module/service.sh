@@ -243,6 +243,15 @@ maintenance_child_group_alive() {
     [ -n "$maintenance_child_tool" ] && [ -n "$maintenance_child_pgid" ] &&
         process_group_alive "$maintenance_child_pgid"
 }
+maintenance_child_group_identity_alive() {
+    [ -n "$maintenance_child_stop_pid" ] && [ -n "$maintenance_child_stop_stamp" ] &&
+        [ -n "$maintenance_child_pgid" ] || return 1
+    kill -0 "$maintenance_child_stop_pid" 2>/dev/null || return 1
+    [ "$(proc_start_time "$maintenance_child_stop_pid")" = "$maintenance_child_stop_stamp" ] &&
+        [ "$(proc_group_id "$maintenance_child_stop_pid")" = "$maintenance_child_pgid" ] || return 1
+    [ "$(proc_state "$maintenance_child_stop_pid" 2>/dev/null)" = Z ] ||
+        tr -d '\000' < "/proc/$maintenance_child_stop_pid/cmdline" 2>/dev/null | grep -Fq '/bin/ctl.sh'
+}
 stop_maintenance_child() {
     [ -s "$MAINTENANCE_LOCK/child" ] || return 0
     child_file_pid=; child_file_stamp=; child_file_pgid=; child_file_tool=
@@ -274,12 +283,20 @@ stop_maintenance_child() {
     maintenance_child_pgid="$child_file_pgid"
     maintenance_child_tool="$child_file_tool"
     if maintenance_child_group_alive; then
+        maintenance_child_group_identity_alive || {
+            printf '[%s] maintenance_child_group_identity_unverified_before_term pgid=%s; refusing group signal\n' "$(date '+%F %T')" "$maintenance_child_pgid" >> "$DATA/guard.log"
+            return 1
+        }
         "$maintenance_child_tool" kill -TERM "-$maintenance_child_pgid" 2>/dev/null || :
         n=0
         while maintenance_child_group_alive && [ "$n" -lt 4 ]; do
             sleep 1; n=$((n + 1))
         done
         if maintenance_child_group_alive; then
+            maintenance_child_group_identity_alive || {
+                printf '[%s] maintenance_child_group_identity_unverified_before_kill pgid=%s; refusing group signal\n' "$(date '+%F %T')" "$maintenance_child_pgid" >> "$DATA/guard.log"
+                return 1
+            }
             "$maintenance_child_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
             n=0
             while maintenance_child_group_alive && [ "$n" -lt 3 ]; do
