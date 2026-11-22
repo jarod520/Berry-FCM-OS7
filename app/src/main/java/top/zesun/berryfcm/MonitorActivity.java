@@ -87,7 +87,7 @@ public final class MonitorActivity extends Ui {
         technical.setTextIsSelectable(true);
         extra.addView(technical);
 
-        LinearLayout timeline = card("最新事件", "读取 GMS 原生事件；显示最近 6 条，历史缓冲区有容量限制。");
+        LinearLayout timeline = card("最新事件", "显示升级前保留的 GMS 历史辅助事件；不参与当前状态判定。");
         events = text("暂无记录", 13, false, ink);
         events.setTextIsSelectable(true);
         timeline.addView(events);
@@ -221,7 +221,7 @@ public final class MonitorActivity extends Ui {
                 + "\n历史已发送的恢复请求：" + j.optInt("fcm_attempts", 0) + " 次"
                 + "\n连续恢复尝试次数：" + j.optInt("fcm_retry_streak", 0) + " 次"
                 + "\n历史上次恢复请求结果：" + recoveryLabel(j.optString("fcm_last_result", "none"))
-                + "\n注意：GMS 原生历史有限，同一时刻的多网络关闭事件不等于多次整体断开。");
+                + "\n注意：升级前保留的 GMS 关闭事件仅供历史参考，同一时刻多网络关闭不等于多次整体断开。");
         String[] lines = FcmMonitorService.lastEvents(this).split("\n");
         events.setText(eventText(lines, 6));
         eventsFull.setText(eventText(lines, 24));
