@@ -230,7 +230,7 @@ observe() {
     legacy_source=
     if [ -f "$EVIDENCE" ]; then IFS='|' read -r legacy_source _ < "$EVIDENCE" || :; fi
     case "$legacy_source" in
-      gms_socket|gms_socket_absence) :;;
+      gms_socket|gms_socket_absence|gms_socket_absence_pending) :;;
       *)
         if [ "$state" != unknown ] || [ "$outage_hint_mono" -gt 0 ] || [ "$down_observed" -gt 0 ]; then
             record_event legacy_dump_state_discarded "旧版状态来源不是内核 MCS Socket；清除旧连接/断联计时，重新建立内核证据"
@@ -281,6 +281,7 @@ EOF_SOCKET
         ;;
       absent)
         if [ "$(id -u 2>/dev/null)" = 0 ]; then
+            source=gms_socket_absence_pending
             if [ "$outage_hint_mono" -le 0 ] || [ "$socket_now" -lt "$outage_hint_mono" ] ||
                [ $((socket_now-outage_hint_mono)) -gt 900 ]; then
                 outage_hint_mono="$socket_now"
@@ -385,7 +386,7 @@ status_json() {
     source=unavailable; duration=-1; close_code=; tcp_hint=none; native_reason=not_used; decision=not_evaluated
     if [ -f "$EVIDENCE" ]; then IFS='|' read -r source duration close_code tcp_hint native_reason decision < "$EVIDENCE" || :; fi
     case "$source" in
-      gms_socket|gms_socket_absence) :;;
+      gms_socket|gms_socket_absence|gms_socket_absence_pending) :;;
       *) state=unknown; source=unavailable; duration=-1; close_code=; tcp_hint=unknown; native_reason=not_used; decision=sample_unavailable;;
     esac
     case "${decision:-}" in not_evaluated|not_disconnected|sample_unavailable|disabled|network_gate|cooldown|requested|request_failed|waiting_duration|confirmation_changed|confirmation_recovered) :;; *) decision=not_evaluated;; esac
