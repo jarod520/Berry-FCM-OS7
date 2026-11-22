@@ -50,10 +50,10 @@ proc_start_time() {
 refresh_guard() {
     pid="$(cat "$DATA/service.lock/wake-pid" 2>/dev/null)"
     stamp="$(cat "$DATA/service.lock/starttime" 2>/dev/null)"
-    case "$pid" in ''|*[!0-9]*) pid=0;; esac
-    if [ "$pid" -gt 1 ] &&
+    case "$pid:$stamp" in *[!0-9:]*|:*|*:) pid=0;; esac
+    if [ "$pid" -gt 1 ] && [ "$stamp" -gt 0 ] &&
         [ "$(cat "$DATA/service.lock/pid" 2>/dev/null)" = "$pid" ] &&
-        { [ -z "$stamp" ] || [ "$(proc_start_time "$pid")" = "$stamp" ]; } &&
+        [ "$(proc_start_time "$pid")" = "$stamp" ] &&
         tr "\000" " " < "/proc/$pid/cmdline" 2>/dev/null | grep -q "/berry_fcm_ksu/service.sh"; then
         kill -USR1 "$pid" 2>/dev/null && return 0
     fi
