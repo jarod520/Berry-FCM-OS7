@@ -384,10 +384,23 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 fi
 IFS=' ' read -r service_pid _ < /proc/self/stat
 case "$service_pid" in ""|*[!0-9]*) exit 0;; esac
+service_start_stamp="$(proc_start_time "$service_pid")"
+[ -n "$service_start_stamp" ] || exit 0
 echo "$service_pid" > "$LOCK/pid"
-proc_start_time "$service_pid" > "$LOCK/starttime"
+printf '%s\n' "$service_start_stamp" > "$LOCK/starttime"
 echo "$service_pid" > "$LOCK/wake-pid"
-stop_monitor_owner || exit 0
+if ! stop_monitor_owner; then
+    current_lock_pid="$(cat "$LOCK/pid" 2>/dev/null)"
+    current_lock_stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
+    if [ "$current_lock_pid" = "$service_pid" ] &&
+       [ "$current_lock_stamp" = "$service_start_stamp" ] &&
+       [ "$(proc_start_time "$service_pid")" = "$service_start_stamp" ]; then
+        rm -rf "$LOCK"
+    fi
+    printf '[%s] service_start_aborted reason=monitor_owner_cleanup_unconfirmed pid=%s\n' \
+        "$(date '+%F %T')" "$service_pid" >> "$DATA/guard.log"
+    exit 0
+fi
 cgroup_path() {
     while IFS=: read -r hierarchy controllers group; do
         if [ "$hierarchy" = 0 ] && [ -z "$controllers" ]; then
