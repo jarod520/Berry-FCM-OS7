@@ -1211,11 +1211,16 @@ command="${1:-status}"
 if [ "${2:-}" = --locked ]; then
     lock_result="${3:-}"
     case "$lock_result" in "$DATA"/mcs-monitor.lock.result.*) :;; *) exit 14;; esac
-    if write_lock_owner; then trap 'clear_lock_owner' EXIT; fi
-    (run_monitor_command "$command")
-    monitor_rc=$?
-    clear_lock_owner
-    trap - EXIT
+    if write_lock_owner; then
+        trap 'clear_lock_owner' EXIT
+        (run_monitor_command "$command")
+        monitor_rc=$?
+        clear_lock_owner
+        trap - EXIT
+    else
+        echo "无法登记 GMS monitor 进程身份，拒绝启动未受监管的检查" >&2
+        monitor_rc=14
+    fi
     result_writer_pid=
     IFS=' ' read -r result_writer_pid _ < /proc/self/stat || exit 14
     case "$result_writer_pid" in ''|*[!0-9]*) exit 14;; esac
@@ -1264,9 +1269,12 @@ case "$command" in
             case "$lock_dir_pid" in ''|*[!0-9]*) exit 11;; esac
             echo "$lock_dir_pid" > "$lock_dir/pid"
             proc_start_time "$lock_dir_pid" > "$lock_dir/starttime"
-            write_lock_owner || :
             trap 'clear_lock_owner; rm -f "$lock_dir/pid" "$lock_dir/starttime"; rmdir "$lock_dir" 2>/dev/null || :' EXIT
             trap 'exit 130' HUP INT TERM
+            if ! write_lock_owner; then
+                echo "无法登记 GMS monitor 进程身份，拒绝启动未受监管的检查" >&2
+                exit 14
+            fi
             run_monitor_command "$command"
         fi
         ;;
