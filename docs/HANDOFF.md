@@ -776,3 +776,10 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **回归夹具**：新增 disconnected → unknown → connected 序列，要求最终状态 connected、fcm_last_restore=0、事件包含 connection_observed_after_unknown 且不包含 connection_restored。原有明确 disconnected → connected 恢复场景保留。
 - **成熟方案对照**：检查了 OpenWrt mwan3 的 mwan3track 状态转换：它将 online/offline/connecting/disconnecting 分开，并只在先前状态为 online 或 disconnecting 时触发 disconnected 边沿事件。BerryFCM 不直接移植 mwan3 的探测方式（GMS MCS 证据不同），只采用“unknown 不等同 offline、事件依赖已确认状态边沿”的状态机原则。参考：https://github.com/kenzok8/small-package/blob/4272b2618a1171780ef4253871695cdd6f85da25/mwan3/files/usr/sbin/mwan3track。
 - **验证边界**：已完成源码/测试夹具结构复核；完整 fcm-monitor-smoke.sh、ksu-wake-smoke.sh、全仓 Shell 语法 gate 和 Android/KernelSU 实机验证尚未执行。未触发 Actions、构建、编译、打包或发布。
+
+### 2026-11-22 sample evidence 发布失败保护
+- **复审发现**：observe() 先写 mcs-evidence，再写 mcs-monitor.state；旧逻辑忽略 write_evidence 的失败返回，仍继续保存带有新 sample_epoch 的状态。若 evidence 临时文件发布失败，snapshot 可能拿新样本时间配旧证据，巡检心跳也会被误刷新。
+- **修正**：write_evidence 失败时清理临时文件并返回失败；observe() 必须先确认 evidence 原子发布成功，才允许 save_state() 提交新 sample_epoch。这样证据写失败不会推进持久化样本时间，patrol 的 freshness gate 也不会把失败采样当作新样本。
+- **回归夹具**：新增定向 mv 故障注入，只拒绝 mcs-evidence 目标；要求 status 返回失败、mcs-monitor.state 和 mcs-evidence 不生成，临时 evidence 文件清理。
+- **定向验证**：本地隔离 POSIX sh 片段语法检查通过；分别模拟 unknown → connected 与 confirmed disconnected → connected，前者不更新恢复时间/结果且不写 connection_restored，后者仍写恢复事件；模拟 evidence mv 失败，确认临时文件清理且 sample state 不提交。上述是变更片段验证，不代表完整 smoke 执行。
+- **验证边界**：完整 fcm-monitor-smoke.sh、ksu-wake-smoke.sh、全仓 Shell 语法 gate 和 Android/KernelSU 实机验证尚未执行。未触发 Actions、构建、编译、打包或发布。
