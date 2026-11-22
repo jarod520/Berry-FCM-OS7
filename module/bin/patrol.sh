@@ -26,7 +26,7 @@ process_group_alive() {
     awk -v pgid="$1" '
         {
             stat=$0
-            sub(/^.*\\) /, "", stat)
+            sub(/^.*[)] /, "", stat)
             split(stat, fields, " ")
             if (fields[1] != "Z" && fields[3] == pgid) found=1
         }
