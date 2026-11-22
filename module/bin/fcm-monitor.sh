@@ -194,6 +194,7 @@ gms_uid() {
 # native GMS state or an exact :5228-5230 socket.
 refresh_learned_ips() {
     learned_now="$(num "$(now_epoch)")"
+    [ "$learned_now" -gt 0 ] || { : > "$LEARNED_IPS"; return 0; }
     learned_tmp="$LEARNED_IPS.tmp"
     {
         [ ! -f "$LEARNED_IPS" ] || cat "$LEARNED_IPS"
