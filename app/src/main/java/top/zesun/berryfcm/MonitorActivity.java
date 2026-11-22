@@ -164,18 +164,17 @@ public final class MonitorActivity extends Ui {
                 ? "后台将持续检查；如长时间无数据，请检查通知及系统后台策略。"
                 : "后台正在自动重试，无需手动重复配对。";
         String durationLine = "";
-        if ("gms".equals(stateSource) && "connected".equals(state))
-            durationLine = "\n" + MonitorStatus.connectedDuration(
-                    j.optLong("fcm_native_duration", -1),
+        if ("gms_socket".equals(stateSource) && "connected".equals(state))
+            durationLine = "\n" + MonitorStatus.connectedDuration(-1,
                     j.optLong("fcm_observed_up_seconds", -1));
-        else if ("gms".equals(stateSource) && ("connecting".equals(state) || "disconnected".equals(state))
-                && j.optLong("fcm_native_duration", -1) >= 0)
-            durationLine = "\n未连接计时：" + MonitorStatus.duration(j.optLong("fcm_native_duration"));
+        else if (("connecting".equals(state) || "disconnected".equals(state))
+                && j.optLong("fcm_observed_down_seconds", -1) >= 0)
+            durationLine = "\n已观察未连接：" + MonitorStatus.duration(j.optLong("fcm_observed_down_seconds"));
         current.setText("最近检查：" + (sample <= 0 ? "暂无" : time(sample)
                 + (age < 0 ? "（上次运行的记录）" : "（" + age + " 秒前）"))
                 + (prefs.monitorEnabled() && sample > 0 && age >= 0 && age <= 90
                     && !stateEvidence && lastError.isEmpty() ? "\n原因：" + nativeReason : "")
-                + "\n保留的连接关闭事件：" + j.optInt("fcm_native_close_events", 0) + " 条（不是独立断开次数）"
+                + "\n升级前保留的 GMS 历史关闭事件：" + j.optInt("fcm_native_close_events", 0) + " 条（仅历史辅助信息）"
                 + durationLine
                 + (attempt > 0 ? "\n上次检查尝试：" + time(attempt / 1000) : "")
                 + (stateEvidence && ("connecting".equals(state) || "disconnected".equals(state))
@@ -197,9 +196,9 @@ public final class MonitorActivity extends Ui {
         technical.setText((age < 0 || age > 90 || !ready || !prefs.monitorEnabled()
                 || !lastError.isEmpty() ? "以下是历史证据，不代表当前连接。\n" : "")
                 + "原始状态：" + state
-                + "\n状态来源：" + ("gms".equals(stateSource) ? "Google GMS 原生 MCS"
-                    : "gms_socket".equals(stateSource) ? "GMS UID 的精确 MCS TCP 正向证据"
-                    : "gms_socket_fallback".equals(stateSource) ? "UID0 连续 MCS TCP 缺失证据"
+                + "\n状态来源：" + ("gms_socket".equals(stateSource) ? "GMS UID 的精确 MCS TCP 正向证据"
+                    : "gms_socket_absence".equals(stateSource) ? "Root 连续 MCS TCP 缺失证据"
+                    : "gms_socket_absence_pending".equals(stateSource) ? "Root 正在累计 MCS TCP 缺失时间"
                     : nativeReason)
                 + "\nTCP 辅助检查：" + tcpHint(j.optString("fcm_tcp_hint", "none"))
                 + "\n服务器：" + j.optString("fcm_transport", "无")
@@ -236,7 +235,7 @@ public final class MonitorActivity extends Ui {
             case "established": return "发现相关 TCP 连接";
             case "connecting": return "发现正在建立的 TCP 连接";
             case "absent": return "未发现匹配的 TCP 连接";
-            case "none": case "unknown": default: return "未取得独立证据（以 GMS 原生状态为准）";
+            case "none": case "unknown": default: return "未取得独立证据（以 GMS UID 内核 Socket 检测为准）";
         }
     }
 
@@ -251,12 +250,11 @@ public final class MonitorActivity extends Ui {
     }
     private String recoveryDecision(JSONObject j, int retryIn) {
         switch (j.optString("fcm_recovery_decision", "")) {
-            case "gms_stopped_unknown": return "GMS 停止状态未通过检查，未发送请求";
             case "requested": return "已请求 GMS 重连，等待原生确认";
             case "request_failed": return "重连请求失败，见恢复记录";
             case "confirmation_changed": return "第二次检查状态变化，暂不干预";
             case "cooldown": return "请求冷却约 " + retryIn + " 秒";
-            case "waiting_confirmation": return "等待第二次原生检查";
+            case "waiting_confirmation": return "等待第二次内核 Socket 检查";
             case "waiting_duration":
                 long seconds = j.optLong("fcm_observed_down_seconds", -1);
                 return "尚未达到恢复条件" + (seconds < 0 ? "" : "（本轮已观察 " + seconds + " 秒）");
