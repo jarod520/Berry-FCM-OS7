@@ -168,9 +168,7 @@ scan_sockets() {
       }'
 }
 
-# Current state only: do not match historical "Connected" or "Connecting"
-# lines. GMS dump may contain private IDs and application data; persist only
-# the selected fields and connection lifecycle events.
+# Current state and recovery decisions come exclusively from GMS-UID kernel Socket evidence.
 auto_enabled() {
     case "${BERRY_FCM_AUTO:-}" in 0) return 1;; 1) return 0;; esac
     [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]
@@ -439,7 +437,7 @@ case "${1:-status}" in
             decision=network_gate
         elif [ "$state" = unknown ]; then
             auto_recovery
-        elif [ "$source" != gms ] && [ "$source" != gms_socket ] && [ "$source" != gms_socket_fallback ]; then
+        elif [ "$source" != gms_socket ] && [ "$source" != gms_socket_absence ]; then
             decision=not_disconnected
         elif [ "$state" = connecting ] || [ "$state" = disconnected ]; then
             [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 2
@@ -462,15 +460,6 @@ case "${1:-status}" in
             decision=network_gate
             record_event reconnect_skipped '当前应用无活动网络；未发送手动重连'
         elif [ "$state" = connecting ] || [ "$state" = disconnected ]; then
-            request_reconnect manual
-        elif [ "$state" = unknown ] && socket_fallback_ready "$duration"; then
-            socket_down_anchor="$(num "${outage_hint_mono:-0}")"
-            socket_down_now="$(num "$(monotime)")"
-            socket_down_age=0
-            if [ "$socket_down_anchor" -gt 0 ] && [ "$socket_down_now" -ge "$socket_down_anchor" ]; then
-                socket_down_age=$((socket_down_now-socket_down_anchor))
-            fi
-            promote_socket_fallback
             request_reconnect manual
         else
             decision=not_disconnected
