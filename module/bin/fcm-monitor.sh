@@ -364,50 +364,79 @@ request_reconnect() {
     if [ "$last_try_mono" -gt 0 ] && [ "$nowm" -ge "$last_try_mono" ] && [ $((nowm-last_try_mono)) -lt "$interval" ]; then
         decision=cooldown
         if [ "$reason" = manual ]; then
-            record_event reconnect_skipped "手动恢复未发送：距上次请求尚未达到退避间隔，剩余 $((interval-nowm+last_try_mono)) 秒"
+            record_event reconnect_skipped "手动恢复未发送：距上次恢复序列尚未达到退避间隔，剩余 $((interval-nowm+last_try_mono)) 秒"
         fi
         return 0
     fi
     [ "$reason" != auto ] || auto_enabled || { decision=disabled; return 0; }
-    last_try_mono="$nowm"; last_try_epoch="$nowe"; attempts=$((attempts+1))
-    retry_streak=$((retry_streak+1)); last_try_reason="$reason"; last_result=failed
-    save_state || return $?
-    stage=$(((retry_streak - 1) % 4))
-    case "$stage" in
-      0)
-        action=com.google.android.intent.action.GCM_RECONNECT
-        action_label=GCM_RECONNECT
+
+    # One confirmed outage starts one bounded recovery sequence. Do not wait
+    # for the next patrol/backoff interval between different native triggers.
+    # After every accepted broadcast, re-sample kernel socket evidence; stop
+    # immediately on connected, continue only while explicitly down/connecting.
+    last_try_mono="$nowm"; last_try_epoch="$nowe"
+    retry_streak=$((retry_streak+1)); last_try_reason="$reason"
+    last_result=failed; save_state || return $?
+    sequence_requested=0
+    sequence_index=0
+    for action_label in GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT; do
+        case "$action_label" in
+          GCM_RECONNECT) action=com.google.android.intent.action.GCM_RECONNECT;;
+          MCS_HEARTBEAT) action=com.google.android.intent.action.MCS_HEARTBEAT;;
+          ACTION_HEARTBEAT_NOW) action=com.google.android.gms.gcm.ACTION_HEARTBEAT_NOW;;
+          GTALK_HEARTBEAT) action=com.google.android.intent.action.GTALK_HEARTBEAT;;
+        esac
+        sequence_index=$((sequence_index+1))
+        attempts=$((attempts+1))
         reply="$("$AM_BIN" broadcast --user 0 -a "$action" -p "$GMS" 2>&1)"
-        ;;
-      1)
-        action=com.google.android.intent.action.MCS_HEARTBEAT
-        action_label=MCS_HEARTBEAT
-        reply="$("$AM_BIN" broadcast --user 0 -a "$action" -p "$GMS" 2>&1)"
-        ;;
-      2)
-        action=com.google.android.gms.gcm.ACTION_HEARTBEAT_NOW
-        action_label=ACTION_HEARTBEAT_NOW
-        reply="$("$AM_BIN" broadcast --user 0 -a "$action" -p "$GMS" 2>&1)"
-        ;;
-      *)
-        action=com.google.android.intent.action.GTALK_HEARTBEAT
-        action_label=GTALK_HEARTBEAT
-        reply="$("$AM_BIN" broadcast --user 0 -a "$action" -p "$GMS" 2>&1)"
-        ;;
-    esac
-    rc=$?
-    if [ "$rc" -eq 0 ] && printf '%s\n' "$reply" | grep -q 'Broadcast completed:' &&
-        ! printf '%s\n' "$reply" | grep -qiE 'Permission Denial|SecurityException|not allowed|Error:|result=-[0-9]'; then
-        last_result=requested; decision=requested
-        completion="$(printf '%s\n' "$reply" | grep 'Broadcast completed:' | tail -n 1)"
-        record_event reconnect_requested "$reason UID=0 $action_label exit=$rc $completion；命令返回不代表投递或恢复（第 $attempts 次）"
+        rc=$?
+        if [ "$rc" -eq 0 ] && printf '%s\n' "$reply" | grep -q 'Broadcast completed:' &&
+            ! printf '%s\n' "$reply" | grep -qiE 'Permission Denial|SecurityException|not allowed|Error:|result=-[0-9]'; then
+            sequence_requested=1
+            last_result=requested
+            completion="$(printf '%s\n' "$reply" | grep 'Broadcast completed:' | tail -n 1)"
+            record_event reconnect_requested "$reason UID=0 $action_label exit=$rc $completion；等待内核复采确认（序列 $sequence_index/4）"
+            save_state || return $?
+            [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 2
+            observe || {
+                decision=confirmation_unavailable
+                record_event recovery_confirmation_unavailable "恢复命令 $action_label 后内核复采失败；停止本轮序列，等待下一次巡检"
+                save_state
+                return 0
+            }
+            case "$state" in
+              connected)
+                decision=confirmation_recovered
+                record_event recovery_sequence_recovered "恢复序列第 $sequence_index 阶段后，内核复采观察到 MCS TCP 建立；停止后续命令"
+                save_state
+                return 0
+                ;;
+              connecting|disconnected)
+                record_event recovery_sequence_still_down "恢复序列第 $sequence_index 阶段后仍为 $state；继续下一种原生触发"
+                ;;
+              *)
+                decision=confirmation_changed
+                record_event recovery_sequence_stopped_unknown "恢复序列第 $sequence_index 阶段后内核证据变为 unknown；停止后续命令，不把未知当作断联"
+                save_state
+                return 0
+                ;;
+            esac
+        else
+            [ "$sequence_requested" = 1 ] || last_result=failed
+            record_event reconnect_failed "$reason UID=0 $action_label exit=$rc；本命令未被系统接受，立即尝试下一种原生触发"
+            save_state || return $?
+        fi
+    done
+
+    if [ "$sequence_requested" = 1 ]; then
+        decision=recovery_exhausted
+        record_event reconnect_sequence_exhausted "四种原生触发均未使内核 MCS TCP 恢复；本轮结束，按退避间隔再次巡检"
     else
-        last_result=failed; decision=request_failed
-        record_event reconnect_failed "$reason UID=0 $action_label exit=$rc；请核对 KernelSU Root 和 GMS 版本"
+        decision=request_failed
+        record_event reconnect_sequence_failed "四种原生触发均未被系统接受；本轮结束，按退避间隔再次巡检"
     fi
     save_state
 }
-
 observe() {
     load_state
     decision=not_evaluated
@@ -606,7 +635,7 @@ status_json() {
             native_reason=not_used; decision=sample_unavailable
         fi
     fi
-    case "${decision:-}" in not_evaluated|not_disconnected|sample_unavailable|disabled|cooldown|requested|request_failed|waiting_duration|waiting_confirmation|confirmation_changed|confirmation_recovered) :;; *) decision=not_evaluated;; esac
+    case "${decision:-}" in not_evaluated|not_disconnected|sample_unavailable|disabled|cooldown|requested|request_failed|recovery_exhausted|confirmation_unavailable|waiting_duration|waiting_confirmation|confirmation_changed|confirmation_recovered) :;; *) decision=not_evaluated;; esac
     case "$native_reason" in not_used) :;; *) native_reason=not_used;; esac
     case "$duration" in -1) :;; *) is_uint "$duration" || duration=-1;; esac
     [ "$age" -ge 0 ] && [ "$age" -le 90 ] || state=stale
