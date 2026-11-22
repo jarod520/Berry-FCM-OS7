@@ -33,7 +33,33 @@ run_bounded() {
     elif command -v timeout >/dev/null 2>&1; then
         timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
     else
-        return 125
+        # Last-resort watchdog when no timeout applet exists. The monitor's
+        # own external probes are bounded; terminate its shell if it exceeds
+        # the patrol budget instead of silently skipping every sample.
+        marker="$DATA/monitor-timeout.$"
+        rm -f "$marker"
+        "$@" &
+        bounded_pid=$!
+        (
+            sleep "$seconds"
+            if kill -0 "$bounded_pid" 2>/dev/null; then
+                : > "$marker"
+                kill -TERM "$bounded_pid" 2>/dev/null || :
+                sleep "$MONITOR_KILL_GRACE"
+                kill -KILL "$bounded_pid" 2>/dev/null || :
+            fi
+        ) >/dev/null 2>&1 &
+        watchdog_pid=$!
+        wait "$bounded_pid"
+        bounded_rc=$?
+        kill "$watchdog_pid" 2>/dev/null || :
+        wait "$watchdog_pid" 2>/dev/null || :
+        if [ -f "$marker" ]; then
+            rm -f "$marker"
+            return 124
+        fi
+        rm -f "$marker"
+        return "$bounded_rc"
     fi
 }
 wait_pid=
