@@ -54,13 +54,21 @@ maintenance_owner_alive() {
     [ "$(proc_state "$maintenance_pid")" != Z ]
 }
 maintenance_child_alive() {
-    maintenance_child_pid=; maintenance_child_stamp=
-    IFS=' ' read -r maintenance_child_pid maintenance_child_stamp < "$MAINTENANCE_LOCK/child" 2>/dev/null || return 1
-    case "$maintenance_child_pid:$maintenance_child_stamp" in *[!0-9:]*|:*|*:) return 1;; esac
+    maintenance_child_pid=; maintenance_child_stamp=; maintenance_child_pgid=; maintenance_child_tool=
+    IFS=' ' read -r maintenance_child_pid maintenance_child_stamp maintenance_child_pgid maintenance_child_tool < "$MAINTENANCE_LOCK/child" 2>/dev/null || return 1
+    case "$maintenance_child_pid:$maintenance_child_stamp:$maintenance_child_pgid" in *[!0-9:]*|:*|*:) return 1;; esac
     [ "$maintenance_child_pid" -gt 1 ] && [ "$maintenance_child_stamp" -gt 0 ] &&
-        kill -0 "$maintenance_child_pid" 2>/dev/null || return 1
-    [ "$(proc_start_time "$maintenance_child_pid")" = "$maintenance_child_stamp" ] || return 1
-    [ "$(proc_state "$maintenance_child_pid")" != Z ]
+        [ "$maintenance_child_pgid" = "$maintenance_child_pid" ] || return 1
+    case "$maintenance_child_tool" in "$TOYBOX_BIN"|"$KSU_BUSYBOX") :;; *) return 1;; esac
+    [ -x "$maintenance_child_tool" ] &&
+        "$maintenance_child_tool" --list 2>/dev/null | grep -qx kill || return 1
+    if kill -0 "$maintenance_child_pid" 2>/dev/null &&
+       [ "$(proc_start_time "$maintenance_child_pid")" = "$maintenance_child_stamp" ] &&
+       [ "$(proc_group_id "$maintenance_child_pid")" = "$maintenance_child_pgid" ] &&
+       [ "$(proc_state "$maintenance_child_pid")" != Z ]; then
+        return 0
+    fi
+    "$maintenance_child_tool" kill -0 "-$maintenance_child_pgid" 2>/dev/null
 }
 run_bounded() {
     seconds="$1"; shift
@@ -233,14 +241,24 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                             ;;
                         *)
                             if [ -s "$MAINTENANCE_LOCK/child" ]; then
-                                stale_child_pid=; stale_child_stamp=
-                                IFS=' ' read -r stale_child_pid stale_child_stamp < "$MAINTENANCE_LOCK/child" 2>/dev/null || :
-                                case "$stale_child_pid:$stale_child_stamp" in
+                                stale_child_pid=; stale_child_stamp=; stale_child_pgid=; stale_child_tool=
+                                IFS=' ' read -r stale_child_pid stale_child_stamp stale_child_pgid stale_child_tool < "$MAINTENANCE_LOCK/child" 2>/dev/null || :
+                                case "$stale_child_pid:$stale_child_stamp:$stale_child_pgid" in
                                     *[!0-9:]*|:*|*:)
                                         maintenance_busy=1
                                         printf '[%s] maintenance_skip reason=child_identity_invalid\n' "$(date '+%F %T')" >> "$DATA/guard.log"
                                         ;;
-                                    *) rm -rf "$MAINTENANCE_LOCK" ;;
+                                    *)
+                                        case "$stale_child_tool" in "$TOYBOX_BIN"|"$KSU_BUSYBOX") :;; *)
+                                            maintenance_busy=1
+                                            printf '[%s] maintenance_skip reason=child_tool_invalid\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+                                            ;;
+                                        esac
+                                        [ "$stale_child_pgid" = "$stale_child_pid" ] &&
+                                            [ -x "$stale_child_tool" ] &&
+                                            "$stale_child_tool" --list 2>/dev/null | grep -qx kill || maintenance_busy=1
+                                        [ "$maintenance_busy" = 1 ] || rm -rf "$MAINTENANCE_LOCK"
+                                        ;;
                                 esac
                             else
                                 rm -rf "$MAINTENANCE_LOCK"
