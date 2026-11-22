@@ -567,6 +567,28 @@ write_evidence() {
     return 1
 }
 
+# Update only the decision column after recovery. Preserve the last committed
+# sample payload and generation; never publish fields from a failed observe().
+write_decision_evidence() {
+    committed_sample_mono="$(awk -F'|' 'NR==1 {print $28}' "$STATE" 2>/dev/null)"
+    committed_sample_mono="$(num "$committed_sample_mono")"
+    [ -f "$EVIDENCE" ] || return 0
+    IFS='|' read -r committed_source committed_duration committed_close committed_tcp committed_reason committed_decision committed_evidence_mono < "$EVIDENCE" || return 0
+    committed_evidence_mono="$(num "$committed_evidence_mono")"
+    [ "$committed_evidence_mono" -eq "$committed_sample_mono" ] || {
+        record_event recovery_decision_not_persisted "证据与已提交样本代次不一致；保留原 evidence，拒绝写入未提交采样"
+        return 0
+    }
+    decision_tmp="$EVIDENCE.decision.$"
+    if printf '%s|%s|%s|%s|%s|%s|%s\\n' "$committed_source" "$committed_duration" "$committed_close" "$committed_tcp" "$committed_reason" "$decision" "$committed_evidence_mono" > "$decision_tmp" &&
+       mv -f "$decision_tmp" "$EVIDENCE"; then
+        return 0
+    fi
+    rm -f "$decision_tmp"
+    record_event recovery_decision_persist_failed "无法原子更新恢复决策；保留最后一次已提交样本"
+    return 0
+}
+
 confirm_recovery() {
     first_state="$state"; first_tcp_hint="$tcp_hint"
     [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 2
@@ -697,7 +719,7 @@ case "${1:-status}" in
         fi
         observe || exit $?
         auto_recovery || exit $?
-        write_evidence
+        write_decision_evidence
         case "$state" in
           unknown|connecting|disconnected)
             if [ "$decision" != "$prior_decision" ]; then
@@ -714,7 +736,7 @@ case "${1:-status}" in
             decision=not_disconnected
             record_event reconnect_skipped "内核 Socket 证据未确认断联或持续连接中，未发送手动重连"
         fi
-        write_evidence || exit $?
+        write_decision_evidence
         case "$decision" in
           requested) echo "已请求 GMS 恢复，等待下一次连接采样确认";;
           request_failed) echo "四种恢复广播均未被系统接受，请查看恢复事件";;
