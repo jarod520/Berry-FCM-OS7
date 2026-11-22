@@ -383,9 +383,10 @@ if ! mkdir "$LOCK" 2>/dev/null; then
     mkdir "$LOCK" 2>/dev/null || exit 0
 fi
 IFS=' ' read -r service_pid _ < /proc/self/stat
-case "$service_pid" in ""|*[!0-9]*) exit 0;; esac
+case "$service_pid" in ""|*[!0-9]*) rmdir "$LOCK" 2>/dev/null || :; exit 0;; esac
+[ "$service_pid" -gt 1 ] || { rmdir "$LOCK" 2>/dev/null || :; exit 0; }
 service_start_stamp="$(proc_start_time "$service_pid")"
-[ -n "$service_start_stamp" ] || exit 0
+[ -n "$service_start_stamp" ] || { rmdir "$LOCK" 2>/dev/null || :; exit 0; }
 echo "$service_pid" > "$LOCK/pid"
 printf '%s\n' "$service_start_stamp" > "$LOCK/starttime"
 echo "$service_pid" > "$LOCK/wake-pid"
