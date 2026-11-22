@@ -19,6 +19,7 @@ NATIVE_POLL_TIME="$DATA/mcs-native-poll-time"
 LOCK_OWNER="$DATA/mcs-monitor.lock.owner"
 lock_owner_stamp=
 SS_BIN="${BERRY_SS_BIN:-ss}"
+TOYBOX_BIN="${BERRY_TOYBOX_BIN:-/system/bin/toybox}"
 PROC_NET_DIR="${BERRY_PROC_NET_DIR:-/proc/net}"
 CMD_BIN="${BERRY_CMD_BIN:-cmd}"
 PM_BIN="${BERRY_PM_BIN:-pm}"
@@ -159,12 +160,12 @@ resolve_mtalk() {
     [ "$old" -gt 0 ] && [ "$now" -ge "$old" ] && [ $((now-old)) -lt 600 ] && return 0
     tmp="$DNS_IPS.$$"; : > "$tmp"
     for host in mtalk.google.com alt1-mtalk.google.com; do
-        if [ -x /system/bin/toybox ]; then
-            /system/bin/toybox timeout -k 1 3 nslookup "$host" 2>/dev/null
+        if [ -x "$TOYBOX_BIN" ] && "$TOYBOX_BIN" --list 2>/dev/null | grep -qx timeout; then
+            "$TOYBOX_BIN" timeout -k 1 3 nslookup "$host" 2>/dev/null
         elif command -v timeout >/dev/null 2>&1; then
             timeout 3 nslookup "$host" 2>/dev/null
         else
-            continue
+            :
         fi | awk '/Address/ {ip=$NF; if(ip ~ /^[0-9A-Fa-f:.]+$/) print tolower(ip)}' >> "$tmp"
     done
     if [ -s "$tmp" ]; then
