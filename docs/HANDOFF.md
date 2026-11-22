@@ -639,3 +639,8 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **局部验证**：KSU/FCM smoke 的源码字面断言均能匹配当前源码；两份 smoke、相关 Shell 文件及 HANDOFF 均无尾随空白和冲突标记。Linux 容器中用 util-linux flock 模拟了完整持锁子命令：并发请求返回锁冲突，包装逻辑返回 13；另验证子命令真实退出码 12 能被保留。BusyBox 上游 `flock` 实现同样支持 FD 加子命令形式（参考：[BusyBox flock.c](https://github.com/brgl/busybox/blob/master/util-linux/flock.c)）。
 - **尚未完成**：完整 `tests/fcm-monitor-smoke.sh`、`tests/ksu-wake-smoke.sh` 和所有 Shell 文件 `sh -n` 尚未在完整仓库环境执行；Linux 模拟不替代设备上的 KernelSU BusyBox、Android mksh 和 GMS 实测。
 - **构建纪律**：未触发任何 workflow、编译、打包、合并或 Release。PR #1 仍保持 open / not merged；继续审查完成后再通知用户手动构建。
+
+### 2026-11-22 GMS client 状态字段空格兼容
+- `parse_mcs()` 原先只接受 `Is client connected: true/false`（冒号后有空格）；为兼容 dumpsys 输出紧凑形式 `Is client connected:true/false`，现改为接受冒号后零个或多个空白字符，再严格匹配 true/false。
+- FCM smoke 增加无空格 true/false 两个夹具；静态检查确认 parser 与两项夹具均已落地，独立 AWK 正则模拟对有空格、无空格和多空格三种输入均得到预期结果。
+- 完整 FCM/KSU smoke、所有脚本 `sh -n` 和设备端 GMS dumpsys 样本仍未执行；不能据此宣布整套测试通过。
