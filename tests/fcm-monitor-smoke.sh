@@ -287,8 +287,7 @@ j="$(run snapshot)"
 assert_json "$j" fcm_state=stale
 assert_json "$j" fcm_sample_uptime=10100
 assert_json "$j" fcm_recovery_decision=sample_unavailable
-export MCS_SS_MODE=unknown
-j="$(run status)"
+j="$(BERRY_FCM_TEST_MODE=0 MCS_SS_MODE=unknown run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=unavailable
 assert_json "$j" fcm_sample_uptime=10110
