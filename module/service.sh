@@ -114,12 +114,26 @@ monitor_group_identity_alive() {
     fi
     return 1
 }
+monitor_process_exists() {
+    for monitor_cmdline in /proc/[0-9]*/cmdline; do
+        [ -r "$monitor_cmdline" ] || continue
+        if tr "\\000" " " < "$monitor_cmdline" 2>/dev/null | grep -Fq "fcm-monitor.sh"; then
+            return 0
+        fi
+    done
+    return 1
+}
 stop_monitor_owner() {
     [ -s "$DATA/mcs-monitor.lock.owner" ] || { rm -f "$DATA/mcs-monitor.lock.owner"; return 0; }
     monitor_pid=; monitor_stamp=; monitor_pgid=; monitor_isolated=; monitor_group_stamp=
     IFS=' ' read -r monitor_pid monitor_stamp monitor_pgid monitor_isolated monitor_group_stamp < "$DATA/mcs-monitor.lock.owner" 2>/dev/null || :
     case "$monitor_pid:$monitor_stamp" in *[!0-9:]*|:*|*:)
-        printf '[%s] monitor_owner_identity_invalid; preserving owner lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+        if ! monitor_process_exists; then
+            rm -f "$DATA/mcs-monitor.lock.owner"
+            printf '[%s] stale_monitor_owner_record_cleared reason=no_monitor_process\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+            return 0
+        fi
+        printf '[%s] monitor_owner_identity_invalid; monitor process still exists, preserving owner lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
         return 1
         ;;
     esac
