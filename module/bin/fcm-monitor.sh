@@ -54,11 +54,16 @@ write_lock_owner() {
     lock_owner_pgid="$(proc_group_id "$lock_owner_pid")"
     [ -n "$lock_owner_stamp" ] && [ -n "$lock_owner_pgid" ] || return 1
     lock_owner_isolated=0
-    if [ "${BERRY_FCM_ISOLATED_GROUP:-0}" = 1 ] &&
-       [ "$lock_owner_pgid" = "$lock_owner_pid" ]; then
-        lock_owner_isolated=1
+    lock_owner_group_stamp=
+    if [ "${BERRY_FCM_ISOLATED_GROUP:-0}" = 1 ]; then
+        # timeout owns the process group in timeout-backed runs, so its PGID
+        # can differ from the monitor PID. Record the group leader identity.
+        lock_owner_group_stamp="$(proc_start_time "$lock_owner_pgid")"
+        if [ -n "$lock_owner_group_stamp" ]; then
+            lock_owner_isolated=1
+        fi
     fi
-    printf "%s %s %s %s\n" "$lock_owner_pid" "$lock_owner_stamp" "$lock_owner_pgid" "$lock_owner_isolated" > "$LOCK_OWNER.tmp.$lock_owner_pid" &&
+    printf "%s %s %s %s %s\\n" "$lock_owner_pid" "$lock_owner_stamp" "$lock_owner_pgid" "$lock_owner_isolated" "$lock_owner_group_stamp" > "$LOCK_OWNER.tmp.$lock_owner_pid" &&
         mv -f "$LOCK_OWNER.tmp.$lock_owner_pid" "$LOCK_OWNER"
 }
 clear_lock_owner() {
