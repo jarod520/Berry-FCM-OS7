@@ -54,6 +54,16 @@ cat > "$TMP/bin/dumpsys" <<'MOCK'
 echo called >> "$MCS_DUMP_LOG"
 exit 99
 MOCK
+cat > "$TMP/bin/mv" <<'MOCK'
+#!/bin/sh
+last=
+for arg in "$@"; do last="$arg"; done
+case "$last" in
+  */mcs-monitor.state) [ "${MCS_STATE_MV_FAIL:-0}" = 1 ] && exit 1;;
+  */mcs-evidence) [ "${MCS_EVIDENCE_MV_FAIL:-0}" = 1 ] && exit 1;;
+esac
+exec /bin/mv "$@"
+MOCK
 chmod +x "$TMP/bin/"*
 echo 10000 > "$TMP/uptime"
 echo test-boot > "$TMP/bootid"
@@ -83,6 +93,18 @@ j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=gms_socket
 assert_json "$j" fcm_tcp_hint=established
+
+# Failed atomic commits must fail the sample and remove temporary files.
+rm -f "$TMP/data/mcs-monitor.state" "$TMP/data/mcs-evidence"
+export MCS_STATE_MV_FAIL=1
+if run status >/dev/null 2>&1; then echo 'state rename failure was ignored' >&2; exit 1; fi
+test -z "$(find "$TMP/data" -name 'mcs-monitor.state.*' -print -quit)"
+unset MCS_STATE_MV_FAIL
+export MCS_EVIDENCE_MV_FAIL=1
+if run status >/dev/null 2>&1; then echo 'evidence rename failure was ignored' >&2; exit 1; fi
+test -z "$(find "$TMP/data" -name 'mcs-evidence.*' -print -quit)"
+unset MCS_EVIDENCE_MV_FAIL
+rm -f "$TMP/data/mcs-monitor.state" "$TMP/data/mcs-evidence"
 
 # Unrelated GMS HTTPS and redacted UID ownership remain unknown, never down.
 export MCS_SS_MODE=untrusted443
