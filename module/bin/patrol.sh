@@ -4,8 +4,8 @@ MODDIR="$(cd "$MODDIR" 2>/dev/null && pwd)" || exit 1
 DATA=/data/adb/berry_fcm_ksu
 MAINTENANCE_LOCK="$DATA/maintenance.lock"
 TOYBOX_BIN="${BERRY_TOYBOX_BIN:-/system/bin/toybox}"
-MONITOR_TIMEOUT="${BERRY_MONITOR_TIMEOUT_SECONDS:-45}"
-MONITOR_KILL_GRACE="${BERRY_MONITOR_KILL_GRACE:-5}"
+MONITOR_TIMEOUT="${BERRY_MONITOR_TIMEOUT_SECONDS:-25}"
+MONITOR_KILL_GRACE="${BERRY_MONITOR_KILL_GRACE:-3}"
 case "$MONITOR_TIMEOUT" in ""|*[!0-9]*) MONITOR_TIMEOUT=45;; esac
 [ "$MONITOR_TIMEOUT" -gt 0 ] || MONITOR_TIMEOUT=45
 case "$MONITOR_KILL_GRACE" in ""|*[!0-9]*) MONITOR_KILL_GRACE=5;; esac
@@ -21,6 +21,19 @@ parent_alive() {
     case "$SERVICE_PID" in ""|*[!0-9]*) return 1;; esac
     kill -0 "$SERVICE_PID" 2>/dev/null || return 1
     [ -n "$SERVICE_STAMP" ] && [ "$(proc_start_time "$SERVICE_PID")" = "$SERVICE_STAMP" ]
+}
+run_bounded() {
+    seconds="$1"; shift
+    if [ -x "$TOYBOX_BIN" ] && "$TOYBOX_BIN" --list 2>/dev/null | grep -qx timeout; then
+        "$TOYBOX_BIN" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
+    elif [ -x /data/adb/ksu/bin/busybox ] &&
+         /data/adb/ksu/bin/busybox --list 2>/dev/null | grep -qx timeout; then
+        /data/adb/ksu/bin/busybox timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
+    elif command -v timeout >/dev/null 2>&1; then
+        timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
+    else
+        return 125
+    fi
 }
 wait_pid=
 wake_count=0
@@ -55,15 +68,10 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
         check_wake_mode="$(cat "$DATA/wake-mode" 2>/dev/null || echo passive)"
         printf '[%s] fcm_check_start pid=%s uptime=%s wake=%s mode=%s\n' \
             "$(date '+%F %T')" "$$" "$now" "$wake_event" "$check_wake_mode" >> "$DATA/guard.log"
-        if [ -x "$TOYBOX_BIN" ] && "$TOYBOX_BIN" --list 2>/dev/null | grep -qx timeout; then
-            result="$("$TOYBOX_BIN" timeout -k "$MONITOR_KILL_GRACE" "$MONITOR_TIMEOUT" sh "$MODDIR/bin/fcm-monitor.sh" monitor 2>&1)"
-            monitor_rc=$?
-            sample="$("$TOYBOX_BIN" timeout -k "$MONITOR_KILL_GRACE" 10 sh "$MODDIR/bin/fcm-monitor.sh" snapshot 2>/dev/null)"
-        else
-            result="巡检跳过：系统 Toybox 不含 timeout，无法保证巡检进程组超时清理"
-            monitor_rc=125
-            sample=
-        fi
+        result="$(run_bounded "$MONITOR_TIMEOUT" sh "$MODDIR/bin/fcm-monitor.sh" monitor 2>&1)"
+        monitor_rc=$?
+        sample="$(run_bounded 5 sh "$MODDIR/bin/fcm-monitor.sh" snapshot 2>/dev/null)"
+
         summary="$(printf '%s\n' "$sample" | sed -n 's/.*"fcm_state":"\([a-z_]*\)".*"fcm_sample_time":\([0-9]*\).*"fcm_recovery_decision":"\([a-z_]*\)".*/state=\1 sample_epoch=\2 recovery=\3/p')"
         if [ "$wake_event" = 1 ]; then
             printf '[%s] wake_gms_check_finished rc=%s %s\n' "$(date '+%F %T')" "$monitor_rc" "${summary:-snapshot=unavailable}" >> "$DATA/guard.log"
@@ -118,7 +126,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
         fi
     fi
     if [ "$mode_changed" = 1 ] || [ "$wake_count" != "$wake_seen" ]; then mode_changed=0; continue; fi
-    sleep 30 &
+    sleep 20 &
     wait_pid=$!
     if [ "$mode_changed" = 1 ] || [ "$wake_count" != "$wake_seen" ]; then stop_wait; fi
     wait "$wait_pid" 2>/dev/null || :
