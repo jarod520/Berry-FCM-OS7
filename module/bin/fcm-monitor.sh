@@ -86,19 +86,19 @@ load_state() {
     state=never_seen; conn_key=; conn_since=0; conn_since_mono=0; last_seen=0
     missing_since=0; missing_epoch=0; last_try_mono=0; last_try_epoch=0
     attempts=0; last_result=none; last_restore=0; outages=0
-    transport=; remote=; sample_epoch=0; last_try_reason=none
+    transport=; remote=; sample_epoch=0; sample_mono=0; last_try_reason=none
     reconnects=0; last_down=0
     down_observed=0; retry_streak=0; outage_hint_mono=0
     native_timer_duration=0; native_timer_since=0; native_timer_last_request=0; native_timer_key=
     prev_b=
     if [ -f "$STATE" ]; then
-        IFS='|' read -r prev_b state conn_key conn_since conn_since_mono last_seen missing_since missing_epoch last_try_mono last_try_epoch attempts last_result last_restore outages transport remote sample_epoch last_try_reason reconnects last_down down_observed retry_streak outage_hint_mono native_timer_duration native_timer_since native_timer_last_request native_timer_key < "$STATE" || :
+        IFS='|' read -r prev_b state conn_key conn_since conn_since_mono last_seen missing_since missing_epoch last_try_mono last_try_epoch attempts last_result last_restore outages transport remote sample_epoch last_try_reason reconnects last_down down_observed retry_streak outage_hint_mono native_timer_duration native_timer_since native_timer_last_request native_timer_key sample_mono < "$STATE" || :
     fi
     conn_since="$(num "$conn_since")"; conn_since_mono="$(num "$conn_since_mono")"; last_seen="$(num "$last_seen")"
     missing_since="$(num "$missing_since")"; missing_epoch="$(num "$missing_epoch")"
     last_try_mono="$(num "$last_try_mono")"; last_try_epoch="$(num "$last_try_epoch")"
     attempts="$(num "$attempts")"; last_restore="$(num "$last_restore")"
-    outages="$(num "$outages")"; sample_epoch="$(num "$sample_epoch")"
+    outages="$(num "$outages")"; sample_epoch="$(num "$sample_epoch")"; sample_mono="$(num "$sample_mono")"
     reconnects="$(num "$reconnects")"; last_down="$(num "$last_down")"
     down_observed="$(num "${down_observed:-0}")"; retry_streak="$(num "${retry_streak:-0}")"
     outage_hint_mono="$(num "${outage_hint_mono:-0}")"
@@ -110,7 +110,7 @@ load_state() {
     case "$last_try_reason" in none|auto|manual|rescue|stalled_timer) : ;; *) last_try_reason=none;; esac
     if [ -n "$prev_b" ] && [ "$prev_b" != "$b" ]; then
         state=never_seen; conn_key=; conn_since=0; conn_since_mono=0; missing_since=0; missing_epoch=0
-        last_try_mono=0; transport=; remote=; sample_epoch=0; down_observed=0; retry_streak=0; outage_hint_mono=0
+        last_try_mono=0; transport=; remote=; sample_epoch=0; sample_mono=0; down_observed=0; retry_streak=0; outage_hint_mono=0
         native_timer_duration=0; native_timer_since=0; native_timer_last_request=0; native_timer_key=
         : > "$LEARNED_IPS"
         rm -f "$NATIVE_HINT"
@@ -120,11 +120,11 @@ load_state() {
 
 save_state() {
     tmp="$STATE.$$"
-    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
       "$b" "$state" "$conn_key" "$conn_since" "$conn_since_mono" "$last_seen" "$missing_since" "$missing_epoch" \
       "$last_try_mono" "$last_try_epoch" "$attempts" "$last_result" "$last_restore" "$outages" \
       "$transport" "$remote" "$sample_epoch" "$last_try_reason" "$reconnects" "$last_down" "$down_observed" "$retry_streak" "$outage_hint_mono" \
-      "$native_timer_duration" "$native_timer_since" "$native_timer_last_request" "$native_timer_key" > "$tmp" && mv -f "$tmp" "$STATE"
+      "$native_timer_duration" "$native_timer_since" "$native_timer_last_request" "$native_timer_key" "$sample_mono" > "$tmp" && mv -f "$tmp" "$STATE"
 }
 
 update_native_timer_tracking() {
@@ -957,7 +957,7 @@ EOF_SOCKET
         new_transport=; new_remote=
         ;;
     esac
-    transport="$new_transport"; remote="$new_remote"; sample_epoch="$nowe"
+    transport="$new_transport"; remote="$new_remote"; sample_epoch="$nowe"; sample_mono="$nowm"
     update_native_timer_tracking
     # Do not publish a fresh sample timestamp unless its matching evidence
     # was also committed; otherwise snapshot could pair new state with stale evidence.
@@ -1100,8 +1100,14 @@ auto_recovery() {
 
 status_json() {
     load_state
-    nowe="$(num "$(now_epoch)")"; age=-1
-    [ "$sample_epoch" -gt 0 ] && [ "$nowe" -ge "$sample_epoch" ] && age=$((nowe-sample_epoch))
+    nowe="$(num "$(now_epoch)")"; nowm="$(num "$(monotime)")"; age=-1
+    if [ "$sample_mono" -gt 0 ]; then
+        [ "$nowm" -ge "$sample_mono" ] && age=$((nowm-sample_mono))
+    elif [ "$sample_epoch" -gt 0 ] && [ "$nowe" -ge "$sample_epoch" ]; then
+        # Backward-compatible age calculation for state files written before
+        # sample_mono existed. New samples use monotonic uptime exclusively.
+        age=$((nowe-sample_epoch))
+    fi
     source=unavailable; duration=-1; close_code=; tcp_hint=none; native_reason=unrecognized; decision=not_evaluated
     if [ -f "$EVIDENCE" ]; then IFS='|' read -r source duration close_code tcp_hint native_reason decision < "$EVIDENCE" || :; fi
     case "${decision:-}" in not_evaluated|not_disconnected|sample_unavailable|disabled|cooldown|gms_stopped_unknown|requested|request_failed|waiting_duration|waiting_confirmation|confirmation_changed|timer_stalled_recovery|timer_stalled_disabled|timer_stalled_cooldown|timer_stalled_cancelled) :;; *) decision=not_evaluated;; esac
@@ -1119,7 +1125,7 @@ status_json() {
     fi
     auto=0; auto_enabled && auto=1
     interval="$(retry_interval)"
-    nowm="$(num "$(monotime)")"; retry_in=0
+    retry_in=0
     if [ "$last_try_mono" -gt 0 ] && [ "$nowm" -ge "$last_try_mono" ] && [ $((nowm-last_try_mono)) -lt "$interval" ]; then retry_in=$((interval-nowm+last_try_mono)); fi
     observed_up=-1
     if [ "$state" = connected ] && [ -n "$conn_key" ] &&
@@ -1133,8 +1139,8 @@ status_json() {
         observed_seconds=$((nowm-down_observed-age))
         [ "$observed_seconds" -ge 0 ] || observed_seconds=0
     fi
-    printf '{"fcm_state":"%s","fcm_source":"%s","fcm_transport":"%s","fcm_remote":"%s","fcm_connection_since":%s,"fcm_connected_seconds":%s,"fcm_disconnect_since":%s,"fcm_missing_seconds":%s,"fcm_native_duration":%s,"fcm_observed_up_seconds":%s,"fcm_native_close_events":%s,"fcm_native_connected_events":%s,"fcm_last_close_code":"%s","fcm_tcp_hint":"%s","fcm_last_seen":%s,"fcm_last_restore":%s,"fcm_last_try":%s,"fcm_last_try_reason":"%s","fcm_last_result":"%s","fcm_attempts":%s,"fcm_outages":%s,"fcm_sample_time":%s,"fcm_sample_age_seconds":%s,"fcm_native_reason":"%s","fcm_auto":%s,"fcm_retry_in":%s,"fcm_retry_streak":%s,"fcm_observed_down_seconds":%s,"fcm_recovery_decision":"%s"}\n' \
-      "$state" "$source" "$transport" "$remote" "$conn_since" "$connected" "$last_down" "$missing" "$duration" "$observed_up" "$closes" "$successes" "$close_code" "$tcp_hint" "$last_seen" "$last_restore" "$last_try_epoch" "$last_try_reason" "$last_result" "$attempts" "$outages" "$sample_epoch" "$age" "$native_reason" "$auto" "$retry_in" "$retry_streak" "$observed_seconds" "$decision"
+    printf '{"fcm_state":"%s","fcm_source":"%s","fcm_transport":"%s","fcm_remote":"%s","fcm_connection_since":%s,"fcm_connected_seconds":%s,"fcm_disconnect_since":%s,"fcm_missing_seconds":%s,"fcm_native_duration":%s,"fcm_observed_up_seconds":%s,"fcm_native_close_events":%s,"fcm_native_connected_events":%s,"fcm_last_close_code":"%s","fcm_tcp_hint":"%s","fcm_last_seen":%s,"fcm_last_restore":%s,"fcm_last_try":%s,"fcm_last_try_reason":"%s","fcm_last_result":"%s","fcm_attempts":%s,"fcm_outages":%s,"fcm_sample_time":%s,"fcm_sample_uptime":%s,"fcm_sample_age_seconds":%s,"fcm_native_reason":"%s","fcm_auto":%s,"fcm_retry_in":%s,"fcm_retry_streak":%s,"fcm_observed_down_seconds":%s,"fcm_recovery_decision":"%s"}\n' \
+      "$state" "$source" "$transport" "$remote" "$conn_since" "$connected" "$last_down" "$missing" "$duration" "$observed_up" "$closes" "$successes" "$close_code" "$tcp_hint" "$last_seen" "$last_restore" "$last_try_epoch" "$last_try_reason" "$last_result" "$attempts" "$outages" "$sample_epoch" "$sample_mono" "$age" "$native_reason" "$auto" "$retry_in" "$retry_streak" "$observed_seconds" "$decision"
 }
 
 run_monitor_command() {
