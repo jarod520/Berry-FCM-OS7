@@ -50,8 +50,10 @@ grep -Fq 'while patrol_identity_alive' "$ROOT/module/service.sh"
 grep -Fq 'rm -f "$DATA/patrol.heartbeat"' "$ROOT/module/service.sh"
 grep -Fq 'elif [ "$hb" -eq 0 ]' "$ROOT/module/service.sh"
 grep -Fq 'patrol.sample.heartbeat' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'Refresh only after a completed non-contention, non-timeout monitor attempt.' "$ROOT/module/bin/patrol.sh"
-grep -Fq '13|124) :;;' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'sample_heartbeat_not_refreshed rc=%s sample_epoch=%s check_started=%s' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'observed_sample_epoch' "$ROOT/module/bin/patrol.sh"
+grep -Fq '[ "$observed_sample_epoch" -ge "$check_started_epoch" ]' "$ROOT/module/bin/patrol.sh"
+! grep -Fq '13|124) :;;' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'sample_stale=1' "$ROOT/module/service.sh"
 grep -Fq 'reason=monitor_sample' "$ROOT/module/service.sh"
 grep -Fq 'BERRY_FCM_ISOLATED_GROUP=1 "$TOYBOX_BIN" timeout' "$ROOT/module/bin/patrol.sh"
@@ -216,14 +218,17 @@ exit 1
 MOCK
 cat > "$TMP/module/bin/fcm-monitor.sh" <<'MOCK'
 if [ "$1" = snapshot ]; then
+    sample_epoch="$(cat "$TEST_DIR/sample-epoch" 2>/dev/null || echo 0)"
     if [ "${TEST_MONITOR_UNKNOWN:-0}" = 1 ]; then
-        echo '{"fcm_state":"unknown","fcm_sample_time":1234,"fcm_recovery_decision":"sample_unavailable"}'
+        echo "{\"fcm_state\":\"unknown\",\"fcm_sample_time\":$sample_epoch,\"fcm_recovery_decision\":\"sample_unavailable\"}"
     else
-        echo '{"fcm_state":"connected","fcm_sample_time":1234,"fcm_recovery_decision":"not_disconnected"}'
+        echo "{\"fcm_state\":\"connected\",\"fcm_sample_time\":$sample_epoch,\"fcm_recovery_decision\":\"not_disconnected\"}"
     fi
 else
     before="$(wc -l < "$TEST_DIR/samples")"
     echo "$1" >> "$TEST_DIR/samples"
+    if [ -n "${TEST_MONITOR_PRE_SAMPLE_RC:-}" ]; then exit "$TEST_MONITOR_PRE_SAMPLE_RC"; fi
+    date +%s > "$TEST_DIR/sample-epoch"
     if [ -n "${TEST_MONITOR_RC:-}" ]; then exit "$TEST_MONITOR_RC"; fi
     if [ "${TEST_HANG_FIRST:-0}" = 1 ] && [ "$before" = 0 ]; then
         /bin/sleep 30 &
@@ -382,6 +387,22 @@ test -s "$TMP/data/patrol.sample.heartbeat"
 grep -q "fcm_check_end rc=10" "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo "PASS: completed non-contention monitor errors refresh patrol heartbeat"
+
+# A monitor error before observe() produces a fresh sample must not refresh
+# the sample heartbeat; the supervisor must retain stale-sample evidence.
+touch "$TMP/module/module.prop"
+echo 1 > "$TMP/data/enabled"
+echo passive > "$TMP/data/wake-mode"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+rm -f "$TMP/data/patrol.sample.heartbeat" "$TMP/sample-epoch"
+export TEST_MONITOR_PRE_SAMPLE_RC=12
+timeout 8 sh "$TMP/module/service.sh"
+unset TEST_MONITOR_PRE_SAMPLE_RC
+test ! -s "$TMP/data/patrol.sample.heartbeat"
+grep -q 'sample_heartbeat_not_refreshed rc=12' "$TMP/data/guard.log"
+test ! -d "$TMP/data/service.lock"
+echo "PASS: failed observe does not refresh sample heartbeat"
 
 touch "$TMP/module/module.prop"
 echo 1 > "$TMP/data/enabled"
