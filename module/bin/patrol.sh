@@ -159,9 +159,6 @@ run_bounded() {
         if [ -x "$TOYBOX_BIN" ] &&
            "$TOYBOX_BIN" --list 2>/dev/null | grep -qx setsid; then
             BERRY_FCM_ISOLATED_GROUP=1 "$TOYBOX_BIN" setsid "$KSU_BUSYBOX" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
-        elif [ -x "$KSU_BUSYBOX" ] &&
-             "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx setsid; then
-            BERRY_FCM_ISOLATED_GROUP=1 "$KSU_BUSYBOX" setsid "$KSU_BUSYBOX" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
         else
             BERRY_FCM_ISOLATED_GROUP=1 "$KSU_BUSYBOX" setsid "$KSU_BUSYBOX" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
         fi
@@ -173,14 +170,11 @@ run_bounded() {
         if [ -x "$TOYBOX_BIN" ] &&
            "$TOYBOX_BIN" --list 2>/dev/null | grep -qx setsid; then
             BERRY_FCM_ISOLATED_GROUP=1 "$TOYBOX_BIN" setsid timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
-        elif [ -x "$KSU_BUSYBOX" ] &&
-             "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx setsid; then
-            BERRY_FCM_ISOLATED_GROUP=1 "$KSU_BUSYBOX" setsid timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
         else
             BERRY_FCM_ISOLATED_GROUP=1 "$KSU_BUSYBOX" setsid timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
         fi
     else
-        # Last-resort watchdog when no timeout applet exists. Use a private
+        # Last-resort watchdog when no safe timeout+setsid pair exists. Use a private
         # session when the available applet supports it, so timeout cleanup
         # also reaches child probes instead of leaving orphan processes.
         marker="$DATA/monitor-timeout.$SERVICE_PID"
