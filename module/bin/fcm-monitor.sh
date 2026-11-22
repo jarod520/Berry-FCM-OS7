@@ -176,9 +176,11 @@ resolve_mtalk() {
     tmp="$DNS_IPS.$$"; : > "$tmp"
     for host in mtalk.google.com alt1-mtalk.google.com; do
         if [ -x "$TOYBOX_BIN" ] && "$TOYBOX_BIN" --list 2>/dev/null | grep -qx timeout; then
-            "$TOYBOX_BIN" timeout -k 1 3 nslookup "$host" 2>/dev/null
+            # Keep DNS probes in the monitor's own process group so service
+            # shutdown can terminate them together with the monitor.
+            "$TOYBOX_BIN" timeout --foreground -k 1 3 nslookup "$host" 2>/dev/null
         elif command -v timeout >/dev/null 2>&1; then
-            timeout 3 nslookup "$host" 2>/dev/null
+            timeout --foreground 3 nslookup "$host" 2>/dev/null
         else
             :
         fi | awk '/Address/ {ip=$NF; if(ip ~ /^[0-9A-Fa-f:.]+$/) print tolower(ip)}' >> "$tmp"
