@@ -791,3 +791,10 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - 修正：巡检在 monitor 前先读取一次 snapshot，保存 `previous_sample_epoch`；monitor 后仍要求新时间戳不早于本轮开始，同时必须严格大于前一快照时间戳。明确排除 10/11/12/13/14/124 这些前置失败、锁冲突或超时返回码。非零但已完成并持久化新样本的后续错误仍可刷新心跳。
 - 修正 KSU smoke 中 rc=10 夹具的错误前提：真实 `fcm-monitor.sh` 在 UID 非 root 时于 observe 前直接 exit 10，因此不能用它模拟“样本已提交后的非零返回”；改用 rc=42 表示样本提交后的模拟异常。新增 rc=14 + 旧样本时间戳回归用例，检查旧 snapshot 不得刷新 sample heartbeat。
 - 本次仅完成源码和测试夹具修改；尚未运行完整 `ksu-wake-smoke.sh`、`fcm-monitor-smoke.sh` 或全仓 Shell syntax gate。未编译、未打包、未触发 workflow、未合并、未发布。
+
+### 2026-11-22 stale snapshot 不得刷新 patrol sample heartbeat
+- **复审发现**：patrol 已比较 monitor 前后的 sample_epoch，并要求新样本时间属于本轮检查窗口；但 snapshot 还会把年龄超过 90 秒或 wall-clock 回拨导致年龄无法计算的样本标记为 stale。只比较 epoch 仍未显式尊重 snapshot 的 stale 判定。
+- **修正**：解析 snapshot 的 fcm_state；只有 state 字段存在且不为 stale，才允许刷新 sample heartbeat。unknown 仍然是有效样本，不能因状态未知而停止巡检；stale 则必须保留旧 heartbeat，让 supervisor 继续执行空档恢复。
+- **回归夹具**：KSU mock 增加 TEST_MONITOR_STALE；新用例模拟 monitor 已写入更大的 sample_epoch、返回非零后置错误 rc=42，但 snapshot 明确标记 stale，要求 heartbeat 不刷新。固定源码断言同步检查 stale gate。
+- **定向验证**：当前 patrol 条件的逻辑静态复核通过；unknown/connected/down 仍不因 stale gate 被排除，只有 stale 或缺失状态不刷新。尚未运行完整 KSU smoke 或设备验证。
+- **验证边界**：未触发 Actions、构建、编译、打包或发布。
