@@ -3,17 +3,25 @@ DIR="$(cd "${0%/*}" && pwd)" || exit 1
 LOCK=/data/adb/berry_fcm_ksu/service.lock
 old="$(cat "$LOCK/pid" 2>/dev/null)"
 old_stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
+case "$old_stamp" in ""|*[!0-9]*) old_stamp=;; esac
 case "$old" in ''|*[!0-9]*) old=0 ;; esac
 proc_start_time() {
     [ -r "/proc/$1/stat" ] || return 1
     tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $20}'
 }
 is_guardian() {
-    case "$old:$old_stamp" in *[!0-9:]*|:*|*:) return 1;; esac
-    [ "$old" -gt 1 ] && [ "$old_stamp" -gt 0 ] && kill -0 "$old" 2>/dev/null || return 1
-    [ "$(proc_start_time "$old")" = "$old_stamp" ] || return 1
+    case "$old" in ""|*[!0-9]*) return 1;; esac
+    [ "$old" -gt 1 ] && kill -0 "$old" 2>/dev/null || return 1
+    current_stamp="$(proc_start_time "$old")"
+    case "$current_stamp" in ""|*[!0-9]*) return 1;; esac
     cmdline="$(tr "\000" " " < "/proc/$old/cmdline" 2>/dev/null)"
     case "$cmdline" in *"/berry_fcm_ksu/service.sh"*) :;; *) return 1;; esac
+    if [ -n "$old_stamp" ]; then
+        [ "$current_stamp" = "$old_stamp" ] || return 1
+    else
+        # RC5 did not persist starttime; pin the verified process before waiting.
+        old_stamp="$current_stamp"
+    fi
     return 0
 }
 if is_guardian; then
