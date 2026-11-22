@@ -22,6 +22,36 @@ service_identity() {
     case "$cmdline" in *"/berry_fcm_ksu/service.sh"*) :;; *) return 1;; esac
     [ -z "$stamp" ] || [ "$(proc_start_time "$pid")" = "$stamp" ]
 }
+patrol_identity_for_lock() {
+    stale_patrol_pid=; stale_patrol_stamp=
+    IFS=' ' read -r stale_patrol_pid stale_patrol_stamp < "$LOCK/patrol" 2>/dev/null || return 1
+    case "$stale_patrol_pid:$stale_patrol_stamp" in *[!0-9:]*|:*) return 1;; esac
+    [ "$stale_patrol_pid" -gt 1 ] && kill -0 "$stale_patrol_pid" 2>/dev/null || return 1
+    [ "$(proc_start_time "$stale_patrol_pid")" = "$stale_patrol_stamp" ] || return 1
+    tr "\000" " " < "/proc/$stale_patrol_pid/cmdline" 2>/dev/null | grep -Fq "patrol.sh"
+}
+stop_stale_patrol() {
+    patrol_identity_for_lock || return 0
+    kill -TERM "$stale_patrol_pid" 2>/dev/null || :
+    n=0
+    while patrol_identity_for_lock && [ "$(proc_state "$stale_patrol_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 4 ]; do
+        sleep 1; n=$((n + 1))
+    done
+    if patrol_identity_for_lock && [ "$(proc_state "$stale_patrol_pid" 2>/dev/null)" != Z ]; then
+        kill -KILL "$stale_patrol_pid" 2>/dev/null || :
+        n=0
+        while patrol_identity_for_lock && [ "$(proc_state "$stale_patrol_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 3 ]; do
+            sleep 1; n=$((n + 1))
+        done
+    fi
+    if patrol_identity_for_lock && [ "$(proc_state "$stale_patrol_pid" 2>/dev/null)" != Z ]; then
+        printf '[%s] stale_patrol_stop_unconfirmed pid=%s start=%s; refusing a duplicate patrol\n' \
+            "$(date '+%F %T')" "$stale_patrol_pid" "$stale_patrol_stamp" >> "$DATA/guard.log"
+        return 1
+    fi
+    return 0
+}
+
 if ! mkdir "$LOCK" 2>/dev/null; then
     old="$(cat "$LOCK/pid" 2>/dev/null)"
     stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
@@ -31,7 +61,8 @@ if ! mkdir "$LOCK" 2>/dev/null; then
         stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
     fi
     service_identity "$old" "$stamp" && exit 0
-    stale="$DATA/service.lock.stale.$$"
+    stop_stale_patrol || exit 0
+    stale="$DATA/service.lock.stale.$"
     if mv "$LOCK" "$stale" 2>/dev/null; then rm -rf "$stale"; fi
     mkdir "$LOCK" 2>/dev/null || exit 0
 fi
@@ -235,7 +266,17 @@ stop_patrol() {
     patrol_pid=; patrol_stamp=
     rm -f "$LOCK/patrol"
 }
-service_cleanup() { stop_timer; stop_monitor_owner; stop_patrol; rm -rf "$LOCK"; }
+service_cleanup() {
+    cleanup_ok=1
+    stop_timer || cleanup_ok=0
+    stop_monitor_owner || cleanup_ok=0
+    stop_patrol || cleanup_ok=0
+    if [ "$cleanup_ok" = 1 ]; then
+        rm -rf "$LOCK"
+    else
+        printf '[%s] service_cleanup_incomplete; preserving lock to block duplicate workers\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+    fi
+}
 stop_service() { stop_wait; exit 0; }
 refresh_mode() {
     mode_changed=1
