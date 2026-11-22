@@ -189,6 +189,14 @@ cat > "$TMP/bin/getprop" <<'MOCK'
 #!/bin/sh
 echo 1
 MOCK
+cat > "$TMP/bin/date" <<'MOCK'
+#!/bin/sh
+if [ "$*" = '+%s' ] && [ -n "${TEST_FIXED_EPOCH:-}" ]; then
+    echo "$TEST_FIXED_EPOCH"
+else
+    exec /bin/date "$@"
+fi
+MOCK
 cat > "$TMP/bin/sleep" <<'MOCK'
 #!/bin/sh
 echo "$1" >> "$TEST_DIR/sleeps"
@@ -238,6 +246,7 @@ else
     before="$(wc -l < "$TEST_DIR/samples")"
     echo "$1" >> "$TEST_DIR/samples"
     if [ -n "${TEST_MONITOR_PRE_SAMPLE_RC:-}" ]; then exit "$TEST_MONITOR_PRE_SAMPLE_RC"; fi
+    if [ -n "${TEST_MONITOR_NO_SAMPLE_RC:-}" ]; then exit "$TEST_MONITOR_NO_SAMPLE_RC"; fi
     sample_epoch="$(date +%s)"
     previous_sample_epoch="$(cat "$TEST_DIR/sample-epoch" 2>/dev/null || echo 0)"
     case "$sample_epoch" in ""|*[!0-9]*) sample_epoch=0;; esac
@@ -420,6 +429,22 @@ test ! -s "$TMP/data/patrol.sample.heartbeat"
 grep -q 'sample_heartbeat_not_refreshed rc=12' "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo "PASS: failed observe does not refresh sample heartbeat"
+
+# A non-excluded post-attempt error with an unchanged same-second snapshot
+# must still be rejected: timestamp >= check start is not enough by itself.
+touch "$TMP/module/module.prop"
+echo 1 > "$TMP/data/enabled"
+echo passive > "$TMP/data/wake-mode"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+echo 1700000000 > "$TMP/sample-epoch"
+export TEST_FIXED_EPOCH=1700000000 TEST_MONITOR_NO_SAMPLE_RC=42
+timeout 8 sh "$TMP/module/service.sh"
+unset TEST_FIXED_EPOCH TEST_MONITOR_NO_SAMPLE_RC
+test ! -s "$TMP/data/patrol.sample.heartbeat"
+grep -q 'sample_heartbeat_not_refreshed rc=42 sample_epoch=1700000000 previous_sample_epoch=1700000000 check_started=1700000000' "$TMP/data/guard.log"
+test ! -d "$TMP/data/service.lock"
+echo 'PASS: unchanged same-second sample cannot refresh patrol heartbeat'
 
 # A pre-observe owner-registration failure must not reuse an old sample whose
 # wall-clock second happens to equal the start of this patrol check.
