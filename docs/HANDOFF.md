@@ -718,3 +718,9 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - FCM smoke 新增实际失败注入：用仅拒绝 `mcs-monitor.lock.owner` 目标的 `mv` mock，分别覆盖 flock 与无 flock 目录锁路径。两条路径都必须返回失败、不能执行 dumpsys/monitor 采样、不能留下 owner 文件或临时文件；目录锁路径还必须由 EXIT trap 删除 lockdir。
 - **已完成验证**：FCM smoke 的 15 条固定源码断言全部匹配；修改后的 `write_lock_owner()` 失败清理片段、flock 错误码分支、目录锁 EXIT 清理分支及新增 mock 均通过隔离 Linux 环境的 POSIX `sh -n`。另用 `mv` 失败模拟确认 owner 临时文件会清理、登记失败分支返回 14。以上是片段语法和行为模拟，不代表完整 FCM smoke 已执行。
 - **验证边界**：完整 FCM/KSU smoke、全仓 Shell 语法 gate 和 Android/KernelSU 设备实测仍未执行。未触发构建或 Actions。
+
+### 2026-11-22 maintenance 进程组 TERM/KILL 身份锚点复核
+- **复审发现**：service 的 stop_maintenance_child() 只在 TERM 前检查 child PID/starttime/PGID，等待后若原组退出且 PGID 被复用，仍可能对新组发送 KILL；patrol worker 的退出清理、45 秒 watchdog 和 child owner 记录发布失败路径也存在相同的组信号缺少身份复核问题。另发现 worker 的 EXIT cleanup 即使 child 清理失败，仍会删除 maintenance.lock，可能让残留子进程失去监管记录。
+- **修正**：service 与 patrol worker 均增加 maintenance child group identity 检查：每次发送负 PGID 信号前，必须确认原 child PID、starttime、PGID 仍一致，且命令行仍指向 ctl.sh（或该 PID 仍为可识别的 zombie）。无法确认时拒绝组信号并写日志。patrol 清理在组仍存活时保留 child owner 记录；maintenance_cleanup 只有在 child 清理确认成功后才删除 maintenance.lock。worker 等待主 child 退出后统一调用同一清理函数，避免清理逻辑分叉。
+- **覆盖范围**：普通退出清理、45 秒 watchdog、child owner 记录发布失败、service 重启回收四条路径。
+- **验证边界**：本次代码和 KSU smoke 断言更新后需做局部 Shell 语法及断言检查；完整 KSU/FCM smoke、全仓 Shell gate 和 Android/KernelSU 实机验证仍未执行。未触发 Actions、编译、打包、合并或 Release。
