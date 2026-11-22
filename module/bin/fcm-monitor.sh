@@ -361,6 +361,14 @@ parse_mcs() {
             explicit_status=0; explicit_client_status=0
             conflict=0; header=0; done=0
           }
+          scoped=(line~/^SERVICE com\\.google\\.android\\.gms\\/(\\.gcm\\.GcmService|com\\.google\\.android\\.gms\\.gcm\\.GcmService)([[:space:]]|$)/)
+          if(scoped){
+            if(gms_block_seen) multiple_gms_blocks=1
+            gms_block_seen=1
+            header=1
+          }
+          next
+        }
           scoped=(line~/^SERVICE com\.google\.android\.gms\/(\.gcm\.GcmService|com\.google\.android\.gms\.gcm\.GcmService)([[:space:]]|$)/)
           if(scoped) header=1
           next
@@ -421,10 +429,10 @@ parse_mcs() {
       }
       END {
         corroborated=(state=="connected" ? has_ct : has_dt)
-        if(conflict || state=="" || state=="unknown" ||
+        if(multiple_gms_blocks || conflict || state=="" || state=="unknown" ||
           (!explicit_status && !header && !corroborated && !has_stream) ||
           (!explicit_status && !header && remote=="" && !corroborated)){
-          detail=(conflict ? "conflicting_state" : (state=="" ? "no_current_state" : (state=="unknown" ? "disabled_or_unknown" : "missing_metadata")))
+          detail=(multiple_gms_blocks ? "multiple_gms_service_blocks" : (conflict ? "conflicting_state" : (state=="" ? "no_current_state" : (state=="unknown" ? "disabled_or_unknown" : "missing_metadata"))))
           print "unknown||||-1||" detail;exit
         }
         if((state=="connected" && has_dt && !has_ct) ||
