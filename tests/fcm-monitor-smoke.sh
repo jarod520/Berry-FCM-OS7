@@ -241,6 +241,38 @@ test ! -e "$BERRY_FCM_DATA/mcs-evidence"
 test ! -e "$BERRY_FCM_DATA/mcs-evidence.tmp"
 echo 'PASS: failed evidence publication cannot advance the sample timestamp'
 
+# If evidence commits but the state rename fails, its sample generation must
+# not be presented as a valid sample paired with the old state.
+export BERRY_FCM_DATA="$TMP/state-write-fail-data"
+mkdir -p "$BERRY_FCM_DATA" "$TMP/state-write-fail-bin"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+settime 10110
+cat > "$TMP/state-write-fail-bin/mv" <<'MOCK'
+#!/bin/sh
+dest=
+for arg do dest="$arg"; done
+case "$dest" in "$BERRY_FCM_DATA/mcs-monitor.state") exit 1;; esac
+exec /bin/mv "$@"
+MOCK
+chmod +x "$TMP/state-write-fail-bin/mv"
+if PATH="$TMP/state-write-fail-bin:$TMP/bin:/usr/bin:/bin" run status; then
+    echo 'status unexpectedly succeeded after state publication failure' >&2
+    exit 1
+fi
+test ! -e "$BERRY_FCM_DATA/mcs-monitor.state"
+test -e "$BERRY_FCM_DATA/mcs-evidence"
+test "$(awk -F'|' '{print NF}' "$BERRY_FCM_DATA/mcs-evidence")" = 7
+test ! -e "$BERRY_FCM_DATA/mcs-monitor.state.$(pgrep -f 'fcm-monitor.sh' | head -n 1)"
+if find "$BERRY_FCM_DATA" -maxdepth 1 -name 'mcs-monitor.state.*' | grep -q .; then
+    echo 'state temporary file leaked after failed rename' >&2
+    exit 1
+fi
+j="$(run snapshot)"
+assert_json "$j" fcm_state=stale
+assert_json "$j" fcm_sample_uptime=0
+assert_json "$j" fcm_recovery_decision=sample_unavailable
+echo 'PASS: evidence/state generation mismatch is marked stale and temp state is cleaned'
+
 # A sampling gap breaks continuity of the native connectTime stall timer.
 export BERRY_FCM_DATA="$TMP/native-timer-gap-data"
 mkdir -p "$BERRY_FCM_DATA"
