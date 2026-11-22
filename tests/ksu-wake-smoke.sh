@@ -122,11 +122,19 @@ MOCK
 cat > "$TMP/bin/toybox" <<'MOCK'
 #!/bin/sh
 if [ "$1" = --list ]; then
-    [ "${TEST_NO_TIMEOUT:-0}" = 1 ] || echo timeout
+    if [ "${TEST_NO_TIMEOUT:-0}" = 1 ]; then
+        printf '%s\\n' setsid kill
+    else
+        echo timeout
+    fi
     exit 0
 fi
-[ "$1" = timeout ] || exit 2
-shift
+case "$1" in
+    setsid) shift; exec /usr/bin/setsid "$@";;
+    kill) shift; exec /bin/kill "$@";;
+    timeout) shift;;
+    *) exit 2;;
+esac
 grace=5
 if [ "$1" = -k ]; then grace="$2"; shift 2; fi
 duration="$1"; shift
@@ -276,10 +284,13 @@ touch "$TMP/module/module.prop"
 echo 1 > "$TMP/data/enabled"
 : > "$TMP/samples"
 : > "$TMP/data/guard.log"
-export TEST_NO_TIMEOUT=1 TEST_HANG_FIRST=1
+export TEST_NO_TIMEOUT=1 TEST_HANG_CHILD=1
 timeout 8 env PATH="$TMP/no-timeout-bin" BERRY_TOYBOX_BIN="$TMP/bin/toybox" \
     BERRY_KSU_BUSYBOX="$TMP/missing-busybox" sh "$TMP/module/service.sh"
-unset TEST_NO_TIMEOUT TEST_HANG_FIRST
+unset TEST_NO_TIMEOUT TEST_HANG_CHILD
+child_pid="$(cat "$TMP/hung-child-pid")"
+child_state="$(awk '{print $3}' "/proc/$child_pid/stat" 2>/dev/null || :)"
+[ -z "$child_state" ] || [ "$child_state" = Z ]
 test "$(wc -l < "$TMP/samples")" -ge 2
 grep -q 'fcm_check_end rc=124' "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
