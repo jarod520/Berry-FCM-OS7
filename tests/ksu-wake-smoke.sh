@@ -73,6 +73,11 @@ grep -Fq 'monitor_group_identity_alive()' "$ROOT/module/service.sh"
 [ "$(grep -cF 'monitor_group_identity_alive || {' "$ROOT/module/service.sh")" = 2 ]
 grep -Fq 'monitor_group_identity_unverified_before_kill' "$ROOT/module/service.sh"
 grep -Fq 'stop_monitor_owner()' "$ROOT/module/service.sh"
+grep -Fq 'service_start_aborted reason=monitor_owner_cleanup_unconfirmed' "$ROOT/module/service.sh"
+grep -Fq 'current_lock_stamp" = "$service_start_stamp"' "$ROOT/module/service.sh"
+startup_abort_line="$(grep -nF 'service_start_aborted reason=monitor_owner_cleanup_unconfirmed' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
+startup_trap_line="$(grep -nF 'trap service_cleanup EXIT' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
+[ "$startup_abort_line" -lt "$startup_trap_line" ]
 grep -Fq "IFS=' ' read -r service_pid _ < /proc/self/stat" "$ROOT/module/service.sh"
 ! grep -Fq "$(printf '\044\044')" "$ROOT/module/service.sh"
 ! grep -Fq 'echo $ > "$LOCK/pid"' "$ROOT/module/service.sh"
