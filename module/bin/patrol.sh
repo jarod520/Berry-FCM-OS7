@@ -49,6 +49,15 @@ maintenance_owner_alive() {
     [ "$(proc_start_time "$maintenance_pid")" = "$maintenance_stamp" ] || return 1
     [ "$(proc_state "$maintenance_pid")" != Z ]
 }
+maintenance_child_alive() {
+    maintenance_child_pid=; maintenance_child_stamp=
+    IFS=' ' read -r maintenance_child_pid maintenance_child_stamp < "$MAINTENANCE_LOCK/child" 2>/dev/null || return 1
+    case "$maintenance_child_pid:$maintenance_child_stamp" in *[!0-9:]*|:*|*:) return 1;; esac
+    [ "$maintenance_child_pid" -gt 1 ] && [ "$maintenance_child_stamp" -gt 0 ] &&
+        kill -0 "$maintenance_child_pid" 2>/dev/null || return 1
+    [ "$(proc_start_time "$maintenance_child_pid")" = "$maintenance_child_stamp" ] || return 1
+    [ "$(proc_state "$maintenance_child_pid")" != Z ]
+}
 run_bounded() {
     seconds="$1"; shift
     if [ -x "$TOYBOX_BIN" ] && "$TOYBOX_BIN" --list 2>/dev/null | grep -qx timeout; then
@@ -204,9 +213,9 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     # Allow a newly forked worker to publish its identity first.
                     sleep 1
                 fi
-                if maintenance_owner_alive; then
+                if maintenance_owner_alive || maintenance_child_alive; then
                     maintenance_busy=1
-                    printf '[%s] maintenance_skip pid=%s reason=already_running\n' "$(date '+%F %T')" "$maintenance_pid" >> "$DATA/guard.log"
+                    printf '[%s] maintenance_skip reason=owner_or_child_running\n' "$(date '+%F %T')" >> "$DATA/guard.log"
                 elif [ ! -s "$MAINTENANCE_LOCK/owner" ]; then
                     maintenance_busy=1
                     printf '[%s] maintenance_skip reason=owner_unpublished\n' "$(date '+%F %T')" >> "$DATA/guard.log"
@@ -219,7 +228,19 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                             printf '[%s] maintenance_skip reason=owner_identity_invalid\n' "$(date '+%F %T')" >> "$DATA/guard.log"
                             ;;
                         *)
-                            rm -rf "$MAINTENANCE_LOCK"
+                            if [ -s "$MAINTENANCE_LOCK/child" ]; then
+                                stale_child_pid=; stale_child_stamp=
+                                IFS=' ' read -r stale_child_pid stale_child_stamp < "$MAINTENANCE_LOCK/child" 2>/dev/null || :
+                                case "$stale_child_pid:$stale_child_stamp" in
+                                    *[!0-9:]*|:*|*:)
+                                        maintenance_busy=1
+                                        printf '[%s] maintenance_skip reason=child_identity_invalid\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+                                        ;;
+                                    *) rm -rf "$MAINTENANCE_LOCK" ;;
+                                esac
+                            else
+                                rm -rf "$MAINTENANCE_LOCK"
+                            fi
                             ;;
                     esac
                 fi
