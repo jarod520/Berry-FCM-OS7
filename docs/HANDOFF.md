@@ -915,3 +915,14 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **修正**：只要 GMS 已安装，`fix` 完成包状态修复尝试后就独立发送心跳；stopped 状态未知仍只影响是否执行 unstop，不再控制 MCS 心跳触发。保留包状态修复的安全检查，不因未知状态盲目 unstop。
 - **回归约束**：`tests/ksu-wake-smoke.sh` 增加静态断言，要求自动/手动共享的 fix 路径存在独立 heartbeat 调用，并禁止旧的 `HEARTBEAT_MODE:-manual` changed 门控。
 - **验证边界**：已核对变更前后控制流与测试断言位置；尚未执行完整 smoke、Shell syntax gate 或设备测试。未触发 Actions、编译、构建、打包、合并或发布。
+
+
+## 2026-11-23 dump 与运行决策彻底隔离（APK + KSU）
+
+- **全局规则**：`dumpsys` 不得参与 FCM 连接状态、断联确认、重连触发、退避计时、巡检存活或后台 watchdog 的任何运行决策。dump 仅可用于独立的只读辅助诊断；其超时、失败、权限拒绝、输出未知都不得阻塞或改变主流程。
+- **APK monitor 已整改**：`app/src/main/assets/fcm-monitor.sh` 移除 dump 命令变量、MCS dump parser、dump shape parser、native dump event importer、GMS stopped dump 检查和 UID 查询的 dump 回退。连接状态只由 GMS UID 的内核 Socket 样本决定；权限/UID/ss/所有权证据不足时返回 unknown，不把未知当断联。
+- **APK 恢复路径已整改**：重连不再调用 `is_gms_stopped()`；自动恢复使用内核 Socket 状态和两次新鲜采样确认。旧版本 evidence source 不是 `gms_socket` / `gms_socket_absence` 时，运行时清空旧连接/断联计时、旧重试退避并重新建立内核证据；snapshot 也不再展示旧 dump 派生状态。
+- **KSU package 维护路径已整改**：`module/bin/ctl.sh fix` 不再读取 stopped dump 后决定是否执行 `cmd package unstop`，而是对已安装目标直接提交幂等 unstop 命令；GMS 心跳独立触发，不受 stopped 状态诊断结果影响。KSU `ctl.sh check` 中的 stopped/suspended/hidden/receiver dump 仅用于状态展示，不进入 monitor/patrol/reconnect 决策链。
+- **回归检查**：新增 `tests/apk-no-dump-smoke.sh`，覆盖 APK monitor 不含 dump 调用/旧 parser/旧 fallback，KSU monitor/patrol/service 不含 dump 调用，且 ctl fix 的 unstop/heartbeat 不受 stopped dump 门控。该脚本包含 `sh -n` 检查，但本轮尚未执行脚本。
+- **仍需核验**：APK 的恢复广播目前沿用原有按 UID/重试轮次选择单一触发动作的实现；此前 KSU RC5 四级连续触发升级逻辑没有在本轮移植到 APK。若后续要求 APK 与 KSU 的多级触发完全一致，需要单独完成并加入 APK 行为测试。
+- **验证边界**：本轮仅完成 GitHub 源码修改与静态回读；没有运行新增 smoke、原有 smoke、Shell syntax gate、APK 构建、KSU 编译、设备后台巡检或实机断联测试。没有触发 Actions、构建、打包、合并或发布。
