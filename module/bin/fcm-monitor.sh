@@ -905,7 +905,7 @@ case "$command" in
                 [ "$owner_pid" -gt 1 ] && kill -0 "$owner_pid" 2>/dev/null || return 1
                 [ "$(proc_start_time "$owner_pid")" = "$owner_stamp" ] || return 1
                 tr "\000" " " < "/proc/$owner_pid/cmdline" 2>/dev/null | grep -Fq "fcm-monitor.sh"
-}
+            }
             if ! mkdir "$lock_dir" 2>/dev/null; then
                 owner_pid="$(cat "$lock_dir/pid" 2>/dev/null)"
                 owner_stamp="$(cat "$lock_dir/starttime" 2>/dev/null)"
@@ -914,12 +914,12 @@ case "$command" in
                     echo "后台正在检查 GMS，请稍后重试" >&2
                     exit 13
                 fi
-                stale_lock="$lock_dir.stale.$"
+                stale_lock="$lock_dir.stale.$$"
                 if mv "$lock_dir" "$stale_lock" 2>/dev/null; then rm -rf "$stale_lock"; fi
                 mkdir "$lock_dir" 2>/dev/null || { echo "后台正在检查 GMS，请稍后重试" >&2; exit 13; }
             fi
-            echo $ > "$lock_dir/pid"
-            proc_start_time "$" > "$lock_dir/starttime"
+            echo $$ > "$lock_dir/pid"
+            proc_start_time "$$" > "$lock_dir/starttime"
             trap 'rm -f "$lock_dir/pid" "$lock_dir/starttime"; rmdir "$lock_dir" 2>/dev/null || :' EXIT
             trap 'exit 130' HUP INT TERM
             run_monitor_command "$command"

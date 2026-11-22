@@ -59,7 +59,7 @@ else
     before="$(wc -l < "$TEST_DIR/samples")"
     echo "$1" >> "$TEST_DIR/samples"
     if [ "${TEST_HANG_FIRST:-0}" = 1 ] && [ "$before" = 0 ]; then
-        echo "$" > "$TEST_DIR/hung-pid"
+        echo "$$" > "$TEST_DIR/hung-pid"
         exec /bin/sleep 30
     fi
 fi
