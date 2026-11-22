@@ -596,8 +596,8 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 
 ### 2026-11-22 RC7 后续静态审查：GMS 状态解析与 monitor/service 生命周期
 - **GMS 原生状态解析**：目标 `SERVICE com.google.android.gms/.gcm.GcmService` 区块本身作为当前状态作用域；即使没有前置 `DeviceID:`、`disconnectTime` 等字段，区块内精确的裸 `Not connected` 也不再被误判为 `unknown`。增加了该格式的回归样例。未知状态仍不等于断联，不允许仅凭未知直接重连。
-- **monitor 进程组身份**：`patrol.sh` 对 Toybox、BusyBox、PATH timeout 和 setsid 路径传递隔离候选标记；`fcm-monitor.sh` 只有在运行时核实 monitor 的 PGID 等于 PID 后，才将 owner 标记为隔离组。owner 文件原子记录 PID、starttime、PGID、隔离标志。
-- **service 清理**：`service.sh` 在清理 monitor 时验证 PID/starttime、PGID 和命令行，再对隔离组发送 TERM/KILL，避免只杀 monitor shell 而遗留 dumpsys、广播等后代。兼容旧版两字段 owner：只有 PID、starttime、PGID 仍可验证时才推断隔离组；不能安全验证时不按 PID 猜测组。
+- **monitor 进程组身份**：Toybox timeout 使用其原生独立组；BusyBox/PATH timeout 只有经 setsid 建立私有会话后才传递隔离标记，无隔离能力时明确标记为非隔离。`fcm-monitor.sh` 原子记录五字段：monitor PID/starttime、PGID、隔离标记、PGID leader starttime；PGID 可以等于或不同于 monitor PID。
+- **service 清理**：`service.sh` 在清理 monitor 时核验 PGID leader 的 starttime/PGID/cmdline，并再次核验 monitor PID/starttime/PGID，再对隔离组发送 TERM/KILL。兼容旧版两/四字段 owner 时，只在 monitor 自身就是组 leader 且 PID/starttime/PGID 可验证时推断；不能安全验证时不按未知 PGID 发信号。
 - **启动顺序**：service 从 `/proc/self/stat` 读取自身 PID，先发布 PID/starttime 锁，再清理残留 monitor owner，最后启动 patrol。这样既防止并发 supervisor，也避免旧 monitor 的 flock 阻塞新巡检。新增测试核对锁 PID/starttime 与实际 service 进程一致，并覆盖新格式和旧格式 monitor owner 的进程组清理。
 - **巡检 worker 回收**：patrol 每轮检查已结束的 maintenance worker，并调用 `wait` 回收，避免正常结束的后台 worker 长期残留 zombie PID。
 - **当前验证边界**：静态核对了 KSU smoke 中的源码断言：正向断言均能在源码中找到对应实现；负向断言用于防止双重转义、残留 shell PID 展开和 service PID 写入回归；检查了新增回归用例没有重复主体。容器中分别模拟了 `/proc/self/stat` PID 读取、setsid 进程组身份与组内子进程清理。**完整 `fcm-monitor-smoke.sh`、`ksu-wake-smoke.sh`、所有 Shell 文件的 `sh -n`、目标 Android/KernelSU/GMS 实机测试尚未执行**；上述模拟不能替代 Android 实机验证。
