@@ -514,6 +514,30 @@ run monitor; requests 4
 test "$(sed -n '4p' "$MCS_AM_LOG")" = 'broadcast --user 0 -a com.google.android.intent.action.GTALK_HEARTBEAT -p com.google.android.gms'
 echo 'PASS: staged GMS reconnect fallbacks are ordered and independently rate-limited'
 
+# If Toybox exists but was built without the timeout applet, use PATH timeout.
+export BERRY_FCM_DATA="$TMP/toybox-no-timeout-data"
+mkdir -p "$BERRY_FCM_DATA"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+cat > "$TMP/bin/toybox-no-timeout" <<'MOCK'
+#!/bin/sh
+if [ "$1" = --list ]; then
+    echo id
+    exit 0
+fi
+exit 127
+MOCK
+chmod +x "$TMP/bin/toybox-no-timeout"
+export BERRY_TOYBOX_BIN="$TMP/bin/toybox-no-timeout"
+export MCS_SS_MODE=mtalk443 MCS_DNS_SUCCESS=1 MCS_DNS_LOG="$TMP/toybox-no-timeout-dns.log"
+: > "$MCS_DNS_LOG"
+settime 45000
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_transport=tcp443
+[ "$(wc -l < "$MCS_DNS_LOG" | tr -d ' ')" = 2 ]
+unset BERRY_TOYBOX_BIN
+echo 'PASS: DNS lookup falls back to PATH timeout when Toybox lacks timeout'
+
 # Failed DNS lookups are cached too; repeated unknown samples must not spend
 # up to six seconds resolving mtalk on every 20-second patrol cycle.
 export BERRY_FCM_DATA="$TMP/dns-failure-data"
