@@ -132,7 +132,8 @@ grep -Fq 'GTALK_HEARTBEAT' "$TMP/am.log" || fail "fourth recovery stage missing"
 # A later kernel socket observation, not broadcast exit status, confirms recovery.
 echo connected > "$TMP/mode"
 settime 10257
-j="$(run monitor)"
+run monitor >/dev/null
+j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_last_result=restored
 requests 4
