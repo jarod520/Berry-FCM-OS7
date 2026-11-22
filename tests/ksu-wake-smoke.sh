@@ -205,3 +205,27 @@ grep -q 'fcm_check_end rc=0 .*state=unknown' "$TMP/data/guard.log"
 ! grep -q 'patrol_watchdog_stale reason=monitor_sample' "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: unknown GMS state does not stop successful patrol sampling'
+
+# A dead service lock must not be reclaimed while its recorded patrol worker
+# is still alive; terminate that verified orphan before starting a new service.
+cat > "$TMP/orphan-patrol.sh" <<'MOCK'
+#!/bin/sh
+trap 'exit 0' TERM
+while :; do /bin/sleep 0.1; done
+MOCK
+chmod +x "$TMP/orphan-patrol.sh"
+"$TMP/orphan-patrol.sh" &
+orphan_pid=$!
+orphan_stamp="$(tr -d '\\n' < "/proc/$orphan_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
+mkdir -p "$TMP/data/service.lock"
+printf '999999\\n1\\n' > "$TMP/data/service.lock/pid"
+printf '%s %s\\n' "$orphan_pid" "$orphan_stamp" > "$TMP/data/service.lock/patrol"
+echo 1 > "$TMP/data/enabled"
+touch "$TMP/module/module.prop"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+timeout 8 sh "$TMP/module/service.sh"
+! kill -0 "$orphan_pid" 2>/dev/null
+grep -q 'stale_patrol_stopped pid=' "$TMP/data/guard.log"
+test ! -d "$TMP/data/service.lock"
+echo 'PASS: stale service lock cannot spawn a duplicate patrol'
