@@ -207,8 +207,21 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                 if maintenance_owner_alive; then
                     maintenance_busy=1
                     printf '[%s] maintenance_skip pid=%s reason=already_running\n' "$(date '+%F %T')" "$maintenance_pid" >> "$DATA/guard.log"
+                elif [ ! -s "$MAINTENANCE_LOCK/owner" ]; then
+                    maintenance_busy=1
+                    printf '[%s] maintenance_skip reason=owner_unpublished\n' "$(date '+%F %T')" >> "$DATA/guard.log"
                 else
-                    rm -rf "$MAINTENANCE_LOCK"
+                    stale_owner_pid=; stale_owner_stamp=
+                    IFS=' ' read -r stale_owner_pid stale_owner_stamp < "$MAINTENANCE_LOCK/owner" 2>/dev/null || :
+                    case "$stale_owner_pid:$stale_owner_stamp" in
+                        *[!0-9:]*|:*|*:)
+                            maintenance_busy=1
+                            printf '[%s] maintenance_skip reason=owner_identity_invalid\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+                            ;;
+                        *)
+                            rm -rf "$MAINTENANCE_LOCK"
+                            ;;
+                    esac
                 fi
             fi
             if [ "$maintenance_busy" = 0 ] && mkdir "$MAINTENANCE_LOCK" 2>/dev/null; then
