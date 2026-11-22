@@ -62,6 +62,7 @@ echo 1 > "$TMP/data/enabled"
 export PATH="$TMP/bin:/usr/bin:/bin"
 export BERRY_FCM_TEST_MODE=1 BERRY_FCM_DATA="$TMP/data"
 export BERRY_UPTIME_FILE="$TMP/uptime" BERRY_BOOT_ID_FILE="$TMP/bootid"
+export BERRY_PROC_NET_DIR="$TMP/proc-unavailable"
 export MCS_FIXTURE="$TMP/dump" MCS_AM_LOG="$TMP/am.log" MCS_CLOCK="$TMP/epoch"
 settime() { printf '%s\n' "$1" > "$TMP/uptime"; printf '%s\n' "$((1700000000+$1))" > "$MCS_CLOCK"; }
 settime 10000
@@ -250,6 +251,20 @@ grep -q '|tcp_absence_confirmed|' "$BERRY_FCM_DATA/mcs-monitor-events.log"
 grep -q '|reconnect_requested|auto UID=0 GCM_RECONNECT' "$BERRY_FCM_DATA/mcs-monitor-events.log"
 unset MCS_SS_MODE
 echo 'PASS: recent native down + root TCP absence recovers through unreadable dumps'
+
+# A single unverified GMS-owned 443 socket in tcp6 must outrank an empty tcp
+# table. Otherwise the empty IPv4 table falsely reports total MCS absence.
+mkdir -p "$TMP/proc-mixed"
+printf '%s\n' 'sl local_address rem_address st tx_queue:rx_queue tr:tm->when retrnsmt uid timeout inode' > "$TMP/proc-mixed/tcp"
+printf '%s\n' 'sl local_address rem_address st tx_queue:rx_queue tr:tm->when retrnsmt uid timeout inode' \
+  '0: 00000000000000000000000000000000:C001 8EFA0000000000000000000000000000:01BB 01 00000000:00000000 00:00000000 00000000 10200 0 12345' > "$TMP/proc-mixed/tcp6"
+export BERRY_PROC_NET_DIR="$TMP/proc-mixed"
+export MCS_SS_MODE=unknown
+settime 32000
+j="$(run status)"
+assert_json "$j" fcm_state=unknown
+assert_json "$j" fcm_tcp_hint=unknown
+echo 'PASS: unverified IPv6 443 evidence is not downgraded to IPv4 absence'
 
 # Unknown native state plus continuous GMS UID socket absence must age into
 # a confirmed outage even when no earlier native disconnected sample exists.
