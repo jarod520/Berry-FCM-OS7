@@ -54,7 +54,10 @@ run_bounded() {
         fi
         bounded_pid=$!
         (
-            sleep "$seconds"
+            sleep "$seconds" &
+            watchdog_sleep_pid=$!
+            trap 'kill "$watchdog_sleep_pid" 2>/dev/null || :' EXIT HUP INT TERM
+            wait "$watchdog_sleep_pid" || exit 0
             if kill -0 "$bounded_pid" 2>/dev/null; then
                 : > "$marker"
                 if [ -n "$group_tool" ]; then
