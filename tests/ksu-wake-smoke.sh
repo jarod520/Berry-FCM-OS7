@@ -228,9 +228,7 @@ cat > "$TMP/module/bin/fcm-monitor.sh" <<'MOCK'
 if [ "$1" = snapshot ]; then
     sample_epoch="$(cat "$TEST_DIR/sample-epoch" 2>/dev/null || echo 0)"
     if [ "${TEST_MONITOR_STALE:-0}" = 1 ]; then
-        echo "{\\"fcm_state\\":\\"stale\\",\\"fcm_sample_time\\":$sample_epoch,\\"fcm_recovery_decision\\":\\"sample_unavailable\\"}"
-    elif [ "${TEST_MONITOR_UNKNOWN:-0}" = 1 ]; then
-    if [ "${TEST_MONITOR_UNKNOWN:-0}" = 1 ]; then
+        echo "{\"fcm_state\":\"stale\",\"fcm_sample_time\":$sample_epoch,\"fcm_recovery_decision\":\"sample_unavailable\"}"
     elif [ "${TEST_MONITOR_UNKNOWN:-0}" = 1 ]; then
         echo "{\"fcm_state\":\"unknown\",\"fcm_sample_time\":$sample_epoch,\"fcm_recovery_decision\":\"sample_unavailable\"}"
     else
