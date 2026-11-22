@@ -94,6 +94,26 @@ monitor_group_tool() {
         printf '%s\n' "$KSU_BUSYBOX"
     fi
 }
+monitor_group_identity_alive() {
+    # Before each group signal, revalidate at least one recorded identity still anchors this PGID.
+    if kill -0 "$monitor_pgid" 2>/dev/null &&
+       [ "$(proc_start_time "$monitor_pgid")" = "$monitor_group_stamp" ] &&
+       [ "$(proc_group_id "$monitor_pgid")" = "$monitor_pgid" ]; then
+        if [ "$(proc_state "$monitor_pgid" 2>/dev/null)" = Z ] ||
+           tr -d "\000" < "/proc/$monitor_pgid/cmdline" 2>/dev/null | grep -Eq "timeout|fcm-monitor\\.sh"; then
+            return 0
+        fi
+    fi
+    if kill -0 "$monitor_pid" 2>/dev/null &&
+       [ "$(proc_start_time "$monitor_pid")" = "$monitor_stamp" ] &&
+       [ "$(proc_group_id "$monitor_pid")" = "$monitor_pgid" ]; then
+        if [ "$(proc_state "$monitor_pid" 2>/dev/null)" = Z ] ||
+           tr -d "\000" < "/proc/$monitor_pid/cmdline" 2>/dev/null | grep -Fq "fcm-monitor.sh"; then
+            return 0
+        fi
+    fi
+    return 1
+}
 stop_monitor_owner() {
     [ -s "$DATA/mcs-monitor.lock.owner" ] || { rm -f "$DATA/mcs-monitor.lock.owner"; return 0; }
     monitor_pid=; monitor_stamp=; monitor_pgid=; monitor_isolated=; monitor_group_stamp=
@@ -157,12 +177,20 @@ stop_monitor_owner() {
                 fi
             fi
             if process_group_alive "$monitor_pgid"; then
+                monitor_group_identity_alive || {
+                    printf '[%s] monitor_group_identity_unverified_before_term pgid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pgid" >> "$DATA/guard.log"
+                    return 1
+                }
                 "$monitor_group_tool" kill -TERM "-$monitor_pgid" 2>/dev/null || :
                 n=0
                 while process_group_alive "$monitor_pgid" && [ "$n" -lt 3 ]; do
                     sleep 1; n=$((n + 1))
                 done
                 if process_group_alive "$monitor_pgid"; then
+                    monitor_group_identity_alive || {
+                        printf '[%s] monitor_group_identity_unverified_before_kill pgid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pgid" >> "$DATA/guard.log"
+                        return 1
+                    }
                     "$monitor_group_tool" kill -KILL "-$monitor_pgid" 2>/dev/null || :
                     n=0
                     while process_group_alive "$monitor_pgid" && [ "$n" -lt 3 ]; do
