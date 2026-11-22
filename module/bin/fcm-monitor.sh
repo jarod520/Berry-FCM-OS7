@@ -579,7 +579,7 @@ write_decision_evidence() {
         record_event recovery_decision_not_persisted "证据与已提交样本代次不一致；保留原 evidence，拒绝写入未提交采样"
         return 0
     }
-    decision_tmp="$EVIDENCE.decision.$"
+    decision_tmp="$EVIDENCE.decision.$$"
     if printf '%s|%s|%s|%s|%s|%s|%s\n' "$committed_source" "$committed_duration" "$committed_close" "$committed_tcp" "$committed_reason" "$decision" "$committed_evidence_mono" > "$decision_tmp" &&
        mv -f "$decision_tmp" "$EVIDENCE"; then
         return 0
