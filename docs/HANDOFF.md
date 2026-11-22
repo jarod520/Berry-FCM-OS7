@@ -769,3 +769,10 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - sample heartbeat 新增 rc=12（observe 前失败）回归场景；fixture 只在模拟本轮成功 observe 后更新 sample epoch。rc=10（采样已完成但后续返回非零）和 state=unknown（有效未知样本）仍应刷新 heartbeat。
 - sample heartbeat 判定片段与 bounded watchdog 身份复核片段均通过宿主 sh -n 局部语法解析；未执行全仓语法 gate、完整 KSU/FCM smoke 或 Android/KernelSU 实机测试。
 - 未触发 GitHub Actions、构建、编译、打包、合并或发布。
+
+### 2026-11-22 unknown → connected 不得伪装成已确认恢复
+- **复审发现**：当上一条有效 down 样本之后出现一次 unknown，监控会保留 outage_hint_mono 作为后续判断提示。若下一次观察到 connected，旧逻辑只要该提示仍大于 0，就会写入 connection_restored、更新 last_restore，并可能把上次重连结果改为 restored。未知状态期间没有连续证据证明连接何时恢复，因此不能把 unknown → connected 当作已确认的 down → up 转换。
+- **修正**：恢复事件、恢复时间和 last_result=restored 只允许由上一状态明确为 connecting 或 disconnected 的转换更新。上一状态为 unknown 时，即使保留了旧 down hint，也只记录 connection_observed_after_unknown，不更新恢复时间或重连结果。
+- **回归夹具**：新增 disconnected → unknown → connected 序列，要求最终状态 connected、fcm_last_restore=0、事件包含 connection_observed_after_unknown 且不包含 connection_restored。原有明确 disconnected → connected 恢复场景保留。
+- **成熟方案对照**：检查了 OpenWrt mwan3 的 mwan3track 状态转换：它将 online/offline/connecting/disconnecting 分开，并只在先前状态为 online 或 disconnecting 时触发 disconnected 边沿事件。BerryFCM 不直接移植 mwan3 的探测方式（GMS MCS 证据不同），只采用“unknown 不等同 offline、事件依赖已确认状态边沿”的状态机原则。参考：https://github.com/kenzok8/small-package/blob/4272b2618a1171780ef4253871695cdd6f85da25/mwan3/files/usr/sbin/mwan3track。
+- **验证边界**：已完成源码/测试夹具结构复核；完整 fcm-monitor-smoke.sh、ksu-wake-smoke.sh、全仓 Shell 语法 gate 和 Android/KernelSU 实机验证尚未执行。未触发 Actions、构建、编译、打包或发布。
