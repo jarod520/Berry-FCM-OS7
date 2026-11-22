@@ -120,22 +120,22 @@ requests 1
 grep -Fq 'GCM_RECONNECT' "$TMP/am.log" || fail "first recovery stage missing"
 
 # If the first request does not restore transport, continue through every next action.
-settime 10106
+settime 10091
 run monitor >/dev/null
 requests 2
 grep -Fq 'MCS_HEARTBEAT' "$TMP/am.log" || fail "second recovery stage missing"
-settime 10166
+settime 10136
 run monitor >/dev/null
 requests 3
 grep -Fq 'ACTION_HEARTBEAT_NOW' "$TMP/am.log" || fail "third recovery stage missing"
-settime 10256
+settime 10196
 run monitor >/dev/null
 requests 4
 grep -Fq 'GTALK_HEARTBEAT' "$TMP/am.log" || fail "fourth recovery stage missing"
 
 # A later kernel socket observation, not broadcast exit status, confirms recovery.
 echo connected > "$TMP/mode"
-settime 10257
+settime 10197
 run monitor >/dev/null
 j="$(run status)"
 assert_json "$j" fcm_state=connected
@@ -144,15 +144,15 @@ requests 4
 
 # TCP_INFO can identify an established-but-blackholed MCS socket.
 echo stalled > "$TMP/mode"
-settime 10258
+settime 10198
 j="$(run status)"
 assert_json "$j" fcm_state=disconnected
 assert_json "$j" fcm_tcp_hint=stalled
-settime 10273
+settime 10213
 run monitor >/dev/null
 requests 5
 echo connected > "$TMP/mode"
-settime 10274
+settime 10214
 run monitor >/dev/null
 j="$(run status)"
 assert_json "$j" fcm_state=connected
@@ -160,20 +160,20 @@ requests 5
 
 # Continuous, successfully-readable absence is timed; one absent sample is not enough.
 echo absent > "$TMP/mode"
-settime 10300
+settime 10240
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
 requests 5
-settime 10345
+settime 10285
 j="$(run status)"
 assert_json "$j" fcm_state=disconnected
-settime 10360
+settime 10300
 run monitor >/dev/null
 requests 6
 
 # An unreadable ownership/source sample is unavailable, not falsely disconnected.
 echo unknown > "$TMP/mode"
-settime 10361
+settime 10301
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
 requests 6
@@ -189,7 +189,7 @@ cat > "$TMP/proc/tcp6" <<'PROC'
 PROC
 export BERRY_PROC_NET_DIR="$TMP/proc"
 echo proc_connected > "$TMP/mode"
-settime 10362
+settime 10302
 j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=gms_socket
