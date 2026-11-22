@@ -43,8 +43,8 @@ grep -Fq 'while patrol_identity_alive' "$ROOT/module/service.sh"
 grep -Fq 'rm -f "$DATA/patrol.heartbeat"' "$ROOT/module/service.sh"
 grep -Fq 'elif [ "$hb" -eq 0 ]' "$ROOT/module/service.sh"
 grep -Fq 'patrol.sample.heartbeat' "$ROOT/module/bin/patrol.sh"
-grep -Fq '# This heartbeat means the bounded monitor attempt returned, not that GMS was readable.' "$ROOT/module/bin/patrol.sh"
-! grep -Fq 'if [ "$monitor_rc" -eq 0 ]; then' "$ROOT/module/bin/patrol.sh"
+grep -Fq '# Refresh only after a completed non-contention, non-timeout monitor attempt.' "$ROOT/module/bin/patrol.sh"
+grep -Fq '13|124) :;;' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'sample_stale=1' "$ROOT/module/service.sh"
 grep -Fq 'reason=monitor_sample' "$ROOT/module/service.sh"
 grep -Fq 'BERRY_FCM_ISOLATED_GROUP=1 "$TOYBOX_BIN" timeout' "$ROOT/module/bin/patrol.sh"
@@ -353,13 +353,26 @@ echo 1 > "$TMP/data/enabled"
 echo passive > "$TMP/data/wake-mode"
 : > "$TMP/samples"
 : > "$TMP/data/guard.log"
-export TEST_MONITOR_RC=13
+export TEST_MONITOR_RC=10
 timeout 8 sh "$TMP/module/service.sh"
 unset TEST_MONITOR_RC
 test -s "$TMP/data/patrol.sample.heartbeat"
+grep -q "fcm_check_end rc=10" "$TMP/data/guard.log"
+test ! -d "$TMP/data/service.lock"
+echo "PASS: completed non-contention monitor errors refresh patrol heartbeat"
+
+touch "$TMP/module/module.prop"
+echo 1 > "$TMP/data/enabled"
+echo passive > "$TMP/data/wake-mode"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+export TEST_MONITOR_RC=13
+timeout 8 sh "$TMP/module/service.sh"
+unset TEST_MONITOR_RC
+test ! -s "$TMP/data/patrol.sample.heartbeat"
 grep -q "fcm_check_end rc=13" "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
-echo "PASS: failed but completed monitor attempts refresh patrol sampling heartbeat"
+echo "PASS: monitor lock contention does not mask stale-sample watchdog"
 
 # A dead service lock must not be reclaimed while its recorded patrol worker
 # is still alive; terminate that verified orphan before starting a new service.
