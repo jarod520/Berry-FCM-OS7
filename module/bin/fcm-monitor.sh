@@ -126,7 +126,7 @@ resolve_host() {
 
 resolve_mtalk() {
     now="$(now_epoch)"; old="$(cat "$DNS_TIME" 2>/dev/null)"; old="$(num "$old")"
-    [ -s "$DNS_IPS" ] && [ "$old" -gt 0 ] && [ "$now" -ge "$old" ] && [ $((now-old)) -lt 600 ] && return 0
+    [ "$old" -gt 0 ] && [ "$now" -ge "$old" ] && [ $((now-old)) -lt 600 ] && return 0
     tmp="$DNS_IPS.$$"; : > "$tmp"
     for host in mtalk.google.com alt1-mtalk.google.com; do
         if [ -x /system/bin/toybox ]; then
