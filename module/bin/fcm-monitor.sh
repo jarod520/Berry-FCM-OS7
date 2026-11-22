@@ -292,7 +292,7 @@ scan_sockets() {
     [ -n "$ips" ] || ip_count=0
 
     # ss -i exposes TCP_INFO counters where supported. A socket is considered
-    # stalled only when it has unacked data and at least three retransmissions.
+    # stalled when it has unacked data with at least three retransmissions, or no received TCP data for 30 minutes.
     printf '%s\n' "$raw" | awk -v u="$uid" -v ips="|$ips|" -v ip_count="$ip_count" '
       function normip(v){sub(/:[0-9]+$/, "", v);gsub(/^\[|\]$/, "", v);sub(/^::ffff:/, "", v);return tolower(v)}
       function known(v){return index(ips,"|" normip(v) "|")>0}
@@ -308,7 +308,7 @@ scan_sockets() {
         established=(socket_state=="ESTAB" || socket_state=="ESTABLISHED")
         relevant=(port==5228 || port==5229 || port==5230 || (port==443 && known(peer)))
         if (established && relevant) {
-          stalled=(unacked>0 && retrans>=3)
+          stalled=((unacked>0 && retrans>=3) || last_recv_ms>=1800000)
           if (stalled) {
             if (rank<2) {rank=2;kind="stalled";transport="tcp" port;remote=ip ":" port;bestkey=key}
           } else if (rank<4) {
@@ -328,11 +328,12 @@ scan_sockets() {
         ip=normip(peer); local=$4
         inode=""; if(match($0,/ino:[0-9]+/)) inode=substr($0,RSTART+4,RLENGTH-4)
         key=local ">" peer "#" inode
-        unacked=field_number("unacked",$0); retrans=field_number("retrans",$0)
+        unacked=field_number("unacked",$0); retrans=field_number("retrans",$0); last_recv_ms=field_number("lastrcv",$0)
       }
       current && $1!~/^(ESTAB|ESTABLISHED|SYN-SENT|SYN_SENT)$/ {
         value=field_number("unacked",$0); if (value>=0) unacked=value
         value=field_number("retrans",$0); if (value>=0) retrans=value
+        value=field_number("lastrcv",$0); if (value>=0) last_recv_ms=value
       }
       END {
         emit()
