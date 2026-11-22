@@ -226,6 +226,7 @@ touch "$TMP/module/module.prop"
 : > "$TMP/samples"
 : > "$TMP/data/guard.log"
 timeout 8 sh "$TMP/module/service.sh"
+wait "$orphan_pid" 2>/dev/null || :
 ! kill -0 "$orphan_pid" 2>/dev/null
 grep -q 'stale_patrol_stopped pid=' "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
