@@ -18,6 +18,10 @@ proc_start_time() {
     [ -r "/proc/$1/stat" ] || return 1
     tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $20}'
 }
+proc_group_id() {
+    [ -r "/proc/$1/stat" ] || return 1
+    tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $3}'
+}
 proc_state() {
     [ -r "/proc/$1/stat" ] || return 1
     tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $1}'
@@ -253,17 +257,31 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     printf '%s %s\n' "$maintenance_owner_pid" "$maintenance_owner_stamp" > "$MAINTENANCE_LOCK/owner.tmp.$maintenance_owner_pid" &&
                         mv -f "$MAINTENANCE_LOCK/owner.tmp.$maintenance_owner_pid" "$MAINTENANCE_LOCK/owner" || exit 1
                     maintenance_child_pid=
+                    maintenance_child_stamp=
+                    maintenance_child_pgid=
+                    maintenance_group_tool=
+                    maintenance_watchdog_pid=
                     maintenance_stop_child() {
+                        if [ -n "$maintenance_child_pgid" ] && [ -n "$maintenance_group_tool" ]; then
+                            "$maintenance_group_tool" kill -TERM "-$maintenance_child_pgid" 2>/dev/null || :
+                            sleep 1
+                            "$maintenance_group_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
+                        fi
+                        [ -z "$maintenance_watchdog_pid" ] || {
+                            kill "$maintenance_watchdog_pid" 2>/dev/null || :
+                            wait "$maintenance_watchdog_pid" 2>/dev/null || :
+                            maintenance_watchdog_pid=
+                        }
                         [ -z "$maintenance_child_pid" ] || {
-                            child_file_pid=; child_file_stamp=
-                            IFS=' ' read -r child_file_pid child_file_stamp < "$MAINTENANCE_LOCK/child" 2>/dev/null || :
-                            kill -TERM "$maintenance_child_pid" 2>/dev/null || :
                             wait "$maintenance_child_pid" 2>/dev/null || :
+                            child_file_pid=; child_file_stamp=; child_file_pgid=; child_file_tool=
+                            IFS=' ' read -r child_file_pid child_file_stamp child_file_pgid child_file_tool < "$MAINTENANCE_LOCK/child" 2>/dev/null || :
                             if [ "$child_file_pid" = "$maintenance_child_pid" ] &&
-                               [ "$child_file_stamp" = "$maintenance_child_stamp" ]; then
+                               [ "$child_file_stamp" = "$maintenance_child_stamp" ] &&
+                               [ "$child_file_pgid" = "$maintenance_child_pgid" ]; then
                                 rm -f "$MAINTENANCE_LOCK/child"
                             fi
-                            maintenance_child_pid=; maintenance_child_stamp=
+                            maintenance_child_pid=; maintenance_child_stamp=; maintenance_child_pgid=
                         }
                     }
                     maintenance_cleanup() {
@@ -281,36 +299,57 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     case "$fix_started_epoch" in ''|*[!0-9]*) fix_started_epoch=0;; esac
                     printf '[%s] maintenance_start pid=%s uptime=%s operation=guard_fix\n' \
                         "$(date '+%F %T')" "$service_pid" "$now" >> "$DATA/guard.log"
-                    (
-                        HEARTBEAT_MODE=auto
-                        export HEARTBEAT_MODE
-                        if [ -x "$TOYBOX_BIN" ] &&
-                           "$TOYBOX_BIN" --list 2>/dev/null | grep -qx timeout; then
-                            exec "$TOYBOX_BIN" timeout -k "$MONITOR_KILL_GRACE" 45 sh "$MODDIR/bin/ctl.sh" fix
-                        elif [ -x "$KSU_BUSYBOX" ] &&
-                             "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx timeout; then
-                            exec "$KSU_BUSYBOX" timeout -k "$MONITOR_KILL_GRACE" 45 sh "$MODDIR/bin/ctl.sh" fix
-                        elif command -v timeout >/dev/null 2>&1; then
-                            exec timeout -k "$MONITOR_KILL_GRACE" 45 sh "$MODDIR/bin/ctl.sh" fix
-                        fi
-                        echo 'maintenance_skipped reason=no_timeout_applet'
+                    HEARTBEAT_MODE=auto
+                    export HEARTBEAT_MODE
+                    if [ -x "$TOYBOX_BIN" ] &&
+                       "$TOYBOX_BIN" --list 2>/dev/null | grep -qx setsid &&
+                       "$TOYBOX_BIN" --list 2>/dev/null | grep -qx kill; then
+                        maintenance_group_tool="$TOYBOX_BIN"
+                        "$TOYBOX_BIN" setsid sh "$MODDIR/bin/ctl.sh" fix >> "$DATA/guard.log" 2>&1 &
+                    elif [ -x "$KSU_BUSYBOX" ] &&
+                         "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx setsid &&
+                         "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx kill; then
+                        maintenance_group_tool="$KSU_BUSYBOX"
+                        "$KSU_BUSYBOX" setsid sh "$MODDIR/bin/ctl.sh" fix >> "$DATA/guard.log" 2>&1 &
+                    else
+                        echo 'maintenance_skipped reason=no_setsid_or_kill_applet' >> "$DATA/guard.log"
                         exit 125
-                    ) >> "$DATA/guard.log" 2>&1 &
+                    fi
                     maintenance_child_pid=$!
                     maintenance_child_stamp="$(proc_start_time "$maintenance_child_pid")"
-                    if [ -n "$maintenance_child_stamp" ]; then
-                        printf '%s %s\n' "$maintenance_child_pid" "$maintenance_child_stamp" > "$MAINTENANCE_LOCK/child.tmp.$maintenance_owner_pid" &&
-                            mv -f "$MAINTENANCE_LOCK/child.tmp.$maintenance_owner_pid" "$MAINTENANCE_LOCK/child"
+                    maintenance_child_pgid="$(proc_group_id "$maintenance_child_pid")"
+                    if [ -z "$maintenance_child_stamp" ] ||
+                       [ "$maintenance_child_pgid" != "$maintenance_child_pid" ]; then
+                        kill -TERM "$maintenance_child_pid" 2>/dev/null || :
+                        wait "$maintenance_child_pid" 2>/dev/null || :
+                        echo 'maintenance_skipped reason=setsid_group_unverified' >> "$DATA/guard.log"
+                        exit 125
                     fi
+                    printf '%s %s %s %s\n' "$maintenance_child_pid" "$maintenance_child_stamp" "$maintenance_child_pgid" "$maintenance_group_tool" > "$MAINTENANCE_LOCK/child.tmp.$maintenance_owner_pid" &&
+                        mv -f "$MAINTENANCE_LOCK/child.tmp.$maintenance_owner_pid" "$MAINTENANCE_LOCK/child"
+                    (
+                        sleep 45
+                        if [ "$(proc_start_time "$maintenance_child_pid")" = "$maintenance_child_stamp" ] &&
+                           [ "$(proc_group_id "$maintenance_child_pid")" = "$maintenance_child_pgid" ]; then
+                            "$maintenance_group_tool" kill -TERM "-$maintenance_child_pgid" 2>/dev/null || :
+                            sleep "$MONITOR_KILL_GRACE"
+                            "$maintenance_group_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
+                        fi
+                    ) >/dev/null 2>&1 &
+                    maintenance_watchdog_pid=$!
                     wait "$maintenance_child_pid"
                     fix_rc=$?
-                    child_file_pid=; child_file_stamp=
-                    IFS=' ' read -r child_file_pid child_file_stamp < "$MAINTENANCE_LOCK/child" 2>/dev/null || :
+                    kill "$maintenance_watchdog_pid" 2>/dev/null || :
+                    wait "$maintenance_watchdog_pid" 2>/dev/null || :
+                    maintenance_watchdog_pid=
+                    child_file_pid=; child_file_stamp=; child_file_pgid=; child_file_tool=
+                    IFS=' ' read -r child_file_pid child_file_stamp child_file_pgid child_file_tool < "$MAINTENANCE_LOCK/child" 2>/dev/null || :
                     if [ "$child_file_pid" = "$maintenance_child_pid" ] &&
-                       [ "$child_file_stamp" = "$maintenance_child_stamp" ]; then
+                       [ "$child_file_stamp" = "$maintenance_child_stamp" ] &&
+                       [ "$child_file_pgid" = "$maintenance_child_pgid" ]; then
                         rm -f "$MAINTENANCE_LOCK/child"
                     fi
-                    maintenance_child_pid=; maintenance_child_stamp=
+                    maintenance_child_pid=; maintenance_child_stamp=; maintenance_child_pgid=
                     fix_finished_epoch="$(date +%s 2>/dev/null)"
                     case "$fix_finished_epoch" in ''|*[!0-9]*) fix_finished_epoch=0;; esac
                     fix_elapsed=unknown
