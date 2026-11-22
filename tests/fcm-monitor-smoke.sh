@@ -545,6 +545,34 @@ assert_json "$j" fcm_transport=tcp443
 unset BERRY_TOYBOX_BIN
 echo 'PASS: DNS lookup falls back to PATH timeout when Toybox lacks timeout'
 
+# BusyBox timeout has no --foreground option and does not create a process group.
+# Detect its documented help text and keep the probe in the monitor's group.
+export BERRY_TOYBOX_BIN="$TMP/bin/toybox-no-timeout"
+export BERRY_FCM_DATA="$TMP/busybox-path-timeout-data"
+mkdir -p "$BERRY_FCM_DATA"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+cat > "$TMP/bin/timeout" <<'MOCK'
+#!/bin/sh
+if [ "$1" = --help ]; then
+    echo 'Run PROG. Send SIG to it if it is not gone in SECS seconds.'
+    exit 1
+fi
+[ "$1" = 3 ] || exit 2
+shift
+exec "$@"
+MOCK
+chmod +x "$TMP/bin/timeout"
+export MCS_DNS_LOG="$TMP/busybox-path-timeout-dns.log"
+: > "$MCS_DNS_LOG"
+settime 45001
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_transport=tcp443
+[ "$(wc -l < "$MCS_DNS_LOG" | tr -d ' ')" = 2 ]
+rm -f "$TMP/bin/timeout"
+unset BERRY_TOYBOX_BIN
+echo 'PASS: BusyBox PATH timeout is recognized without creating a nested process group'
+
 # Failed DNS lookups are cached too; repeated unknown samples must not spend
 # up to six seconds resolving mtalk on every 20-second patrol cycle.
 export BERRY_FCM_DATA="$TMP/dns-failure-data"
