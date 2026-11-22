@@ -115,6 +115,8 @@ assert_json "$j" fcm_native_reason=not_used
 requests 0
 
 # A persistent SYN-SENT connection must not remain "unknown" forever.
+# One failed native trigger must immediately escalate through the remaining
+# triggers in the same confirmed-outage recovery sequence.
 echo connecting > "$TMP/mode"
 settime 10001
 j="$(run status)"
@@ -123,28 +125,30 @@ settime 10061
 export MCS_AM_FAIL_ACTION=GCM_RECONNECT
 run monitor >/dev/null
 unset MCS_AM_FAIL_ACTION
-requests 1
-j="$(run status)"
-assert_json "$j" fcm_last_result=failed
+requests 4
 grep -Fq 'GCM_RECONNECT' "$TMP/am.log" || fail "first recovery stage missing"
-
-# If the first request does not restore transport, continue through every next action.
-settime 10091
-run monitor >/dev/null
-requests 2
-grep -Fq 'MCS_HEARTBEAT' "$TMP/am.log" || fail "second recovery stage missing"
-settime 10136
-run monitor >/dev/null
-requests 3
+grep -Fq 'MCS_HEARTBEAT' "$TMP/am.log" || fail "second recovery stage missing after first failure"
 grep -Fq 'ACTION_HEARTBEAT_NOW' "$TMP/am.log" || fail "third recovery stage missing"
-settime 10196
+grep -Fq 'GTALK_HEARTBEAT' "$TMP/am.log" || fail "fourth recovery stage missing"
+line_gcm="$(grep -nF 'GCM_RECONNECT' "$TMP/am.log" | head -n 1 | cut -d: -f1)"
+line_mcs="$(grep -nF 'MCS_HEARTBEAT' "$TMP/am.log" | head -n 1 | cut -d: -f1)"
+line_action="$(grep -nF 'ACTION_HEARTBEAT_NOW' "$TMP/am.log" | head -n 1 | cut -d: -f1)"
+line_gtalk="$(grep -nF 'GTALK_HEARTBEAT' "$TMP/am.log" | head -n 1 | cut -d: -f1)"
+[ "$line_gcm" -lt "$line_mcs" ] && [ "$line_mcs" -lt "$line_action" ] && [ "$line_action" -lt "$line_gtalk" ] ||
+    fail "native recovery triggers were not issued in escalation order"
+j="$(run status)"
+assert_json "$j" fcm_last_result=requested
+
+# A second patrol inside the backoff window must not repeat the whole sequence.
+settime 10062
 run monitor >/dev/null
 requests 4
-grep -Fq 'GTALK_HEARTBEAT' "$TMP/am.log" || fail "fourth recovery stage missing"
+j="$(sh "$MON" snapshot)"
+assert_json "$j" fcm_recovery_decision=cooldown
 
 # A later kernel socket observation, not broadcast exit status, confirms recovery.
 echo connected > "$TMP/mode"
-settime 10197
+settime 10063
 run monitor >/dev/null
 j="$(run status)"
 assert_json "$j" fcm_state=connected
@@ -222,4 +226,4 @@ assert_json "$j" fcm_tcp_hint=established
 requests 7
 
 [ ! -s "$TMP/dumpsys.log" ] || fail "dumpsys was invoked by the monitor"
-echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO retransmission and 30-minute receive-idle recovery, four-stage recovery, and dump independence"
+echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO retransmission and 30-minute receive-idle recovery, same-cycle four-trigger escalation, and dump independence"
