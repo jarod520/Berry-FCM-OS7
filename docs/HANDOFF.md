@@ -936,3 +936,13 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **静态回归**：`tests/apk-no-dump-smoke.sh` 另检查 APK monitor 不含 dump parser/命令、APK Guard repair 分支不含 dump、KSU monitor/patrol/service 不含 dump、KSU ctl fix 不受 stopped dump 门控；脚本中包含 `sh -n`。
 - **范围说明**：保留的 dump 只读诊断点仅包括 APK Guard 非 repair 状态展示、KSU `ctl.sh check` 的 stopped/suspended/hidden/Receiver 展示；这些结果不控制 unstop、heartbeat、MCS 状态、重连或巡检。APK monitor 主流程本身不执行 dump。
 - **验证边界**：以上为源码静态复核；新 APK smoke、静态 isolation smoke、Java 编译、完整 KSU smoke 和设备验证均未执行。未触发 Actions、构建、编译、打包、合并或发布。
+
+
+### 2026-11-23 最终联动复核补充
+
+- APK 首页、监控详情、前台通知与共享状态解析已同步改为内核 Socket 语义；不再读取或显示 dump 原生计时，不再接受旧的 `gms` / `gms_socket_fallback` 作为当前状态来源。连接只显示“TCP 已建立、FCM 认证未证实”，断联计时使用本地有效采样的 observed uptime。
+- APK 守护修复使用 PackageManager 的 `path` 输出确认目标安装后执行 `unstop`；只有命令返回成功才显示“已提交解除停止命令”，不再通过 dump 复检冒充状态确认。
+- `tests/GuardOpsSmoke.java` 已增加断言：只读检查命令保留限时 package dump 辅助状态；repair 命令不含 dump，包含安装路径检查和 unstop 提交结果。
+- `tests/apk-native-fcm-smoke.sh` 已替换旧 dump fixture；`tests/apk-no-dump-smoke.sh` 检查 APK monitor、KSU monitor/patrol/service 和两套 repair 路径的隔离。三个预构建 workflow（APK build、prebuild verify、KSU build）已加入该 isolation smoke；只修改 workflow 文件，**没有触发 workflow**。
+- 全仓 Java 源码复核：发现的唯一 APK 运行期 dump 业务点是 `GuardOps.java`；现仅非 repair 的只读守护状态展示保留 dump。KSU `ctl.sh` 仅 `check` 的 stopped/suspended/hidden/receiver 字段保留只读诊断；`fix` 不再调用 stopped dump。所有 FCM monitor、patrol、service 主决策路径不调用 dump。
+- **验证边界仍不变**：本轮没有运行任何 smoke、Java 编译、Gradle、Shell syntax gate 或设备测试；没有触发 Actions、构建、打包、合并或发布。源码与测试夹具已回读，但不能据此声称测试通过。
