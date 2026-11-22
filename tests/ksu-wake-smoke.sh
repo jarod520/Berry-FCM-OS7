@@ -446,7 +446,15 @@ echo "$!" > "$TEST_DIR/timeout-monitor-child-pid"
 wait
 MOCK
 chmod +x "$TMP/test-fcm-monitor.sh"
-"$TMP/bin/toybox" timeout 30 sh "$TMP/test-fcm-monitor.sh" &
+cat > "$TMP/timeout-wrapper.sh" <<'MOCK'
+#!/bin/sh
+sh "$1" &
+monitor_child=$!
+wait "$monitor_child"
+MOCK
+chmod +x "$TMP/timeout-wrapper.sh"
+# Model a timeout implementation whose wrapper owns the private process group.
+"$TMP/bin/toybox" setsid sh "$TMP/timeout-wrapper.sh" "$TMP/test-fcm-monitor.sh" &
 timeout_pid=$!
 n=0
 while [ ! -s "$TMP/data/mcs-monitor.lock.owner" ] && [ "$n" -lt 60 ]; do
