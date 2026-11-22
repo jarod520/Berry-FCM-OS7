@@ -208,7 +208,8 @@ fix() {
             failed=$((failed + 1))
         fi
     done
-    if installed "$GMS" && { [ "${HEARTBEAT_MODE:-manual}" != auto ] || [ "$changed" -gt 0 ]; }; then
+    # Package-state diagnostics may be unavailable; they must never gate an MCS recovery trigger.
+    if installed "$GMS"; then
         heartbeat || echo '部分心跳未确认，并不代表推送必然失败'
     fi
     echo "本轮解除 stopped: $changed, 失败: $failed"
