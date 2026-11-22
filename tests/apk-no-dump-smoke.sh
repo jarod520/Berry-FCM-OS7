@@ -4,6 +4,7 @@ ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 APK="$ROOT/app/src/main/assets/fcm-monitor.sh"
 KSU="$ROOT/module/bin/fcm-monitor.sh"
 CTL="$ROOT/module/bin/ctl.sh"
+GUARD="$ROOT/app/src/main/java/top/zesun/berryfcm/GuardOps.java"
 
 # APK monitor must not invoke or parse dumpsys anywhere in its runtime script.
 ! grep -Eiq 'dumpsys|DUMPSYS_BIN|is_gms_stopped|parse_mcs|dump_state_shape|import_native_events|socket_fallback_ready|promote_socket_fallback' "$APK"
@@ -15,6 +16,13 @@ grep -Fq 'auto_recovery() {' "$APK"
 ! grep -Fq 'gms_socket_fallback' "$APK"
 ! grep -Fq 'socket_fallback_ready' "$APK"
 grep -Fq 'observe || return $?' "$APK"
+grep -Fq 'legacy_dump_state_discarded' "$APK"
+grep -Fq 'gms_socket_absence_pending' "$APK"
+repair_block="$(sed -n '/if (repair) {/,/} else {/p' "$GUARD")"
+! printf '%s\\n' "$repair_block" | grep -Fq 'dumpsys'
+printf '%s\\n' "$repair_block" | grep -Fq 'cmd package unstop --user 0'
+grep -Fq 'dumpsys -t 3 package' "$GUARD"
+grep -Fq 'unstop_submitted' "$GUARD"
 
 # KSU monitor, patrol and supervisor are also dump-independent.
 ! grep -Eiq 'dumpsys|DUMPSYS_BIN' "$KSU" "$ROOT/module/bin/patrol.sh" "$ROOT/module/service.sh"
