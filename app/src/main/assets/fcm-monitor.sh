@@ -64,11 +64,18 @@ load_state() {
 }
 
 save_state() {
-    tmp="$STATE.$$"
-    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+    tmp="$STATE.$"
+    if ! printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
       "$b" "$state" "$conn_key" "$conn_since" "$conn_since_mono" "$last_seen" "$missing_since" "$missing_epoch" \
       "$last_try_mono" "$last_try_epoch" "$attempts" "$last_result" "$last_restore" "$outages" \
-      "$transport" "$remote" "$sample_epoch" "$last_try_reason" "$reconnects" "$last_down" "$down_observed" "$retry_streak" "$outage_hint_mono" > "$tmp" && mv -f "$tmp" "$STATE"
+      "$transport" "$remote" "$sample_epoch" "$last_try_reason" "$reconnects" "$last_down" "$down_observed" "$retry_streak" "$outage_hint_mono" > "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    if ! mv -f "$tmp" "$STATE"; then
+        rm -f "$tmp"
+        return 1
+    fi
 }
 
 record_event() {
@@ -349,7 +356,14 @@ EOF_SOCKET
 }
 
 write_evidence() {
-    printf '%s|%s|%s|%s|%s|%s\n' "$source" "$duration" "$close_code" "$tcp_hint" "$native_reason" "$decision" > "$EVIDENCE.tmp" && mv -f "$EVIDENCE.tmp" "$EVIDENCE"
+    if ! printf '%s|%s|%s|%s|%s|%s\n' "$source" "$duration" "$close_code" "$tcp_hint" "$native_reason" "$decision" > "$EVIDENCE.tmp"; then
+        rm -f "$EVIDENCE.tmp"
+        return 1
+    fi
+    if ! mv -f "$EVIDENCE.tmp" "$EVIDENCE"; then
+        rm -f "$EVIDENCE.tmp"
+        return 1
+    fi
 }
 
 auto_recovery() {
