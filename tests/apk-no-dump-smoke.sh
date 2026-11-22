@@ -7,12 +7,13 @@ CTL="$ROOT/module/bin/ctl.sh"
 
 # APK monitor must not invoke or parse dumpsys anywhere in its runtime script.
 ! grep -Eiq 'dumpsys|DUMPSYS_BIN|is_gms_stopped|parse_mcs|dump_state_shape|import_native_events|socket_fallback_ready|promote_socket_fallback' "$APK"
-grep -Fq 'uid="$(\$CMD_BIN' "$APK" && exit 1 || :
 grep -Fq 'uid="$("$CMD_BIN" package list packages -U "$GMS"' "$APK"
 grep -Fq 'uid="$("$PM_BIN" list packages -U "$GMS"' "$APK"
 grep -Fq 'socket="$(scan_sockets)"' "$APK"
 grep -Fq 'native_reason=not_used' "$APK"
 grep -Fq 'auto_recovery() {' "$APK"
+! grep -Fq 'gms_socket_fallback' "$APK"
+! grep -Fq 'socket_fallback_ready' "$APK"
 grep -Fq 'observe || return $?' "$APK"
 
 # KSU monitor, patrol and supervisor are also dump-independent.
