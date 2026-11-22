@@ -9,6 +9,10 @@ grep -q 'sh "$DIR/service.sh" </dev/null >/dev/null 2>&1 &' "$ROOT/module/hotins
 grep -q 'kill -TERM "$pid"' "$ROOT/module/uninstall.sh"
 grep -Fq 'while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ]; do' "$ROOT/module/service.sh"
 grep -Fq 'while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive; do' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'MONITOR_TIMEOUT="${BERRY_MONITOR_TIMEOUT_SECONDS:-25}"' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'MONITOR_KILL_GRACE="${BERRY_MONITOR_KILL_GRACE:-3}"' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'result="$(run_bounded "$MONITOR_TIMEOUT" sh "$MODDIR/bin/fcm-monitor.sh" monitor 2>&1)"' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'sleep 20 &' "$ROOT/module/bin/patrol.sh"
 hot_stop_line="$(grep -n '^if is_guardian' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 hot_enabled_line="$(grep -n 'berry_fcm_ksu/enabled' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 [ "$hot_stop_line" -lt "$hot_enabled_line" ]
