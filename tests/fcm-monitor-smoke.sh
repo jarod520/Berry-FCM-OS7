@@ -270,14 +270,14 @@ export MCS_FAIL_EVIDENCE_MV=1 MCS_FAIL_EVIDENCE_MV_AT=3 MCS_AM_ADVANCE_UPTIME=10
 run monitor >/dev/null
 unset MCS_FAIL_EVIDENCE_MV MCS_FAIL_EVIDENCE_MV_AT MCS_AM_ADVANCE_UPTIME
 requests 19
-test "$(cat "$TMP/data/evidence-mv-count")" = 4
+test "$(cat "$TMP/data/evidence-mv-count")" = 3
 state_sample_uptime="$(awk -F'|' '{print $28}' "$TMP/data/mcs-monitor.state")"
 evidence_sample_uptime="$(awk -F'|' '{print $7}' "$TMP/data/mcs-evidence")"
 [ "$state_sample_uptime" = 10380 ] || fail "failed follow-up evidence publish advanced state sample"
-[ "$evidence_sample_uptime" = 10381 ] || fail "fixture did not create expected mismatched evidence generation"
+[ "$evidence_sample_uptime" = "$state_sample_uptime" ] || fail "failed follow-up overwrote last committed evidence generation"
 j="$(sh "$MON" snapshot)"
-assert_json "$j" fcm_state=stale
-assert_json "$j" fcm_recovery_decision=sample_unavailable
+assert_json "$j" fcm_state=connecting
+assert_json "$j" fcm_recovery_decision=confirmation_unavailable
 rm -f "$TMP/bin/mv"
 
 [ ! -s "$TMP/dumpsys.log" ] || fail "dumpsys was invoked by the monitor"
