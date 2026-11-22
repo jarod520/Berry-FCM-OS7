@@ -743,3 +743,9 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **验证边界**：本次源码与固定断言更新后需复核；完整 KSU/FCM smoke、全仓 Shell syntax gate、Android/KernelSU 实机仍未执行。未触发 Actions、构建或打包。
 
 - 本轮最后一次源码复核已覆盖 KSU smoke 的 6 个源码文件：固定正向断言 **114/114**、固定负向断言 **4/4** 全部匹配。另静态确认 service watchdog 与 EXIT cleanup 都在 patrol 停止确认后才清理 monitor owner；清理失败时保留 stale heartbeat/owner locks。
+
+### 2026-11-22 run_bounded 备用 watchdog 进程身份复核
+- **复审发现**：patrol.sh 的 run_bounded() 最后备用 watchdog 在 TERM 等待后只检查 PGID 是否仍有进程，未确认原 bounded child 的 PID/starttime/PGID 仍匹配；PGID 被复用时可能误向新进程组发送 KILL。无 setsid 时的直接 PID KILL 也未在 KILL 前复核 starttime。
+- **修正**：启动 child 后记录 PID 对应的 starttime 和 PGID；setsid 未建立 PID=PGID 的私有组时自动降级为仅对身份匹配的直接 child 发信号。TERM 和 KILL 前分别复核原 child 身份；无法确认时拒绝信号并写入 guard.log。保留现有 timeout 返回码与 marker 语义。
+- **回归约束**：KSU smoke 增加进程身份 helper、TERM/KILL 拒绝日志及直接 PID KILL 复核源码断言。
+- **验证边界**：本次尚需复核固定断言与 shell 语法；完整 KSU/FCM smoke、全仓 Shell gate、Android/KernelSU 实机验证仍未执行。未触发 Actions、编译、打包、合并或发布。
