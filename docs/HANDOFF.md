@@ -600,5 +600,5 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **service 清理**：`service.sh` 在清理 monitor 时验证 PID/starttime、PGID 和命令行，再对隔离组发送 TERM/KILL，避免只杀 monitor shell 而遗留 dumpsys、广播等后代。兼容旧版两字段 owner：只有 PID、starttime、PGID 仍可验证时才推断隔离组；不能安全验证时不按 PID 猜测组。
 - **启动顺序**：service 从 `/proc/self/stat` 读取自身 PID，先发布 PID/starttime 锁，再清理残留 monitor owner，最后启动 patrol。这样既防止并发 supervisor，也避免旧 monitor 的 flock 阻塞新巡检。新增测试核对锁 PID/starttime 与实际 service 进程一致，并覆盖新格式和旧格式 monitor owner 的进程组清理。
 - **巡检 worker 回收**：patrol 每轮检查已结束的 maintenance worker，并调用 `wait` 回收，避免正常结束的后台 worker 长期残留 zombie PID。
-- **当前验证边界**：静态核对了 KSU smoke 中 85 项源码断言，其中 82 项正向断言均能在源码中找到对应实现，3 项负向断言用于防止双重转义和 service PID 写入回归；检查了新增回归用例没有重复主体。容器中分别模拟了 `/proc/self/stat` PID 读取、setsid 进程组身份与组内子进程清理。**完整 `fcm-monitor-smoke.sh`、`ksu-wake-smoke.sh`、所有 Shell 文件的 `sh -n`、目标 Android/KernelSU/GMS 实机测试尚未执行**；上述模拟不能替代 Android 实机验证。
+- **当前验证边界**：静态核对了 KSU smoke 中的源码断言：正向断言均能在源码中找到对应实现；负向断言用于防止双重转义、残留 shell PID 展开和 service PID 写入回归；检查了新增回归用例没有重复主体。容器中分别模拟了 `/proc/self/stat` PID 读取、setsid 进程组身份与组内子进程清理。**完整 `fcm-monitor-smoke.sh`、`ksu-wake-smoke.sh`、所有 Shell 文件的 `sh -n`、目标 Android/KernelSU/GMS 实机测试尚未执行**；上述模拟不能替代 Android 实机验证。
 - **构建约束**：本轮未触发 workflow、编译、打包或 Release；PR #1 仍保持 open / not merged。待代码与静态审查全部结束后，再由用户手动触发完整构建。
