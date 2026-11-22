@@ -161,7 +161,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                 fi
                 if maintenance_owner_alive; then
                     maintenance_busy=1
-                    printf '[%s] maintenance_skip pid=%s reason=already_running\\n' "$(date '+%F %T')" "$maintenance_pid" >> "$DATA/guard.log"
+                    printf '[%s] maintenance_skip pid=%s reason=already_running\n' "$(date '+%F %T')" "$maintenance_pid" >> "$DATA/guard.log"
                 else
                     rm -rf "$MAINTENANCE_LOCK"
                 fi
@@ -171,7 +171,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     IFS=' ' read -r maintenance_owner_pid _ < /proc/self/stat || exit 1
                     maintenance_owner_stamp="$(proc_start_time "$maintenance_owner_pid")" || exit 1
                     [ -n "$maintenance_owner_stamp" ] || exit 1
-                    printf '%s %s\\n' "$maintenance_owner_pid" "$maintenance_owner_stamp" > "$MAINTENANCE_LOCK/owner.tmp.$maintenance_owner_pid" &&
+                    printf '%s %s\n' "$maintenance_owner_pid" "$maintenance_owner_stamp" > "$MAINTENANCE_LOCK/owner.tmp.$maintenance_owner_pid" &&
                         mv -f "$MAINTENANCE_LOCK/owner.tmp.$maintenance_owner_pid" "$MAINTENANCE_LOCK/owner" || exit 1
                     maintenance_cleanup() {
                         current_owner=; current_stamp=
@@ -184,7 +184,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     trap maintenance_cleanup EXIT
                     fix_started_epoch="$(date +%s 2>/dev/null)"
                     case "$fix_started_epoch" in ''|*[!0-9]*) fix_started_epoch=0;; esac
-                    printf '[%s] maintenance_start pid=%s uptime=%s operation=guard_fix\\n' \\
+                    printf '[%s] maintenance_start pid=%s uptime=%s operation=guard_fix\n' \\
                         "$(date '+%F %T')" "$service_pid" "$now" >> "$DATA/guard.log"
                     HEARTBEAT_MODE=auto sh "$MODDIR/bin/ctl.sh" fix >> "$DATA/guard.log" 2>&1
                     fix_rc=$?
@@ -194,7 +194,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     if [ "$fix_started_epoch" -gt 0 ] && [ "$fix_finished_epoch" -ge "$fix_started_epoch" ]; then
                         fix_elapsed=$((fix_finished_epoch-fix_started_epoch))
                     fi
-                    printf '[%s] maintenance_end pid=%s operation=guard_fix rc=%s elapsed_s=%s\\n' \\
+                    printf '[%s] maintenance_end pid=%s operation=guard_fix rc=%s elapsed_s=%s\n' \\
                         "$(date '+%F %T')" "$service_pid" "$fix_rc" "$fix_elapsed" >> "$DATA/guard.log"
                     exit "$fix_rc"
                 ) &
