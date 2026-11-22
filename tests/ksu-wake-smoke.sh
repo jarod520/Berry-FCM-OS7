@@ -51,6 +51,7 @@ grep -Fq 'maintenance_owner_alive()' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'proc_start_time "$maintenance_pid"' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'read -r maintenance_owner_pid _ < /proc/self/stat' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'current_stamp" = "$maintenance_owner_stamp"' "$ROOT/module/bin/patrol.sh"
+! grep -Fq '\\\\n' "$ROOT/module/bin/patrol.sh"
 hot_stop_line="$(grep -n '^if is_guardian' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 hot_enabled_line="$(grep -n 'berry_fcm_ksu/enabled' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 [ "$hot_stop_line" -lt "$hot_enabled_line" ]
