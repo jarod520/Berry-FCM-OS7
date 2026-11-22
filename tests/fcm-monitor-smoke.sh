@@ -173,6 +173,26 @@ assert_json "$j" fcm_sample_uptime=20010
 [ "$(awk -F'|' '{print NF}' "$BERRY_FCM_DATA/mcs-monitor.state")" = 28 ]
 echo 'PASS: legacy 27-field state upgrades to the monotonic 28-field schema'
 
+# A large forward wall-clock correction is not a sampling gap when monotonic
+# uptime advanced only 10 seconds.
+echo 20020 > "$TMP/uptime"
+echo 1700021000 > "$MCS_CLOCK"
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_sample_uptime=20020
+assert_json "$j" fcm_sample_age_seconds=0
+! run events | grep -q '|sample_gap|'
+
+# Conversely, a real 100-second monotonic gap is detected even when the
+# wall-clock timestamp does not advance at all.
+echo 20120 > "$TMP/uptime"
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_sample_uptime=20120
+assert_json "$j" fcm_sample_age_seconds=0
+run events | grep -q '|sample_gap|距离上次有效采样 100 秒'
+echo 'PASS: sample-gap detection follows monotonic uptime, not wall-clock jumps'
+
 # Unknown is not a confirmed down state: a retained outage hint must not
 # produce a false recovery event when the next usable observation is connected.
 export BERRY_FCM_DATA="$TMP/unknown-to-connected-data"
