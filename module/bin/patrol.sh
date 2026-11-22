@@ -32,10 +32,13 @@ register_patrol_identity() {
     lock_pid="$(cat "$DATA/service.lock/pid" 2>/dev/null)"
     lock_stamp="$(cat "$DATA/service.lock/starttime" 2>/dev/null)"
     [ "$lock_pid" = "$SERVICE_PID" ] && [ "$lock_stamp" = "$SERVICE_STAMP" ] || return 1
-    patrol_stamp="$(proc_start_time "$")"
+    patrol_self_pid=
+    IFS=' ' read -r patrol_self_pid _ < /proc/self/stat || return 1
+    case "$patrol_self_pid" in ''|*[!0-9]*) return 1;; esac
+    patrol_stamp="$(proc_start_time "$patrol_self_pid")"
     [ -n "$patrol_stamp" ] || return 1
-    printf '%s %s\n' "$" "$patrol_stamp" > "$DATA/service.lock/patrol.tmp.$" &&
-        mv -f "$DATA/service.lock/patrol.tmp.$" "$DATA/service.lock/patrol"
+    printf '%s %s\n' "$patrol_self_pid" "$patrol_stamp" > "$DATA/service.lock/patrol.tmp.$patrol_self_pid" &&
+        mv -f "$DATA/service.lock/patrol.tmp.$patrol_self_pid" "$DATA/service.lock/patrol"
 }
 maintenance_owner_alive() {
     maintenance_pid=; maintenance_stamp=
