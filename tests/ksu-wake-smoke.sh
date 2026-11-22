@@ -343,6 +343,48 @@ test ! -d "$TMP/data/maintenance.lock"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: stale maintenance owner cleanup also terminates its tracked child'
 
+# Service cleanup must terminate an isolated fcm-monitor process group, not just its shell PID.
+echo passive > "$TMP/data/wake-mode"
+echo 0 > "$TMP/data/enabled"
+touch "$TMP/module/module.prop"
+: > "$TMP/data/guard.log"
+sh "$TMP/module/service.sh" &
+service_pid=$!
+n=0
+while ! grep -q 'service_started pid=' "$TMP/data/guard.log" 2>/dev/null && [ "$n" -lt 60 ]; do
+    /bin/sleep 0.1
+    n=$((n + 1))
+done
+grep -q 'service_started pid=' "$TMP/data/guard.log"
+cat > "$TMP/fcm-monitor.sh" <<'MOCK'
+#!/bin/sh
+/bin/sleep 30 &
+echo "$!" > "$TEST_DIR/monitor-child-pid"
+wait
+MOCK
+chmod +x "$TMP/fcm-monitor.sh"
+"$TMP/bin/toybox" setsid sh "$TMP/fcm-monitor.sh" &
+monitor_pid=$!
+monitor_stamp="$(tr -d '\n' < "/proc/$monitor_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
+monitor_pgid="$(tr -d '\n' < "/proc/$monitor_pid/stat" | sed 's/^.*) //' | awk '{print $3}')"
+[ "$monitor_pid" = "$monitor_pgid" ]
+n=0
+while [ ! -s "$TMP/monitor-child-pid" ] && [ "$n" -lt 60 ]; do
+    /bin/sleep 0.1
+    n=$((n + 1))
+done
+test -s "$TMP/monitor-child-pid"
+monitor_child="$(cat "$TMP/monitor-child-pid")"
+printf '%s %s %s 1\n' "$monitor_pid" "$monitor_stamp" "$monitor_pgid" > "$TMP/data/mcs-monitor.lock.owner"
+kill -TERM "$service_pid"
+wait "$service_pid" 2>/dev/null || :
+wait "$monitor_pid" 2>/dev/null || :
+child_state="$(awk '{print $3}' "/proc/$monitor_child/stat" 2>/dev/null || :)"
+[ -z "$child_state" ] || [ "$child_state" = Z ]
+test ! -e "$TMP/data/mcs-monitor.lock.owner"
+test ! -d "$TMP/data/service.lock"
+echo 'PASS: service cleanup reaps isolated monitor process groups'
+
 # If timeout is missing from Toybox, KernelSU BusyBox and PATH, the watchdog
 # fallback must still execute and bound the monitor rather than skip sampling.
 mkdir -p "$TMP/no-timeout-bin"
