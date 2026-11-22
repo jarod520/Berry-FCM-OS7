@@ -829,6 +829,24 @@ grep -q 'fcm_check_end rc=124' "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: watchdog fallback keeps bounded patrol active without timeout applets'
 
+# If both timeout and setsid are unavailable, snapshot and reap the monitor
+# process tree by PID/starttime so child probes cannot hold the monitor flock.
+touch "$TMP/module/module.prop"
+echo 1 > "$TMP/data/enabled"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+export TEST_NO_TIMEOUT=1 TEST_NO_SETSID=1 TEST_HANG_CHILD=1
+timeout 8 env PATH="$TMP/no-timeout-bin" BERRY_TOYBOX_BIN="$TMP/bin/toybox" \
+    BERRY_KSU_BUSYBOX="$TMP/missing-busybox" sh "$TMP/module/service.sh"
+unset TEST_NO_TIMEOUT TEST_NO_SETSID TEST_HANG_CHILD
+child_pid="$(cat "$TMP/hung-child-pid")"
+child_state="$(awk '{print $3}' "/proc/$child_pid/stat" 2>/dev/null || :)"
+[ -z "$child_state" ] || [ "$child_state" = Z ]
+test "$(wc -l < "$TMP/samples")" -ge 2
+grep -q 'fcm_check_end rc=124' "$TMP/data/guard.log"
+test ! -d "$TMP/data/service.lock"
+echo 'PASS: process-tree watchdog cleans child probes without timeout or setsid'
+
 # A BusyBox timeout applet without -k must not be selected just because
 # --list reports it. Fall back to the bounded process-group watchdog.
 cat > "$TMP/bin/busybox-no-k" <<'MOCK'
