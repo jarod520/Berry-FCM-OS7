@@ -23,6 +23,14 @@ parent_alive() {
     kill -0 "$SERVICE_PID" 2>/dev/null || return 1
     [ -n "$SERVICE_STAMP" ] && [ "$(proc_start_time "$SERVICE_PID")" = "$SERVICE_STAMP" ]
 }
+maintenance_owner_alive() {
+    maintenance_pid=; maintenance_stamp=
+    IFS=' ' read -r maintenance_pid maintenance_stamp < "$MAINTENANCE_LOCK/owner" 2>/dev/null || return 1
+    case "$maintenance_pid:$maintenance_stamp" in *[!0-9:]*|:*|*:) return 1;; esac
+    [ "$maintenance_pid" -gt 1 ] && [ "$maintenance_stamp" -gt 0 ] &&
+        kill -0 "$maintenance_pid" 2>/dev/null || return 1
+    [ "$(proc_start_time "$maintenance_pid")" = "$maintenance_stamp" ]
+}
 run_bounded() {
     seconds="$1"; shift
     if [ -x "$TOYBOX_BIN" ] && "$TOYBOX_BIN" --list 2>/dev/null | grep -qx timeout; then
@@ -145,21 +153,38 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
             "$(date '+%F %T')" "$monitor_rc" "$check_elapsed" "${summary:-snapshot=unavailable}" >> "$DATA/guard.log"
         [ -z "$result" ] || printf '[%s] %s\n' "$(date '+%F %T')" "$result" >> "$DATA/guard.log"
         if [ "$last_fix" = 0 ] || [ "$now" -lt "$last_fix" ] || [ $((now - last_fix)) -ge 300 ]; then
+            maintenance_busy=0
             if [ -d "$MAINTENANCE_LOCK" ]; then
-                old="$(cat "$MAINTENANCE_LOCK/pid" 2>/dev/null)"
-                case "$old" in ''|*[!0-9]*) old=0;; esac
-                if [ "$old" -gt 1 ] && kill -0 "$old" 2>/dev/null; then
-                    printf '[%s] maintenance_skip pid=%s reason=already_running\n' "$(date '+%F %T')" "$old" >> "$DATA/guard.log"
+                if ! maintenance_owner_alive; then
+                    # Allow a newly forked worker to publish its identity first.
+                    sleep 1
+                fi
+                if maintenance_owner_alive; then
+                    maintenance_busy=1
+                    printf '[%s] maintenance_skip pid=%s reason=already_running\\n' "$(date '+%F %T')" "$maintenance_pid" >> "$DATA/guard.log"
                 else
                     rm -rf "$MAINTENANCE_LOCK"
                 fi
             fi
-            if [ ! -d "$MAINTENANCE_LOCK" ] && mkdir "$MAINTENANCE_LOCK" 2>/dev/null; then
+            if [ "$maintenance_busy" = 0 ] && mkdir "$MAINTENANCE_LOCK" 2>/dev/null; then
                 (
-                    trap 'rm -rf "$MAINTENANCE_LOCK"' EXIT
+                    IFS=' ' read -r maintenance_owner_pid _ < /proc/self/stat || exit 1
+                    maintenance_owner_stamp="$(proc_start_time "$maintenance_owner_pid")" || exit 1
+                    [ -n "$maintenance_owner_stamp" ] || exit 1
+                    printf '%s %s\\n' "$maintenance_owner_pid" "$maintenance_owner_stamp" > "$MAINTENANCE_LOCK/owner.tmp.$maintenance_owner_pid" &&
+                        mv -f "$MAINTENANCE_LOCK/owner.tmp.$maintenance_owner_pid" "$MAINTENANCE_LOCK/owner" || exit 1
+                    maintenance_cleanup() {
+                        current_owner=; current_stamp=
+                        IFS=' ' read -r current_owner current_stamp < "$MAINTENANCE_LOCK/owner" 2>/dev/null || :
+                        if [ "$current_owner" = "$maintenance_owner_pid" ] &&
+                           [ "$current_stamp" = "$maintenance_owner_stamp" ]; then
+                            rm -rf "$MAINTENANCE_LOCK"
+                        fi
+                    }
+                    trap maintenance_cleanup EXIT
                     fix_started_epoch="$(date +%s 2>/dev/null)"
                     case "$fix_started_epoch" in ''|*[!0-9]*) fix_started_epoch=0;; esac
-                    printf '[%s] maintenance_start pid=%s uptime=%s operation=guard_fix\n' \
+                    printf '[%s] maintenance_start pid=%s uptime=%s operation=guard_fix\\n' \\
                         "$(date '+%F %T')" "$service_pid" "$now" >> "$DATA/guard.log"
                     HEARTBEAT_MODE=auto sh "$MODDIR/bin/ctl.sh" fix >> "$DATA/guard.log" 2>&1
                     fix_rc=$?
@@ -169,12 +194,10 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     if [ "$fix_started_epoch" -gt 0 ] && [ "$fix_finished_epoch" -ge "$fix_started_epoch" ]; then
                         fix_elapsed=$((fix_finished_epoch-fix_started_epoch))
                     fi
-                    printf '[%s] maintenance_end pid=%s operation=guard_fix rc=%s elapsed_s=%s\n' \
+                    printf '[%s] maintenance_end pid=%s operation=guard_fix rc=%s elapsed_s=%s\\n' \\
                         "$(date '+%F %T')" "$service_pid" "$fix_rc" "$fix_elapsed" >> "$DATA/guard.log"
                     exit "$fix_rc"
                 ) &
-                maintenance_pid=$!
-                printf '%s\n' "$maintenance_pid" > "$MAINTENANCE_LOCK/pid"
             fi
             last_fix="$now"
         fi
