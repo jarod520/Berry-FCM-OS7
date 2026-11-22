@@ -27,6 +27,16 @@ parent_alive() {
     kill -0 "$SERVICE_PID" 2>/dev/null || return 1
     [ -n "$SERVICE_STAMP" ] && [ "$(proc_start_time "$SERVICE_PID")" = "$SERVICE_STAMP" ]
 }
+register_patrol_identity() {
+    parent_alive || return 1
+    lock_pid="$(cat "$DATA/service.lock/pid" 2>/dev/null)"
+    lock_stamp="$(cat "$DATA/service.lock/starttime" 2>/dev/null)"
+    [ "$lock_pid" = "$SERVICE_PID" ] && [ "$lock_stamp" = "$SERVICE_STAMP" ] || return 1
+    patrol_stamp="$(proc_start_time "$")"
+    [ -n "$patrol_stamp" ] || return 1
+    printf '%s %s\n' "$" "$patrol_stamp" > "$DATA/service.lock/patrol.tmp.$" &&
+        mv -f "$DATA/service.lock/patrol.tmp.$" "$DATA/service.lock/patrol"
+}
 maintenance_owner_alive() {
     maintenance_pid=; maintenance_stamp=
     IFS=' ' read -r maintenance_pid maintenance_stamp < "$MAINTENANCE_LOCK/owner" 2>/dev/null || return 1
@@ -111,6 +121,7 @@ trap stop_wait EXIT
 trap 'exit 0' HUP INT TERM
 trap on_wake USR2
 trap on_mode USR1
+register_patrol_identity || exit 1
 printf '[%s] patrol_started pid=%s service_pid=%s\n' "$(date '+%F %T')" "$$" "$SERVICE_PID" >> "$DATA/guard.log"
 while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive; do
     now="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
