@@ -908,3 +908,10 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **发现未完成项（不可视为合规）**：APK `app/src/main/assets/fcm-monitor.sh` 仍以 `dumpsys activity service` 解析结果作为首要 MCS 状态来源；重连前 `is_gms_stopped()` 仍读取 `dumpsys package` 并在未知时阻断重连；UID 查询失败时也仍回退 `dumpsys package`。这与“dumpsys 绝不参与连接状态/恢复/重连决策，只能作可选辅助诊断”的全局规则冲突，必须整改，不能以 APK 旧实现或此前暂缓范围作为豁免。
 - KSU `module/bin/ctl.sh` 中仍有 package dumpsys，用于 stopped/suspended/hidden 管理字段及 receiver 诊断；它不是 MCS monitor 的状态来源。后续需继续追踪这些字段是否间接控制自动巡检/重连；若仅影响应用管理 UI，应明确隔离，不能把它们接入 MCS 决策链。
 - 当前仅完成源码静态审查与上游 Toybox 源码核验；未运行 `ksu-wake-smoke.sh`、`fcm-monitor-smoke.sh`、全仓 Shell syntax gate 或 OriginOS 7/KernelSU 实机测试。未触发 Actions、编译、构建、打包、合并或发布。
+
+
+### 2026-11-23 package dump 不得间接阻断自动心跳
+- **复审发现**：KSU `ctl.sh fix` 自动模式原先只有当 GMS stopped 状态被 `dumpsys package` 确认为 false，且本轮确实解除至少一个 stopped 包（`changed>0`）时才发 MCS 心跳。若 dumpsys 超时/解析未知，自动恢复广播会被间接跳过，违反“dump 失败或未知不得影响巡检/恢复触发”的规则。
+- **修正**：只要 GMS 已安装，`fix` 完成包状态修复尝试后就独立发送心跳；stopped 状态未知仍只影响是否执行 unstop，不再控制 MCS 心跳触发。保留包状态修复的安全检查，不因未知状态盲目 unstop。
+- **回归约束**：`tests/ksu-wake-smoke.sh` 增加静态断言，要求自动/手动共享的 fix 路径存在独立 heartbeat 调用，并禁止旧的 `HEARTBEAT_MODE:-manual` changed 门控。
+- **验证边界**：已核对变更前后控制流与测试断言位置；尚未执行完整 smoke、Shell syntax gate 或设备测试。未触发 Actions、编译、构建、打包、合并或发布。
