@@ -387,7 +387,7 @@ child_state="$(awk '{print $3}' "/proc/$monitor_child/stat" 2>/dev/null || :)"
 [ -z "$child_state" ] || [ "$child_state" = Z ]
 test ! -e "$TMP/data/mcs-monitor.lock.owner"
 test ! -d "$TMP/data/service.lock"
-echo 'PASS: service cleanup reaps isolated monitor process groups'
+echo 'PASS: service cleanup terminates isolated monitor process groups'
 
 # If timeout is missing from Toybox, KernelSU BusyBox and PATH, the watchdog
 # fallback must still execute and bound the monitor rather than skip sampling.
