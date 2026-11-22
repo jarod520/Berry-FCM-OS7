@@ -417,7 +417,7 @@ while ! grep -q 'service_started pid=' "$TMP/data/guard.log" 2>/dev/null && [ "$
     n=$((n + 1))
 done
 grep -q 'service_started pid=' "$TMP/data/guard.log"
-cat > "$TMP/timeout-monitor.sh" <<'MOCK'
+cat > "$TMP/test-fcm-monitor.sh" <<'MOCK'
 #!/bin/sh
 IFS=' ' read -r monitor_pid _ < /proc/self/stat
 monitor_stamp="$(tr -d '\n' < "/proc/$monitor_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
@@ -428,8 +428,8 @@ printf '%s %s %s 1 %s\n' "$monitor_pid" "$monitor_stamp" "$monitor_pgid" "$group
 echo "$!" > "$TEST_DIR/timeout-monitor-child-pid"
 wait
 MOCK
-chmod +x "$TMP/timeout-monitor.sh"
-"$TMP/bin/toybox" timeout 30 sh "$TMP/timeout-monitor.sh" &
+chmod +x "$TMP/test-fcm-monitor.sh"
+"$TMP/bin/toybox" timeout 30 sh "$TMP/test-fcm-monitor.sh" &
 timeout_pid=$!
 n=0
 while [ ! -s "$TMP/data/mcs-monitor.lock.owner" ] && [ "$n" -lt 60 ]; do
