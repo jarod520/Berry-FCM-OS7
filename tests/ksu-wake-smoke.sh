@@ -50,7 +50,8 @@ grep -Fq 'while patrol_identity_alive' "$ROOT/module/service.sh"
 grep -Fq 'rm -f "$DATA/patrol.heartbeat"' "$ROOT/module/service.sh"
 grep -Fq 'elif [ "$hb" -eq 0 ]' "$ROOT/module/service.sh"
 grep -Fq 'patrol.sample.heartbeat' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'sample_heartbeat_not_refreshed rc=%s sample_epoch=%s sample_uptime=%s previous_sample_uptime=%s check_started_uptime=%s' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'sample_heartbeat_not_refreshed rc=%s sample_epoch=%s sample_uptime=%s previous_sample_uptime=%s previous_snapshot_valid=%s check_started_uptime=%s' "$ROOT/module/bin/patrol.sh"
+grep -Fq '[ "$previous_sample_snapshot_valid" = 1 ]' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'observed_sample_epoch' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'observed_sample_uptime' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'previous_sample_uptime' "$ROOT/module/bin/patrol.sh"
@@ -229,6 +230,10 @@ exit 1
 MOCK
 cat > "$TMP/module/bin/fcm-monitor.sh" <<'MOCK'
 if [ "$1" = snapshot ]; then
+    if [ "${TEST_SNAPSHOT_FAIL_FIRST:-0}" = 1 ] && [ ! -e "$TEST_DIR/snapshot-failed" ]; then
+        touch "$TEST_DIR/snapshot-failed"
+        exit 1
+    fi
     sample_epoch="$(cat "$TEST_DIR/sample-epoch" 2>/dev/null || echo 0)"
     sample_uptime="$(cat "$TEST_DIR/sample-uptime" 2>/dev/null || echo 0)"
     if [ "${TEST_MONITOR_STALE:-0}" = 1 ]; then
@@ -455,6 +460,25 @@ test ! -s "$TMP/data/patrol.sample.heartbeat"
 grep -q "sample_heartbeat_not_refreshed rc=42 .*sample_uptime=$old_sample_uptime previous_sample_uptime=$old_sample_uptime check_started_uptime=" "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: unchanged sample uptime cannot refresh patrol heartbeat'
+
+# If the pre-check snapshot cannot be read, a same/future old sample must not
+# be treated as new merely because the post-check snapshot is readable.
+touch "$TMP/module/module.prop"
+echo 1 > "$TMP/data/enabled"
+echo passive > "$TMP/data/wake-mode"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+echo 1900000000 > "$TMP/sample-epoch"
+sample_uptime_now="$(awk '{print int($1)}' /proc/uptime)"
+old_sample_uptime=$((sample_uptime_now + 10))
+echo "$old_sample_uptime" > "$TMP/sample-uptime"
+export TEST_SNAPSHOT_FAIL_FIRST=1 TEST_MONITOR_NO_SAMPLE_RC=42
+timeout 8 sh "$TMP/module/service.sh"
+unset TEST_SNAPSHOT_FAIL_FIRST TEST_MONITOR_NO_SAMPLE_RC
+test ! -s "$TMP/data/patrol.sample.heartbeat"
+grep -q "sample_heartbeat_not_refreshed rc=42 .*sample_uptime=$old_sample_uptime previous_sample_uptime=$old_sample_uptime previous_snapshot_valid=0" "$TMP/data/guard.log"
+test ! -d "$TMP/data/service.lock"
+echo 'PASS: unreadable pre-check snapshot cannot refresh heartbeat from old sample'
 
 # A fresh monotonic sample remains fresh even when wall-clock time moves back.
 touch "$TMP/module/module.prop"
