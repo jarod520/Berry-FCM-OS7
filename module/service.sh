@@ -369,9 +369,9 @@ monitor_owner_alive() {
 }
 monitor_group_tool() {
     if [ -x "$TOYBOX_BIN" ] && "$TOYBOX_BIN" --list 2>/dev/null | grep -qx kill; then
-        printf '%s\\n' "$TOYBOX_BIN"
+        printf '%s\n' "$TOYBOX_BIN"
     elif [ -x "$KSU_BUSYBOX" ] && "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx kill; then
-        printf '%s\\n' "$KSU_BUSYBOX"
+        printf '%s\n' "$KSU_BUSYBOX"
     fi
 }
 stop_monitor_owner() {
@@ -379,7 +379,7 @@ stop_monitor_owner() {
     monitor_pid=; monitor_stamp=; monitor_pgid=; monitor_isolated=
     IFS=' ' read -r monitor_pid monitor_stamp monitor_pgid monitor_isolated < "$DATA/mcs-monitor.lock.owner" 2>/dev/null || :
     case "$monitor_pid:$monitor_stamp" in *[!0-9:]*|:*|*:)
-        printf '[%s] monitor_owner_identity_invalid; preserving owner lock\\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+        printf '[%s] monitor_owner_identity_invalid; preserving owner lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
         return 1
         ;;
     esac
@@ -389,13 +389,13 @@ stop_monitor_owner() {
             [ "$monitor_pgid" = "$monitor_pid" ] || return 1
             monitor_group_tool="$(monitor_group_tool)"
             [ -n "$monitor_group_tool" ] || {
-                printf '[%s] monitor_group_tool_unavailable pid=%s; preserving owner lock\\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
+                printf '[%s] monitor_group_tool_unavailable pid=%s; preserving owner lock\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
                 return 1
             }
             if kill -0 "$monitor_pid" 2>/dev/null; then
                 [ "$(proc_start_time "$monitor_pid")" = "$monitor_stamp" ] &&
                     [ "$(proc_group_id "$monitor_pid")" = "$monitor_pgid" ] || {
-                        printf '[%s] monitor_owner_pid_reused_or_moved pid=%s; refusing group signal\\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
+                        printf '[%s] monitor_owner_pid_reused_or_moved pid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
                         return 1
                     }
             fi
@@ -414,7 +414,7 @@ stop_monitor_owner() {
                 fi
             fi
             if process_group_alive "$monitor_pgid"; then
-                printf '[%s] monitor_group_stop_unconfirmed pid=%s start=%s pgid=%s\\n' \\
+                printf '[%s] monitor_group_stop_unconfirmed pid=%s start=%s pgid=%s\n' \
                     "$(date '+%F %T')" "$monitor_pid" "$monitor_stamp" "$monitor_pgid" >> "$DATA/guard.log"
                 return 1
             fi
@@ -438,7 +438,7 @@ stop_monitor_owner() {
         done
     fi
     if monitor_owner_alive && [ "$(proc_state "$monitor_pid" 2>/dev/null)" != Z ]; then
-        printf '[%s] monitor_owner_stop_unconfirmed pid=%s start=%s\\n' \\
+        printf '[%s] monitor_owner_stop_unconfirmed pid=%s start=%s\n' \
             "$(date '+%F %T')" "$monitor_pid" "$monitor_stamp" >> "$DATA/guard.log"
         return 1
     fi
