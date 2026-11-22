@@ -4,7 +4,7 @@
 >
 > - KernelSU FCM 连接检测与自动/手动重连决策，**不得使用 `dumpsys` 作为状态来源或必要前提**。读取失败、超时、解析失败、无输出都不得改变连接状态、阻断巡检或阻止下一种恢复动作。
 > - 当前 KSU 监控唯一决策来源是 GMS UID 归属的内核 TCP Socket 证据：优先使用可提供 UID/状态/端点的 `ss -tnpe`；不可用时回退读取 `/proc/net/tcp` 与 `/proc/net/tcp6`。无法取得 GMS UID 或无法读取 Socket 表时，结果是“本轮证据不可用”，不是断联，也不是连接正常。
-> - 明确区分 TCP ESTABLISHED（只证明传输层连接）、SYN-SENT（连接建立中）、已成功读取 UID/Socket 表且 MCS Socket 连续缺失（达到阈值后再复采确认）、以及检测源不可用。不得将 TCP 建立冒充 FCM 心跳 ACK 或消息送达。
+> - 明确区分 TCP ESTABLISHED（只证明传输层连接）、SYN-SENT（连接建立中）、TCP_INFO 中 unacked>0 且连续 retransmits>=3 的疑似卡死 Socket、已成功读取 UID/Socket 表且 MCS Socket 连续缺失（达到阈值后再复采确认）、以及检测源不可用。TCP_INFO 只在 `ss -i`/内核提供相关字段时启用；字段不可读不能伪造健康或断联。不得将 TCP 建立冒充 FCM 心跳 ACK 或消息送达。
 > - 当前断联判定要求连续缺失至少 45 秒；连接中持续 60 秒后进入二次确认。采样空档超过 90 秒重置连续性锚点。未知/不可用样本不阻断下一轮巡检，也不伪造确定状态。
 > - 自动恢复按轮次尝试四个既有 GMS 定向动作：`GCM_RECONNECT` → `MCS_HEARTBEAT` → `ACTION_HEARTBEAT_NOW` → `GTALK_HEARTBEAT`。每次命令后继续采样；仍断联时按 30/45/60/90 秒递增退避进入下一动作，后续循环保持 90 秒。命令返回成功只表示广播请求已提交，不代表 GMS 已恢复；必须由后续内核 Socket 样本验证。四个动作均无效时继续按退避周期轮换，不停止巡检。
 > - `dumpsys` 未来如需保留，只能用于独立辅助诊断或展示计时，不得写入连接状态机、恢复门控、巡检心跳或重连动作选择。旧版原生 MCS 主判据、Close 事件判据、connectTime 停滞恢复方案均已废弃。
@@ -14,7 +14,7 @@
 
 - **代码分支**：`fix/rc5-mcs-patrol-20261122`。本轮只修改该分支，不合并 main、不发布、不触发 GitHub Actions。
 - **监控主脚本**：`module/bin/fcm-monitor.sh` 已删除 GMS service dump 轮询、dump 解析器、wrapper 重试、package stopped dump 门控、原生 Close 事件降级判据和 connectTime 停滞恢复分支。当前脚本不再调用 `dumpsys`。
-- **连接检测**：以 GMS UID 的 MCS TCP Socket 为唯一决策证据。先用 `ss -tnpe` 获取 socket 状态和 UID；没有可验证 UID 标记时回退 `/proc/net/tcp`、`tcp6`。精确 MCS 端口 5228–5230 和经过验证的 mtalk :443 候选继续区分；普通 GMS HTTPS 不作为 MCS。TCP ESTABLISHED 只记为传输层连接。
+- **连接检测**：以 GMS UID 的 MCS TCP Socket 为唯一决策证据。先用 `ss -tinpe` 请求 Socket + TCP_INFO；该参数失败或未暴露 GMS UID 时再试 `ss -tnpe`，仍无法验证 UID 才回退 `/proc/net/tcp`、`tcp6`。精确 MCS 端口 5228–5230 和经过验证的 mtalk :443 候选继续区分；普通 GMS HTTPS 不作为 MCS。TCP ESTABLISHED 只记为传输层连接。TCP_INFO 可用时，只有 unacked>0 且连续 retransmits>=3 才标记 stalled，并经过持续时间与第二次采样确认后进入恢复。
 - **状态与计时**：已读取到 UID/Socket 表但无 MCS socket 时先累计连续缺失 45 秒，再复采确认；SYN-SENT 保留首次观察时间，达到 60 秒后复采确认。检测源不可用时记录 unavailable/unknown 样本，但 patrol 继续运行；超过 90 秒的采样空档重置连续性锚点。
 - **多阶段恢复**：依次尝试四种既有 GMS 定向广播动作 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、`GTALK_HEARTBEAT`。每轮先复采确认，执行后仍由后续 Socket 样本验证；未恢复则按 30/45/60/90 秒退避进入下一动作，之后每 90 秒继续轮换。广播失败同样消耗当前阶段并进入下一阶段，避免某个动作永久卡住恢复流程。
 - **后台 watchdog**：`patrol.sh` 的 bounded child 身份判断新增 zombie 状态排除，避免已退出但尚未 wait 回收的子进程被误认为仍存活、造成误超时。service 仍分别监督 patrol heartbeat 与有效 sample heartbeat。
