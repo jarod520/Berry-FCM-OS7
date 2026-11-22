@@ -591,9 +591,14 @@ service_cleanup() {
     cleanup_ok=1
     stop_timer || cleanup_ok=0
     # Stop patrol first so it cannot launch a monitor after the owner-lock check.
-    stop_patrol || cleanup_ok=0
-    stop_monitor_owner || cleanup_ok=0
-    stop_maintenance_owner || cleanup_ok=0
+    if stop_patrol; then
+        stop_monitor_owner || cleanup_ok=0
+        stop_maintenance_owner || cleanup_ok=0
+    else
+        cleanup_ok=0
+        printf '[%s] service_cleanup_blocked reason=patrol_stop_unconfirmed; preserving owner locks\n' \
+            "$(date '+%F %T')" >> "$DATA/guard.log"
+    fi
     if [ "$cleanup_ok" = 1 ]; then
         rm -rf "$LOCK"
     else
