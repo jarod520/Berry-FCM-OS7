@@ -13,6 +13,10 @@ cat > "$TMP/bin/dumpsys" <<'MOCK'
 case "$*" in
   *"activity service"*)
     [ -z "${MCS_DUMPSYS_LOG:-}" ] || echo "$*" >> "$MCS_DUMPSYS_LOG"
+    if [ -n "${MCS_DUMPSYS_BLOCK:-}" ]; then
+      : > "$MCS_DUMPSYS_BLOCK"
+      /bin/sleep "${MCS_DUMPSYS_BLOCK_SECONDS:-2}"
+    fi
     if [ -n "${MCS_NEXT_FIXTURE:-}" ] && [ -f "$MCS_NEXT_FIXTURE" ]; then
       cat "$MCS_FIXTURE"
       mv "$MCS_NEXT_FIXTURE" "$MCS_FIXTURE"
@@ -653,3 +657,30 @@ assert_json "$j" fcm_state=unknown
 assert_json "$j" fcm_tcp_hint=unknown
 test ! -s "$BERRY_FCM_DATA/mcs-mtalk-learned-ips.txt"
 echo 'PASS: learned MCS peer IPs expire after 120 seconds and legacy entries are discarded'
+
+# The descriptor lock must remain held until the complete monitor command exits.
+export BERRY_FCM_DATA="$TMP/flock-lifecycle-data"
+mkdir -p "$BERRY_FCM_DATA"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+export MCS_SS_MODE=connected MCS_DUMPSYS_LOG="$TMP/flock-dumpsys.log"
+export MCS_DUMPSYS_BLOCK="$TMP/flock-dumpsys-started" MCS_DUMPSYS_BLOCK_SECONDS=2
+: > "$MCS_DUMPSYS_LOG"
+rm -f "$MCS_DUMPSYS_BLOCK"
+printf '%s\n' 'DeviceID: [fixture]' 'connected=mtalk.google.com/142.250.157.188,port=5228' 'connectTime=00:30/00:00' > "$MCS_FIXTURE"
+settime 62000
+sh "$MON" monitor > "$TMP/flock-first.out" 2>&1 &
+first_monitor_pid=$!
+n=0
+while [ ! -s "$MCS_DUMPSYS_BLOCK" ] && [ "$n" -lt 50 ]; do
+    /bin/sleep 0.1
+    n=$((n + 1))
+done
+test -s "$MCS_DUMPSYS_BLOCK"
+if sh "$MON" reconnect > "$TMP/flock-second.out" 2>&1; then
+    echo 'concurrent reconnect unexpectedly acquired monitor lock' >&2
+    exit 1
+fi
+grep -q '后台正在检查 GMS' "$TMP/flock-second.out"
+wait "$first_monitor_pid"
+[ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d ' ')" = 1 ]
+echo 'PASS: flock remains held for the full monitor operation and rejects concurrent requests'
