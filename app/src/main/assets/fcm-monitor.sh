@@ -412,7 +412,7 @@ status_json() {
       gms_socket|gms_socket_absence|gms_socket_absence_pending) :;;
       *) state=unknown; source=unavailable; duration=-1; close_code=; tcp_hint=unknown; native_reason=not_used; decision=sample_unavailable;;
     esac
-    case "${decision:-}" in not_evaluated|not_disconnected|sample_unavailable|disabled|network_gate|cooldown|requested|request_failed|waiting_duration|confirmation_changed|confirmation_recovered) :;; *) decision=not_evaluated;; esac
+    case "${decision:-}" in not_evaluated|not_disconnected|sample_unavailable|disabled|network_gate|cooldown|requested|request_failed|waiting_duration|confirmation_changed|confirmation_recovered|state_save_failed) :;; *) decision=not_evaluated;; esac
     case "$native_reason" in not_used) :;; *) native_reason=not_used;; esac
     case "$duration" in -1) :;; *) is_uint "$duration" || duration=-1;; esac
     [ "$age" -ge 0 ] && [ "$age" -le 90 ] || state=stale
