@@ -13,7 +13,7 @@
 ## 2026-11-23 本轮复审：恢复失败时 evidence 代次保护与 443 误判
 
 - **复审发现 1**：`request_reconnect()` 中恢复广播后的二次 `observe()` 若 evidence 原子发布失败，会返回 `confirmation_unavailable`，但 `run_monitor_command monitor` 原先仍无条件调用 `write_evidence()`。这会把失败采样的内存字段写入 evidence，覆盖上一份已提交证据；虽然 state/evidence 代次检查能将结果标 stale，却损失了上一份有效样本。
-- **修正**：新增 `write_decision_evidence()`。它只读取已提交 state 与 evidence，确认第 28 列 `sample_mono` 和 evidence 第 7 列一致后，仅更新 decision 字段，其余样本字段和 generation 原样保留。若代次本身不一致则拒绝更新。monitor 与手动 reconnect 的恢复决策写回均使用该路径；`observe()` 的 evidence-first 样本提交仍使用原 `write_evidence()`。
+- **修正**：新增 `write_decision_evidence()`。它只读取已提交 state 与 evidence，确认第 28 列 `sample_mono` 和 evidence 第 7 列一致后，仅更新 decision 字段，其余样本字段和 generation 原样保留。若代次本身不一致则拒绝更新。monitor 与手动 reconnect 的恢复决策写回均使用该路径；`observe()` 的 evidence-first 样本提交仍使用原 `write_evidence()`。 若恢复后的 `observe()` 失败，恢复序列在继续下一动作前先 `load_state`，重新装载最后一次成功提交的样本，防止序列结束时的 `save_state()` 把失败采样的内存字段写入 state。
 - **回归夹具（后续已扩展）**：当前故障注入在第四个动作的复采 evidence 发布处失败；前三次有效样本提交到 sample_mono=10383，决策更新只能保留该已提交代次，snapshot 保持 `connecting` 并显示 `recovery_exhausted`，不得写入失败采样的 10384。
 - **复审发现 2**：当 `ss` 已能显示 GMS UID，但只观察到一个非 mtalk 对端的 GMS HTTPS :443 socket 时，若 DNS 已有 mtalk 候选地址，旧逻辑会将该连接漏过且返回 absent；连续计时后可能误报断联。
 - **修正**：只要 GMS :443 已建立但对端不匹配已验证 mtalk 地址，就保留 `unknown/unavailable`，不把普通 HTTPS 连接当 MCS，也不把它当作 MCS 缺失。新增有 DNS 候选、但 GMS :443 对端为 1.1.1.1 的回归场景。
