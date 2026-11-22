@@ -207,12 +207,12 @@ settime 70030
 export MCS_SS_MODE=absent
 run monitor
 assert_json "$(run snapshot)" fcm_state=connected
-assert_json "$(run snapshot)" fcm_source=gms
+assert_json "$(run snapshot)" fcm_source=gms_socket
 settime 70040
 export MCS_SS_MODE=unknown
 run monitor
 assert_json "$(run snapshot)" fcm_state=connected
-assert_json "$(run snapshot)" fcm_source=gms
+assert_json "$(run snapshot)" fcm_source=gms_socket
 [ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 1 ]
 export MCS_SS_MODE=connected
 settime 70060
