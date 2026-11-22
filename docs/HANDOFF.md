@@ -799,3 +799,9 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **回归夹具**：KSU mock 增加 TEST_MONITOR_STALE；新用例模拟 monitor 已写入更大的 sample_epoch、返回非零后置错误 rc=42，但 snapshot 明确标记 stale，要求 heartbeat 不刷新。固定源码断言同步检查 stale gate。
 - **定向验证**：当前 patrol 条件的逻辑静态复核通过；unknown/connected/down 仍不因 stale gate 被排除，只有 stale 或缺失状态不刷新。尚未运行完整 KSU smoke 或设备验证。
 - **验证边界**：未触发 Actions、构建、编译、打包或发布。
+
+### 2026-11-22 sample gap 后重置 native connectTime 停滞锚点
+- **复审发现**：observe() 检测到超过 90 秒的采样空档时会将连接状态置为 unknown，并重置在线/断联可观测计时；但 native_timer_since 原先保留空档前的锚点。如果恢复后的第一条 native 样本仍报告相同 connectTime，后续 auto_recovery 可能把空档前的计时当作连续有效样本，过早触发 stalled_timer 检查。
+- **修正**：检测到 sample_gap 时，同时清零 native_timer_duration、native_timer_since、native_timer_last_request 和 native_timer_key。恢复后的第一条 native connected 样本重新建立计时锚点。
+- **回归夹具**：新增相同 native connectTime 的 gap 前/后样本，检查状态文件第 25 列 native_timer_since 从空档前 uptime 更新为恢复后的 uptime，避免旧锚点跨空档沿用。
+- **验证边界**：源码状态路径和字段位置已复核；完整 fcm-monitor-smoke.sh、ksu-wake-smoke.sh、全仓 Shell 语法 gate、Android/KernelSU 实机仍未执行。未触发 Actions、构建、编译、打包或发布。
