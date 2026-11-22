@@ -84,6 +84,7 @@ PY
 }
 printf "%s\n" "DeviceID: [fixture]" "connected=mtalk.google.com/142.250.157.188,port=5228" "connectTime=03:22/00:00" > "$MCS_FIXTURE"
 j="$(run status)"; assert_json "$j" fcm_state=connected; assert_json "$j" fcm_native_duration=202
+test ! -e "$BERRY_FCM_DATA/mcs-monitor.lock.owner"
 printf '%s\n' 'DeviceID: [fixture]' 'connected=mtalk.google.com/[2001:db8::1],port=443' 'connectTime=00:03/00:00' > "$MCS_FIXTURE"
 j="$(run status)"; assert_json "$j" fcm_state=connected; assert_json "$j" 'fcm_remote=mtalk.google.com/[2001:db8::1]:443'
 run reconnect; requests 0
