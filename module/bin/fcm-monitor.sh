@@ -174,7 +174,7 @@ scan_sockets() {
                 } else if (port=="01BB" && st=="01") {unverified443=1}
               }
               END {
-                if (rank>0) printf "%s|%s|proc-net|%s|\n",kind,transport,key
+                if (rank>0) printf "%s|%s||%s|\n",kind,transport,key
                 else if (unverified443) print "unknown||||proc_net_443_unverified"
                 else print "absent||||proc_net_no_mcs_socket"
               }' "$table"
