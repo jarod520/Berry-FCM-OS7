@@ -833,7 +833,7 @@ EOF_SOCKET
                 record_event tcp_absence_started 'UID0 未观察到 GMS MCS TCP；开始连续缺失计时，暂不据单次缺失重连'
             fi
             socket_down_age=$((socket_now-outage_hint_mono))
-            if [ "$socket_down_age" -ge 30 ] &&
+            if [ "$native_reason" != gms_stopped ] && [ "$socket_down_age" -ge 30 ] &&
                { [ "$native_poll_due" = 1 ] || [ "$previous_down_state" != connected ]; }; then
                 observed=disconnected; source=gms_socket_fallback
                 new_transport=; new_remote=
@@ -844,7 +844,8 @@ EOF_SOCKET
         esac
         # A recent native MCS Close event is secondary evidence only when
         # socket ownership is unreadable; a later Connected event supersedes it.
-        if [ "$observed" = unknown ] && [ "$tcp_hint" = unknown ] && native_close_fallback_ready; then
+        if [ "$native_reason" != gms_stopped ] && [ "$observed" = unknown ] &&
+           [ "$tcp_hint" = unknown ] && native_close_fallback_ready; then
             observed=disconnected; source=gms_native_event_fallback
             duration=-1
             close_code=
@@ -942,6 +943,11 @@ confirm_recovery() {
     first_state="$state"; first_source="$source"; first_tcp_hint="$tcp_hint"; first_duration="$duration"
     [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 2
     if [ "$first_source" = gms ]; then observe force_native; else observe; fi
+    if [ "$native_reason" = gms_stopped ]; then
+        decision=gms_stopped_unknown
+        record_event reconnect_skipped 'GMS 套件处于 stopped 状态；不把预期无 Socket 当作断联，也不发送重连'
+        return 0
+    fi
     if { [ "$source" = gms ] || [ "$source" = gms_socket ]; } &&
        { [ "$state" = disconnected ] || [ "$state" = connecting ]; }; then
         record_event recovery_confirmed "二次采样仍确认 GMS MCS 尚未建立连接"
@@ -1002,6 +1008,10 @@ confirm_stalled_timer() {
 
 auto_recovery() {
     decision=not_disconnected
+    if [ "$native_reason" = gms_stopped ]; then
+        decision=gms_stopped_unknown
+        return 0
+    fi
     if [ "$source" = gms ] && [ "$state" = connected ] && [ "$native_timer_since" -gt 0 ]; then
         timer_now="$(num "$(monotime)")"
         timer_stall_age=0
