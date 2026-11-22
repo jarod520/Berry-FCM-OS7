@@ -514,7 +514,7 @@ EOF_SOCKET
            [ "$nowm" -lt "$conn_since_mono" ] || [ "$sample_mono" -le 0 ] ||
            [ "$nowm" -lt "$sample_mono" ] || [ $((nowm-sample_mono)) -gt 45 ]; then conn_since_mono="$nowm"; fi
         conn_key="$current_key"; state=connected; last_seen="$nowe"; missing_since=0; missing_epoch=0
-        down_observed=0; outage_hint_mono=0; retry_streak=0; conn_since=0
+        down_observed=0; outage_hint_mono=0; last_try_mono=0; retry_streak=0; conn_since=0
         ;;
       connecting|disconnected)
         if [ "$state" != connecting ] && [ "$state" != disconnected ]; then
