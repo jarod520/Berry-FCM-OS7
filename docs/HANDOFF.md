@@ -1,11 +1,11 @@
 ## 2026-11-22 KSU RC7：原生 Close 辅助判据、分阶段恢复与卸载清理
 
 - 基于 RC6 提交 `d9312e44a6b0c4110a6dbc383c39def40bde131b`；本轮候选版本 `1.0-rc.7 / 10007`，仍属于测试候选，不合并 main、不发布正式 Release。
-- RC6 在 GMS dump 只有 ActivityManager wrapper、Socket 元信息不可见时会保留 unknown；TCP 明确 absent 时等待 60 秒，跨长采样空档会丢弃过旧的连续缺失计时。RC7 改为 30 秒双采样确认，并记录最新 GMS `Close/Connected` 事件的单调时钟锚点；当前状态字段缺失且最近 Close 持续 30–900 秒、没有更新的 Connected 事件时，可作为独立辅助断联证据。单次 Close 不直接触发重连。
-- 自动恢复按连续未恢复轮次依次尝试 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、显式组件 `GCM_SEND`；每轮只发送一种动作，下一轮需由新采样再次确认断联，继续沿用退避和 GMS stopped 检查。广播返回成功仍不等于连接恢复。
-- 修复热安装时 `enabled=0` 提前退出导致旧 service 未停止的问题；新增卸载脚本，service/patrol 检查模块 disable 标记，卸载或禁用后退出并清理工作进程。保留数据目录配置与历史，不强制重启。
-- 开源参考：`miuiadmin/Berry-FCM` 的 `lib/berry.sh` 明确列出 MCS_HEARTBEAT、ACTION_HEARTBEAT_NOW、GCM_SEND 三种动作；本项目借鉴动作来源，按断联轮次受控调用。Toybox timeout 默认创建独立进程组，RC6 保留其超时巡检结构。
-- 验证要求：Shell 语法、FCM monitor smoke、KSU wake/lifecycle smoke、WebUI 检查、ARM64 定时器构建、ZIP 打包全部通过后再交付 Artifact；CI 不能代替 OriginOS 7 实机断联与热卸载验证。
+- GMS dump 只有 ActivityManager wrapper 时仍保留 unknown；Root 可见的精确 GMS UID MCS TCP 缺失连续 30 秒后才转为断联，并经第二次采样确认。连续巡检超过 15 分钟不会清零断联计时；只有采样空档超过 90 秒才重置连续性锚点。持续 SYN-SENT 会保留首次观察时间，达到 60 秒进入恢复判断。最近 Close 事件在 Socket 所有权不可读、持续 30–900 秒且没有更新的 Connected 事件时，作为有限期辅助证据；单次 Close 不直接触发重连。
+- 自动恢复按连续未恢复轮次依次尝试 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、`GTALK_HEARTBEAT`；每轮只发送一种动作，后续轮次必须由新采样再次确认仍断联并经过退避。广播返回成功只记录为已请求，不等于 GMS 已恢复；恢复必须由后续原生状态或精确 MCS Socket 证据确认。
+- service 独立监督 patrol：PID/starttime/cmdline 身份校验、心跳过期重启、首次心跳缺失兜底；停止 timer/patrol 使用有界 TERM/KILL 等待，未确认退出时不启动重复 worker。热安装/卸载等待旧 service 最长 18 秒，KILL 后再复核；热安装若旧进程仍存活则取消新启动。保留数据目录配置与历史，不强制重启。
+- 开源参考：继续参考 microG GmsCore 的 MCS 连接/心跳恢复模型及 AOSP Toybox `timeout` 的进程组超时清理。本项目当前第四阶段使用 `GTALK_HEARTBEAT`；未将 HyperOS 专用 Chimera Provider 查询直接移植到 OriginOS。DNS 解析失败也缓存 10 分钟，避免每轮重复等待。
+- 当前进度：源码与回归用例仍在集中修复，尚未执行本轮完整 smoke 套件、完整构建或 OriginOS 7 实机验证。`.github/workflows/` 下所有工作流已改为仅 `workflow_dispatch`，不再由 push/PR 自动触发。按用户要求，全部代码修改与静态检查完成后，只手动触发一次完整构建；不自动编译、不自动打包、不合并、不发布。
 
 # Berry-FCM-OS7 开发进度与接续交接
 
