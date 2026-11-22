@@ -121,7 +121,10 @@ fi
 MOCK
 cat > "$TMP/bin/toybox" <<'MOCK'
 #!/bin/sh
-if [ "$1" = --list ]; then echo timeout; exit 0; fi
+if [ "$1" = --list ]; then
+    [ "${TEST_NO_TIMEOUT:-0}" = 1 ] || echo timeout
+    exit 0
+fi
 [ "$1" = timeout ] || exit 2
 shift
 grace=5
@@ -260,3 +263,24 @@ wait "$orphan_pid" 2>/dev/null || :
 grep -q 'stale_patrol_stopped pid=' "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: stale service lock cannot spawn a duplicate patrol'
+
+# If timeout is missing from Toybox, KernelSU BusyBox and PATH, the watchdog
+# fallback must still execute and bound the monitor rather than skip sampling.
+mkdir -p "$TMP/no-timeout-bin"
+for bin in awk cat date grep head id mkdir mv rm rmdir sed sh sleep tail tr wc; do
+    ln -sf "$(command -v "$bin")" "$TMP/no-timeout-bin/$bin"
+done
+ln -sf "$TMP/bin/id" "$TMP/no-timeout-bin/id"
+ln -sf "$TMP/bin/getprop" "$TMP/no-timeout-bin/getprop"
+touch "$TMP/module/module.prop"
+echo 1 > "$TMP/data/enabled"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+export TEST_NO_TIMEOUT=1 TEST_HANG_FIRST=1
+timeout 8 env PATH="$TMP/no-timeout-bin" BERRY_TOYBOX_BIN="$TMP/bin/toybox" \
+    BERRY_KSU_BUSYBOX="$TMP/missing-busybox" sh "$TMP/module/service.sh"
+unset TEST_NO_TIMEOUT TEST_HANG_FIRST
+test "$(wc -l < "$TMP/samples")" -ge 2
+grep -q 'fcm_check_end rc=124' "$TMP/data/guard.log"
+test ! -d "$TMP/data/service.lock"
+echo 'PASS: watchdog fallback keeps bounded patrol active without timeout applets'
