@@ -783,3 +783,11 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **回归夹具**：新增定向 mv 故障注入，只拒绝 mcs-evidence 目标；要求 status 返回失败、mcs-monitor.state 和 mcs-evidence 不生成，临时 evidence 文件清理。
 - **定向验证**：本地隔离 POSIX sh 片段语法检查通过；分别模拟 unknown → connected 与 confirmed disconnected → connected，前者不更新恢复时间/结果且不写 connection_restored，后者仍写恢复事件；模拟 evidence mv 失败，确认临时文件清理且 sample state 不提交。上述是变更片段验证，不代表完整 smoke 执行。
 - **验证边界**：完整 fcm-monitor-smoke.sh、ksu-wake-smoke.sh、全仓 Shell 语法 gate 和 Android/KernelSU 实机验证尚未执行。未触发 Actions、构建、编译、打包或发布。
+
+
+## 2026-11-22 patrol sample heartbeat: reject same-second stale snapshots
+
+- 复审发现原 freshness gate 仅要求持久化 `fcm_sample_time >= check_started_epoch`。该时间戳只有秒级精度；如果上一轮有效样本与本轮巡检开始落在同一秒，monitor 在 observe 前以 rc=10（Root 前置检查）、11（数据目录初始化）、12（时间/uptime 不可用）或 14（owner 身份登记失败）退出，snapshot 仍可能读到旧时间戳并被误当成本轮新样本。
+- 修正：巡检在 monitor 前先读取一次 snapshot，保存 `previous_sample_epoch`；monitor 后仍要求新时间戳不早于本轮开始，同时必须严格大于前一快照时间戳。明确排除 10/11/12/13/14/124 这些前置失败、锁冲突或超时返回码。非零但已完成并持久化新样本的后续错误仍可刷新心跳。
+- 修正 KSU smoke 中 rc=10 夹具的错误前提：真实 `fcm-monitor.sh` 在 UID 非 root 时于 observe 前直接 exit 10，因此不能用它模拟“样本已提交后的非零返回”；改用 rc=42 表示样本提交后的模拟异常。新增 rc=14 + 旧样本时间戳回归用例，检查旧 snapshot 不得刷新 sample heartbeat。
+- 本次仅完成源码和测试夹具修改；尚未运行完整 `ksu-wake-smoke.sh`、`fcm-monitor-smoke.sh` 或全仓 Shell syntax gate。未编译、未打包、未触发 workflow、未合并、未发布。
