@@ -122,18 +122,16 @@ public final class MainActivity extends Ui {
         String description = "后台监控已开启 · 应用守护" + (prefs.guardEnabled() ? "已开启" : "未开启")
                 + "\n最近检查：" + (age >= 0 ? age + " 秒前" : "尚无本次检查结果");
         if (age >= 0 && age <= 90 && stateEvidence && lastError.isEmpty()) {
-            if ("gms".equals(stateSource)) {
-                long nativeSeconds = snapshot.optLong("fcm_native_duration", -1);
-                if ("connected".equals(observed)) {
-                    description += "\n" + MonitorStatus.connectedDuration(
-                            nativeSeconds, snapshot.optLong("fcm_observed_up_seconds", -1));
-                } else if (nativeSeconds >= 0) {
-                    description += "\n当前状态计时：" + MonitorStatus.duration(nativeSeconds);
-                }
-            } else if ("gms_socket".equals(stateSource)) {
+            if ("gms_socket".equals(stateSource) && "connected".equals(observed)) {
+                description += "\n" + MonitorStatus.connectedDuration(-1,
+                        snapshot.optLong("fcm_observed_up_seconds", -1));
                 description += "\n依据 GMS UID 的 MCS TCP 正向证据；不代表消息送达。";
-            } else if ("gms_socket_fallback".equals(stateSource)) {
-                description += "\n依据 UID0 连续 60 秒 MCS TCP 缺失并经二次采样确认。";
+            } else if ("gms_socket_absence".equals(stateSource)) {
+                description += "\n依据 Root 连续缺失 MCS TCP 并经二次采样确认。";
+                long down = snapshot.optLong("fcm_observed_down_seconds", -1);
+                if (down >= 0) description += "\n已观察未连接：" + MonitorStatus.duration(down);
+            } else if ("gms_socket".equals(stateSource)) {
+                description += "\n依据 GMS UID 的 MCS TCP 正向证据；连接尚未建立或正在重连。";
             }
         }
         if (!lastError.isEmpty()) description += "\n后台将自动重试，详情见监控详情。";
