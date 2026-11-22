@@ -10,11 +10,10 @@ proc_start_time() {
     tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $20}'
 }
 is_guardian() {
-    [ "$old" -gt 1 ] && [ -n "$old_stamp" ] &&
-        kill -0 "$old" 2>/dev/null &&
-        [ "$(proc_start_time "$old")" = "$old_stamp" ] &&
-        [ -r "/proc/$old/cmdline" ] &&
-        tr '\000' ' ' < "/proc/$old/cmdline" | grep -q 'service.sh'
+    [ "$old" -gt 1 ] && kill -0 "$old" 2>/dev/null || return 1
+    cmdline="$(tr "\000" " " < "/proc/$old/cmdline" 2>/dev/null)"
+    case "$cmdline" in *"/berry_fcm_ksu/service.sh"*) :;; *) return 1;; esac
+    [ -z "$old_stamp" ] || [ "$(proc_start_time "$old")" = "$old_stamp" ]
 }
 if is_guardian; then
     kill -TERM "$old" 2>/dev/null || :

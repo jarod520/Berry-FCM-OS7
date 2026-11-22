@@ -12,10 +12,11 @@ proc_start_time() {
 }
 service_identity() {
     pid="$1"; stamp="$2"
-    case "$pid:$stamp" in *[!0-9:]*|:*) return 1;; esac
+    case "$pid" in ""|*[!0-9]*) return 1;; esac
     [ "$pid" -gt 1 ] && kill -0 "$pid" 2>/dev/null || return 1
-    [ "$(proc_start_time "$pid")" = "$stamp" ] || return 1
-    tr "\000" " " < "/proc/$pid/cmdline" 2>/dev/null | grep -Fq "service.sh"
+    cmdline="$(tr "\000" " " < "/proc/$pid/cmdline" 2>/dev/null)"
+    case "$cmdline" in *"/berry_fcm_ksu/service.sh"*) :;; *) return 1;; esac
+    [ -z "$stamp" ] || [ "$(proc_start_time "$pid")" = "$stamp" ]
 }
 if ! mkdir "$LOCK" 2>/dev/null; then
     old="$(cat "$LOCK/pid" 2>/dev/null)"
