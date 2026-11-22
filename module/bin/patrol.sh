@@ -344,7 +344,13 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                         exit 125
                     fi
                     printf '%s %s %s %s\n' "$maintenance_child_pid" "$maintenance_child_stamp" "$maintenance_child_pgid" "$maintenance_group_tool" > "$MAINTENANCE_LOCK/child.tmp.$maintenance_owner_pid" &&
-                        mv -f "$MAINTENANCE_LOCK/child.tmp.$maintenance_owner_pid" "$MAINTENANCE_LOCK/child"
+                        mv -f "$MAINTENANCE_LOCK/child.tmp.$maintenance_owner_pid" "$MAINTENANCE_LOCK/child" || {
+                            "$maintenance_group_tool" kill -TERM "-$maintenance_child_pgid" 2>/dev/null || :
+                            sleep 1
+                            "$maintenance_group_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
+                            wait "$maintenance_child_pid" 2>/dev/null || :
+                            exit 1
+                        }
                     (
                         sleep 45 &
                         watchdog_sleep_pid=$!
