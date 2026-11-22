@@ -323,16 +323,18 @@ if ! mkdir "$LOCK" 2>/dev/null; then
     mkdir "$LOCK" 2>/dev/null || exit 0
 fi
 stop_monitor_owner || exit 0
-echo $ > "$LOCK/pid"
-proc_start_time "$$" > "$LOCK/starttime"
-echo $$ > "$LOCK/wake-pid"
+IFS=' ' read -r service_pid _ < /proc/self/stat
+case "$service_pid" in ""|*[!0-9]*) exit 0;; esac
+echo "$service_pid" > "$LOCK/pid"
+proc_start_time "$service_pid" > "$LOCK/starttime"
+echo "$service_pid" > "$LOCK/wake-pid"
 cgroup_path() {
     while IFS=: read -r hierarchy controllers group; do
         if [ "$hierarchy" = 0 ] && [ -z "$controllers" ]; then
             printf '%s\n' "$group"
             return
         fi
-    done < "/proc/$$/cgroup"
+    done < "/proc/$service_pid/cgroup"
 }
 group="$(cgroup_path)"
 cgroup_ready=1
@@ -340,18 +342,18 @@ case "$group" in
     /apps/*)
         # Hot install and WebUI can inherit the Manager's app freezer group.
         # Move only this service; workers inherit the verified group.
-        if { printf '%s\n' "$$" > /sys/fs/cgroup/cgroup.procs; } 2>/dev/null &&
+        if { printf '%s\n' "$service_pid" > /sys/fs/cgroup/cgroup.procs; } 2>/dev/null &&
            [ "$(cgroup_path)" = / ]; then
-            printf '[%s] service_cgroup_detached pid=%s from=%s to=/\n' "$(date '+%F %T')" "$$" "$group" >> "$DATA/guard.log"
+            printf '[%s] service_cgroup_detached pid=%s from=%s to=/\n' "$(date '+%F %T')" "$service_pid" "$group" >> "$DATA/guard.log"
         else
             cgroup_ready=0
-            printf '[%s] service_cgroup_detach_failed pid=%s group=%s\n' "$(date '+%F %T')" "$$" "$group" >> "$DATA/guard.log"
+            printf '[%s] service_cgroup_detach_failed pid=%s group=%s\n' "$(date '+%F %T')" "$service_pid" "$group" >> "$DATA/guard.log"
         fi
         ;;
 esac
 wait_pid=
 timer_pid=
-service_pid=$$
+
 service_stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
 stop_wait() { [ -z "$wait_pid" ] || kill "$wait_pid" 2>/dev/null || :; }
 stop_timer() {
@@ -434,7 +436,7 @@ while [ "$(getprop sys.boot_completed)" != 1 ] && [ "$n" -lt 120 ]; do
     sleep 3; n=$((n + 1))
 done
 printf '[%s] service_started pid=%s wake_mode=%s enabled=%s cgroup_ready=%s\n' \
-    "$(date '+%F %T')" "$$" "$(cat "$DATA/wake-mode" 2>/dev/null || echo passive)" \
+    "$(date '+%F %T')" "$service_pid" "$(cat "$DATA/wake-mode" 2>/dev/null || echo passive)" \
     "$(cat "$DATA/enabled" 2>/dev/null || echo 0)" "$cgroup_ready" >> "$DATA/guard.log"
 PATROL_RESTART_DELAY="${BERRY_PATROL_RESTART_DELAY_SECONDS:-5}"
 case "$PATROL_RESTART_DELAY" in ""|*[!0-9]*) PATROL_RESTART_DELAY=5;; esac
