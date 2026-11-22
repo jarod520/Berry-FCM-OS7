@@ -149,11 +149,11 @@ stop_maintenance_owner() {
         printf '[%s] maintenance_owner_identity_invalid; refusing to clear maintenance lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
         return 1
     }
+    stop_maintenance_child || return 1
     if ! maintenance_owner_identity; then
         rm -rf "$MAINTENANCE_LOCK"
         return 0
     fi
-    stop_maintenance_child || return 1
     maintenance_stop_pid="$maintenance_pid"
     maintenance_stop_stamp="$maintenance_stamp"
     kill -TERM "$maintenance_stop_pid" 2>/dev/null || :
