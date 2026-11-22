@@ -50,8 +50,8 @@ final class GuardOps {
             if (!PACKAGE.matcher(pkg).matches()) continue;
             cmd.append("p='").append(pkg).append("'; ");
             if (repair) {
-                cmd.append("if cmd package path --user 0 \"$p\" >/dev/null 2>&1 || ")
-                   .append("pm path --user 0 \"$p\" >/dev/null 2>&1; then ")
+                cmd.append("if cmd package path --user 0 \"$p\" 2>/dev/null | grep -q '^package:' || ")
+                   .append("pm path --user 0 \"$p\" 2>/dev/null | grep -q '^package:'; then ")
                    .append("if cmd package unstop --user 0 \"$p\" >/dev/null 2>&1; then ")
                    .append("echo \"$p|unstop_submitted\"; else echo \"$p|repair_failed\"; fi; ")
                    .append("else echo \"$p|not_installed\"; fi; ");
