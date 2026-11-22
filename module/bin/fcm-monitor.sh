@@ -1001,7 +1001,7 @@ status_json() {
 run_monitor_command() {
 case "${1:-status}" in
     status)
-        observe force_native || exit $?
+        observe || exit $?
         status_json
         ;;
     snapshot)
