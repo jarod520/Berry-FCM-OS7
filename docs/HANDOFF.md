@@ -1,3 +1,12 @@
+## 2026-11-22 smoke 测试脚本修复：学习 IP TTL 用例
+
+- 复核 `tests/fcm-monitor-smoke.sh` 末尾发现学习 IP TTL 用例存在实际脚本错误：一条 `grep -q` 命令缺少闭合引号和文件参数；第一次输出 PASS 后又残留一行将数据文件路径当作命令执行，并重复了整段 TTL 用例。
+- 该错误会使整个 smoke 脚本无法通过 shell 解析，或在执行到残留路径命令时因 `set -e` 提前退出；此前不能把这组用例视为有效测试。
+- 已将 TTL 用例重写为单一完整区块：检查刷新后只保留最新的 `IP|epoch` 记录、旧 plain-IP/非法/未来时间戳被丢弃、120 秒内允许已学习 MCS 对端的 443 辅助证据，以及 121 秒时过期后回到 unknown。
+- 对修复后的 TTL 区块单独执行 `sh -n`，语法检查通过；通过 GitHub 源码复核确认重复标记和将数据路径作为命令执行的残留行已消失。
+- **限制**：完整 `fcm-monitor-smoke.sh`、`ksu-wake-smoke.sh` 尚未实际执行；也未执行完整仓库 Shell 语法检查。不能据此宣称 smoke 通过。
+- `patrol.sh` 的无 timeout 兜底在存在 setsid 时尝试按独立进程组清理；当目标环境同时缺少 timeout 与 setsid 时，只能确认终止 monitor 主进程，不能保证所有后代进程退出。当前不加入复杂的递归 `/proc` 杀进程逻辑，需在目标设备确认 Toybox applet 清单后再决定。
+- 本轮未触发 workflow、编译、打包或发布；PR 仍未合并。
 
 
 ## 2026-11-22 历史自动 Smoke 失败复核
