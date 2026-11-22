@@ -19,8 +19,8 @@ grep -Fq 'sample_gap_age' "$APK"
 grep -Fq 'age=$((nowm-sample_mono))' "$APK"
 save_block="$(sed -n '/^save_state() {/,/^}/p' "$APK")"
 evidence_block="$(sed -n '/^write_evidence() {/,/^}/p' "$APK")"
-printf '%s\\n' "$save_block" | grep -Fq 'tmp="$STATE.$"'
-printf '%s\\n' "$evidence_block" | grep -Fq 'tmp="$EVIDENCE.$"'
+printf '%s\\n' "$save_block" | grep -Fq 'tmp="$STATE.$$"'
+printf '%s\\n' "$evidence_block" | grep -Fq 'tmp="$EVIDENCE.$$"'
 printf '%s\\n' "$save_block" | grep -Fq 'rm -f "$tmp"'
 printf '%s\\n' "$evidence_block" | grep -Fq 'rm -f "$tmp"'
 request_block="$(sed -n '/^request_reconnect() {/,/^}/p' "$APK")"
