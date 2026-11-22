@@ -5,7 +5,7 @@
 - 已修改 Toybox、KernelSU BusyBox 和 PATH timeout 三条分支：先执行无副作用的 `timeout -k 1 1 sh -c ':'` 能力探测，只有探测成功才走 timeout 快速路径；探测失败则进入既有独立 watchdog / process-group fallback，不再把参数错误当作有效巡检。
 - 新增 `tests/ksu-wake-smoke.sh` 场景：模拟 `--list` 报告 timeout、但实际拒绝 `-k` 的旧 BusyBox，要求巡检切换到 bounded watchdog 并清理挂起子进程。
 - 代码提交：`90c2b6fe5834e1c0790d80e905adf9a3fb2308ad`；测试提交：`d99aba4219a9015dcd12e2626f0a6fc9ee3dc96a`。
-- 本地可用环境验证：宿主 BusyBox v1.37.0 的 `timeout -k 1 1 sh -c ':'` 探测返回 0；对 5 秒命令执行 `timeout -k 1 1`，约 1 秒后以 143 退出。新增代码片段通过 `sh -n`。这些仅验证宿主 BusyBox 和新分支语法，不代表 Android KernelSU BusyBox 或完整 smoke 已通过。
+- 本地可用环境验证：宿主 BusyBox v1.37.0 的 `timeout -k 1 1 sh -c ':'` 探测返回 0；对 5 秒命令执行 `timeout -k 1 1`，约 1 秒后以 143 退出。新增 `run_bounded` 代码片段及 KSU smoke 新增测试块均通过 `sh -n`；旧 BusyBox mock 的 `--list` 能报告 timeout、但 `-k` 探测明确返回失败。以上只验证宿主 BusyBox、模拟器和新增片段，不代表 Android KernelSU BusyBox 或完整 smoke 已通过。
 - 静态回归：KSU smoke 的 95 条固定源码断言、FCM smoke 的 8 条固定源码断言全部匹配。
 - **未完成项**：完整 `tests/ksu-wake-smoke.sh`、`tests/fcm-monitor-smoke.sh` 和全仓 Shell syntax gate 尚未执行；Android 设备实测未执行。未触发 workflow、编译、打包或发布。
 
