@@ -429,7 +429,7 @@ grep -q 'service_started pid=' "$TMP/data/guard.log"
 locked_service_pid="$(cat "$TMP/data/service.lock/pid")"
 [ "$locked_service_pid" = "$service_pid" ]
 locked_service_stamp="$(cat "$TMP/data/service.lock/starttime")"
-actual_service_stamp="$(tr -d '\\n' < "/proc/$service_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
+actual_service_stamp="$(tr -d '\n' < "/proc/$service_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
 [ "$locked_service_stamp" = "$actual_service_stamp" ]
 wait "$startup_monitor_pid" 2>/dev/null || :
 startup_child_state="$(awk '{print $3}' "/proc/$startup_monitor_child/stat" 2>/dev/null || :)"
