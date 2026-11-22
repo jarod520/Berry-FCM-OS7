@@ -165,8 +165,13 @@ run_bounded() {
                     if bounded_group_identity_alive; then
                         "$group_tool" kill -TERM "-$bounded_pid" 2>/dev/null || :
                     else
-                        echo 'bounded_watchdog_group_identity_unverified_before_term' >> "$DATA/guard.log"
-                        exit 0
+                        if bounded_process_identity_alive; then
+                            echo 'bounded_watchdog_group_identity_unverified_before_term; falling back to direct child signal' >> "$DATA/guard.log"
+                            kill -TERM "$bounded_pid" 2>/dev/null || :
+                        else
+                            echo 'bounded_watchdog_group_identity_unverified_before_term; refusing signal' >> "$DATA/guard.log"
+                            exit 0
+                        fi
                     fi
                 else
                     kill -TERM "$bounded_pid" 2>/dev/null || :
@@ -177,7 +182,12 @@ run_bounded() {
                         if bounded_group_identity_alive; then
                             "$group_tool" kill -KILL "-$bounded_pgid" 2>/dev/null || :
                         else
-                            echo 'bounded_watchdog_group_identity_unverified_before_kill' >> "$DATA/guard.log"
+                            if bounded_process_identity_alive; then
+                                echo 'bounded_watchdog_group_identity_unverified_before_kill; falling back to direct child signal' >> "$DATA/guard.log"
+                                kill -KILL "$bounded_pid" 2>/dev/null || :
+                            else
+                                echo 'bounded_watchdog_group_identity_unverified_before_kill; refusing signal' >> "$DATA/guard.log"
+                            fi
                         fi
                     fi
                 elif bounded_process_identity_alive; then
