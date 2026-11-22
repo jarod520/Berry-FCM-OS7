@@ -38,6 +38,10 @@ case "$mode" in
   connected) echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:100';;
   connecting) echo 'SYN-SENT 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:101';;
   absent) echo 'TIME-WAIT 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:102';;
+  stalled)
+    echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:103'
+    echo ' cubic wscale:7,7 rto:204 rtt:20/2 unacked:1 retrans:3/10'
+    ;;
   unknown) echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228';;
   *) exit 2;;
 esac
@@ -138,6 +142,22 @@ assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_last_result=restored
 requests 4
 
+# TCP_INFO can identify an established-but-blackholed MCS socket.
+echo stalled > "$TMP/mode"
+settime 10258
+j="$(run status)"
+assert_json "$j" fcm_state=disconnected
+assert_json "$j" fcm_tcp_hint=stalled
+settime 10273
+run monitor >/dev/null
+requests 5
+echo connected > "$TMP/mode"
+settime 10274
+run monitor >/dev/null
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+requests 5
+
 # Continuous, successfully-readable absence is timed; one absent sample is not enough.
 echo absent > "$TMP/mode"
 settime 10300
@@ -159,4 +179,4 @@ assert_json "$j" fcm_state=unknown
 requests 5
 
 [ ! -s "$TMP/dumpsys.log" ] || fail "dumpsys was invoked by the monitor"
-echo "PASS: kernel-only detection, bounded absence confirmation, four-stage recovery, and dump independence"
+echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO stall recovery, four-stage recovery, and dump independence"
