@@ -234,11 +234,10 @@ scan_sockets() {
     raw=
     if command -v "$SS_BIN" >/dev/null 2>&1; then
         raw="$("$SS_BIN" -tinpe 2>/dev/null)" || raw=
-    [ -n "$raw" ] || raw="$("$SS_BIN" -tnpe 2>/dev/null)" || raw=
+        [ -n "$raw" ] || raw="$("$SS_BIN" -tnpe 2>/dev/null)" || raw=
     fi
 
-    # Fall back when ss does not expose the GMS UID specifically. Other UID
-    # annotations in ss output do not prove that GMS ownership was observable.
+    # If ss does not expose GMS UID ownership, use the root-readable kernel tables.
     if [ -z "$raw" ] || ! printf '%s\n' "$raw" | grep -Eq "uid:${uid}([^0-9]|$)"; then
         for table in "$PROC_NET_DIR/tcp" "$PROC_NET_DIR/tcp6"; do
             [ -r "$table" ] || continue
@@ -246,13 +245,12 @@ scan_sockets() {
               NR > 1 && $8 == u {
                 split($3,a,":"); port=toupper(a[2]); st=$4
                 if (port=="146C" || port=="146D" || port=="146E") {
-                  p=(port=="146C"?5228:(port=="146D"?5229:5230))
-                  if (st=="01" && rank<3) {rank=3; kind="connected"; transport="tcp" p; key=$2 ">" $3 "#" $10}
-                  else if (st=="02" && rank<1) {rank=1; kind="connecting"; transport="tcp" p; key=$2 ">" $3 "#" $10}
+                  if (st=="01" && rank<3) {rank=3; kind="connected"; transport="tcp" (port=="146C"?5228:(port=="146D"?5229:5230)); key=$2 ">" $3 "#" $10}
+                  else if (st=="02" && rank<1) {rank=1; kind="connecting"; transport="tcp" (port=="146C"?5228:(port=="146D"?5229:5230)); key=$2 ">" $3 "#" $10}
                 } else if (port=="01BB" && st=="01") {unverified443=1}
               }
               END {
-                if (rank>0) printf "%s|%s||%s|\n",kind,transport,key
+                if (rank>0) printf "%s|%s||%s|\\n",kind,transport,key
                 else if (unverified443) print "unknown||||proc_net_443_unverified"
                 else print "absent||||proc_net_no_mcs_socket"
               }' "$table"
@@ -265,7 +263,6 @@ scan_sockets() {
         return
     fi
 
-    # Refresh short-lived learned IPs from exact GMS UID-owned MCS sockets.
     refresh_learned_ips "$raw" "$uid"
     learned_ips="$(awk -F'|' -v now="$(num "$(now_epoch)")" '
       function valid_ip(ip, a,n,i) {
@@ -285,7 +282,10 @@ scan_sockets() {
     ips="$(printf '%s\n' "$ips" | awk 'NF && !seen[$0]++ {printf "%s%s",sep,$0;sep="|"}')"
     ip_count="$(printf '%s' "$ips" | awk -F'|' '{print NF}')"
     [ -n "$ips" ] || ip_count=0
-    printf '%s\\n' "$raw" | awk -v u="$uid" -v ips="|$ips|" -v ip_count="$ip_count" '
+
+    # ss -i exposes TCP_INFO counters where supported. A socket is considered
+    # stalled only when it has unacked data and at least three retransmissions.
+    printf '%s\n' "$raw" | awk -v u="$uid" -v ips="|$ips|" -v ip_count="$ip_count" '
       function normip(v){sub(/:[0-9]+$/, "", v);gsub(/^\\[|\\]$/, "", v);sub(/^::ffff:/, "", v);return tolower(v)}
       function known(v){return index(ips,"|" normip(v) "|")>0}
       function field_number(name, text, value) {
@@ -333,7 +333,7 @@ scan_sockets() {
         else if(rank==2) printf "stalled|%s|%s|%s|tcp_info_unacked_retrans\\n",transport,remote,bestkey
         else if(untrusted) print "unknown||||unverified_443_no_mtalk_dns"
         else print "absent||||no_fcm_socket_observed"
-      }'}'
+      }'
 }
 
 auto_enabled() {
