@@ -106,7 +106,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
     if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]; then
         now="$(awk '{print int($1)}' /proc/uptime)"
         case "$now" in ''|*[!0-9]*) now=0 ;; esac
-        # Read the native GMS state; TCP sockets are auxiliary evidence.
+        # Sample GMS UID MCS sockets every cycle; refresh native GMS state periodically and on confirmation.
         # It never restarts/kills GMS and never changes DNS/VPN/proxy/routing.
         if [ "$wake_event" = 1 ]; then
             printf '[%s] 定时器触发，检查 GMS 原生状态\n' "$(date '+%F %T')" >> "$DATA/guard.log"
