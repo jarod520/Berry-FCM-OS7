@@ -294,6 +294,10 @@ fi
 # Shared state and UI lifecycle regression.
 need 'MonitorStatus.resolve' "$src/MainActivity.java"
 need 'MonitorStatus.resolve' "$src/MonitorActivity.java"
+need '"gms_socket".equals(latest.optString("fcm_source"))' "$src/FcmMonitorService.java"
+if grep -Fq '"gms".equals(latest.optString("fcm_source"))' "$src/FcmMonitorService.java"; then
+  echo 'Manual recovery UI must not accept legacy dump-derived source' >&2; exit 1
+fi
 need 'Notification.DecoratedCustomViewStyle()' "$src/FcmMonitorService.java"
 need 'MonitorStatus.resolve(true, true, isRunning(), age,' "$src/FcmMonitorService.java"
 need 'syncChecked(enabled, prefs.monitorEnabled())' "$src/MonitorActivity.java"
