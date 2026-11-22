@@ -297,7 +297,7 @@ if [ "$1" = --list ]; then
     fi
     exit 0
 fi
-case "$1" incase "$1" in
+case "$1" in
     setsid) shift; exec /usr/bin/setsid "$@";;
     kill) shift; exec /bin/kill "$@";;
     timeout) shift;;
