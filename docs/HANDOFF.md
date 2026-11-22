@@ -789,8 +789,9 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 
 - 复审发现原 freshness gate 仅要求持久化 `fcm_sample_time >= check_started_epoch`。该时间戳只有秒级精度；如果上一轮有效样本与本轮巡检开始落在同一秒，monitor 在 observe 前以 rc=10（Root 前置检查）、11（数据目录初始化）、12（时间/uptime 不可用）或 14（owner 身份登记失败）退出，snapshot 仍可能读到旧时间戳并被误当成本轮新样本。
 - 修正：巡检在 monitor 前先读取一次 snapshot，保存 `previous_sample_epoch`；monitor 后仍要求新时间戳不早于本轮开始，同时必须严格大于前一快照时间戳。明确排除 10/11/12/13/14/124 这些前置失败、锁冲突或超时返回码。非零但已完成并持久化新样本的后续错误仍可刷新心跳。
-- 修正 KSU smoke 中 rc=10 夹具的错误前提：真实 `fcm-monitor.sh` 在 UID 非 root 时于 observe 前直接 exit 10，因此不能用它模拟“样本已提交后的非零返回”；改用 rc=42 表示样本提交后的模拟异常。新增 rc=14 + 旧样本时间戳回归用例，检查旧 snapshot 不得刷新 sample heartbeat。
-- 本次仅完成源码和测试夹具修改；尚未运行完整 `ksu-wake-smoke.sh`、`fcm-monitor-smoke.sh` 或全仓 Shell syntax gate。未编译、未打包、未触发 workflow、未合并、未发布。
+- 修正 KSU smoke 中 rc=10 夹具的错误前提：真实 `fcm-monitor.sh` 在 UID 非 root 时于 observe 前直接 exit 10，因此不能用它模拟“样本已提交后的非零返回”；改用 rc=42 表示采样后异常。新增三类防回归：固定同秒时钟下 rc=42 且前后 sample epoch 不变；rc=14 的 observe 前失败保留旧 sample；新时间戳但 snapshot 状态为 stale 时不刷新 heartbeat。测试 mock 的 sample epoch 改为动态且单调递增，修正原来硬编码 `1234` 的日志断言。
+- 最新静态断言复核：KSU smoke 正向 **132/132**、负向 **5/5** 全部匹配（7 个源码文件）；FCM smoke 固定源码断言 **2/2** 匹配。heartbeat gate 的 POSIX sh 片段语法检查与四种边界决策模拟通过；这不等于完整 smoke 或全仓 Shell 语法检查通过。
+- 完整 `ksu-wake-smoke.sh`、`fcm-monitor-smoke.sh`、全仓 Shell syntax gate 和 Android/KernelSU 实机测试仍未执行。未编译、未打包、未触发 workflow、未合并、未发布。
 
 ### 2026-11-22 stale snapshot 不得刷新 patrol sample heartbeat
 - **复审发现**：patrol 已比较 monitor 前后的 sample_epoch，并要求新样本时间属于本轮检查窗口；但 snapshot 还会把年龄超过 90 秒或 wall-clock 回拨导致年龄无法计算的样本标记为 stale。只比较 epoch 仍未显式尊重 snapshot 的 stale 判定。
