@@ -204,6 +204,9 @@ settime 70060
 run monitor
 assert_json "$(run snapshot)" fcm_state=disconnected
 [ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 2 ]
+settime 70080
+run status
+[ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 3 ]
 export BERRY_FCM_TEST_MODE=1
 echo 'PASS: native GMS dumps are rate-limited while socket samples remain continuous'
 
