@@ -544,6 +544,18 @@ patrol_alive() {
     patrol_identity_alive || return 1
     tr "\000" " " 2>/dev/null < "/proc/$patrol_pid/cmdline" | grep -Fq "patrol.sh"
 }
+prepare_patrol_start() {
+    # A patrol can exit while its bounded monitor child is still unwinding.
+    # Never start a replacement patrol until any recorded monitor owner/group
+    # has been identity-checked and cleaned; otherwise repeated rc=13 lock
+    # contention can create a restart loop with no fresh sample heartbeat.
+    if [ -s "$DATA/mcs-monitor.lock.owner" ] && ! stop_monitor_owner; then
+        printf '[%s] patrol_restart_blocked reason=monitor_owner_cleanup_unconfirmed\n' \
+            "$(date '+%F %T')" >> "$DATA/guard.log"
+        return 1
+    fi
+    return 0
+}
 start_patrol() {
     rm -f "$DATA/patrol.heartbeat" "$DATA/patrol.sample.heartbeat"
     sh "$MODDIR/bin/patrol.sh" </dev/null >> "$DATA/patrol.log" 2>&1 &
@@ -639,7 +651,13 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ]; do
         fi
         now_up="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
         case "$now_up" in ""|*[!0-9]*) now_up=0;; esac
-        if [ -z "$patrol_pid" ] && { [ "$patrol_started" -eq 0 ] || [ "$now_up" -ge $((patrol_started + PATROL_RESTART_DELAY)) ]; }; then start_patrol || :; fi
+        if [ -z "$patrol_pid" ] && { [ "$patrol_started" -eq 0 ] || [ "$now_up" -ge $((patrol_started + PATROL_RESTART_DELAY)) ]; }; then
+            if prepare_patrol_start; then
+                start_patrol || patrol_started="$now_up"
+            else
+                patrol_started="$now_up"
+            fi
+        fi
     else
         hb="$(cat "$DATA/patrol.heartbeat" 2>/dev/null)"
         now_up="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
