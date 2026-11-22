@@ -4,7 +4,7 @@
 >
 > - KernelSU FCM 连接检测与自动/手动重连决策，**不得使用 `dumpsys` 作为状态来源或必要前提**。读取失败、超时、解析失败、无输出都不得改变连接状态、阻断巡检或阻止下一种恢复动作。
 > - 当前 KSU 监控唯一决策来源是 GMS UID 归属的内核 TCP Socket 证据：优先使用 `ss -tinpe` 获取 UID/状态/端点及可用的 TCP_INFO；不支持时降级 `ss -tnpe`，再不可用时回退读取 `/proc/net/tcp` 与 `/proc/net/tcp6`。无法取得 GMS UID 或无法读取 Socket 表时，结果是“本轮证据不可用”，不是断联，也不是连接正常。
-> - 明确区分 TCP ESTABLISHED（只证明传输层连接）、SYN-SENT（连接建立中）、TCP_INFO 中 unacked>0 且连续 retransmits>=3 的疑似卡死 Socket、已成功读取 UID/Socket 表且 MCS Socket 连续缺失（达到阈值后再复采确认）、以及检测源不可用。TCP_INFO 只在 `ss -i`/内核提供相关字段时启用；字段不可读不能伪造健康或断联。不得将 TCP 建立冒充 FCM 心跳 ACK 或消息送达。
+> - 明确区分 TCP ESTABLISHED（只证明传输层连接）、SYN-SENT（连接建立中）、TCP_INFO 中 unacked>0 且连续 retransmits>=3，或 lastrcv>=1,800,000ms（30 分钟没有收到 TCP 数据，按内核 awake time 计）的疑似卡死 Socket、已成功读取 UID/Socket 表且 MCS Socket 连续缺失（达到阈值后再复采确认）、以及检测源不可用。TCP_INFO 只在 `ss -i`/内核提供相关字段时启用；字段不可读不能伪造健康或断联。不得将 TCP 建立冒充 FCM 心跳 ACK 或消息送达。
 > - 当前断联判定要求连续缺失至少 45 秒；连接中持续 60 秒后进入二次确认。采样空档超过 90 秒重置连续性锚点。未知/不可用样本不阻断下一轮巡检，也不伪造确定状态。
 > - 自动恢复按轮次尝试四个既有 GMS 定向动作：`GCM_RECONNECT` → `MCS_HEARTBEAT` → `ACTION_HEARTBEAT_NOW` → `GTALK_HEARTBEAT`。每次命令后继续采样；仍断联时按 30/45/60/90 秒递增退避进入下一动作，后续循环保持 90 秒。命令返回成功只表示广播请求已提交，不代表 GMS 已恢复；必须由后续内核 Socket 样本验证。四个动作均无效时继续按退避周期轮换，不停止巡检。
 > - `dumpsys` 未来如需保留，只能用于独立辅助诊断或展示计时，不得写入连接状态机、恢复门控、巡检心跳或重连动作选择。旧版原生 MCS 主判据、Close 事件判据、connectTime 停滞恢复方案均已废弃。
@@ -14,13 +14,13 @@
 
 - **代码分支**：`fix/rc5-mcs-patrol-20261122`。本轮只修改该分支，不合并 main、不发布、不触发 GitHub Actions。
 - **监控主脚本**：`module/bin/fcm-monitor.sh` 已删除 GMS service dump 轮询、dump 解析器、wrapper 重试、package stopped dump 门控、原生 Close 事件降级判据和 connectTime 停滞恢复分支。当前脚本不再调用 `dumpsys`。`ctl.sh` 仍将 `dumpsys package` 用于独立的应用 stopped/suspended/hidden 管理状态，将 `dumpsys activity broadcasts` 用于接收器诊断；这些数据不进入 MCS 状态机、巡检心跳或重连动作选择。其 GMS UID/installed 查询的 dump fallback 已删除。
-- **连接检测**：以 GMS UID 的 MCS TCP Socket 为唯一决策证据。先用 `ss -tinpe` 请求 Socket + TCP_INFO；该参数失败或未暴露 GMS UID 时再试 `ss -tnpe`，仍无法验证 UID 才回退 `/proc/net/tcp`、`tcp6`。精确 MCS 端口 5228–5230 和经过验证的 mtalk :443 候选继续区分；普通 GMS HTTPS 不作为 MCS。TCP ESTABLISHED 只记为传输层连接。TCP_INFO 可用时，只有 unacked>0 且连续 retransmits>=3 才标记 stalled，并经过持续时间与第二次采样确认后进入恢复。
+- **连接检测**：以 GMS UID 的 MCS TCP Socket 为唯一决策证据。先用 `ss -tinpe` 请求 Socket + TCP_INFO；该参数失败或未暴露 GMS UID 时再试 `ss -tnpe`，仍无法验证 UID 才回退 `/proc/net/tcp`、`tcp6`。精确 MCS 端口 5228–5230 和经过验证的 mtalk :443 候选继续区分；普通 GMS HTTPS 不作为 MCS。TCP ESTABLISHED 只记为传输层连接。TCP_INFO 可用时，unacked>0 且 retransmits>=3，或 `lastrcv>=1,800,000ms`（30 分钟没有收到 TCP 数据，不计系统 suspend 时间）才标记 stalled，并经过持续时间与第二次采样确认后进入恢复。实现通过 `ss -i` 暴露的 `unacked`、`retrans`、`lastrcv` 读取，不硬编码目标内核的 struct 偏移；字段不可用则不启用该分支。
 - **状态与计时**：已读取到 UID/Socket 表但无 MCS socket 时先累计连续缺失 45 秒，再复采确认；SYN-SENT 保留首次观察时间，达到 60 秒后复采确认。检测源不可用时记录 unavailable/unknown 样本，但 patrol 继续运行；超过 90 秒的采样空档重置连续性锚点。
 - **多阶段恢复**：依次尝试四种既有 GMS 定向广播动作 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、`GTALK_HEARTBEAT`。每轮先复采确认，执行后仍由后续 Socket 样本验证；未恢复则按 30/45/60/90 秒退避进入下一动作，之后每 90 秒继续轮换。广播失败同样消耗当前阶段并进入下一阶段，避免某个动作永久卡住恢复流程。
 - **后台 watchdog**：`patrol.sh` 的 bounded child 身份判断新增 zombie 状态排除，避免已退出但尚未 wait 回收的子进程被误认为仍存活、造成误超时。若目标系统既无可用 timeout applet，也无 setsid，watchdog 会先快照 monitor 子进程树的 PID/starttime，TERM 后再按身份复核 KILL，避免只杀 monitor 父进程、遗留子进程继续持有 flock。service 仍分别监督 patrol heartbeat 与有效 sample heartbeat。
-- **回归测试更新**：`tests/fcm-monitor-smoke.sh` 改为 kernel socket fixture，覆盖 connected、持续 SYN-SENT、TCP_INFO unacked/retrans stalled、多阶段四动作、后续 Socket 恢复、连续缺失阈值、检测源不可用，以及 monitor 不调用 dumpsys；`tests/ksu-wake-smoke.sh` 增加 bounded child zombie 与无 timeout、无 setsid 时进程树身份清理运行夹具。
+- **回归测试更新**：`tests/fcm-monitor-smoke.sh` 改为 kernel socket fixture，覆盖 connected、持续 SYN-SENT、TCP_INFO unacked/retrans 与 30 分钟 lastrcv stalled、多阶段四动作、后续 Socket 恢复、连续缺失阈值、检测源不可用，以及 monitor 不调用 dumpsys；`tests/ksu-wake-smoke.sh` 增加 bounded child zombie 与无 timeout、无 setsid 时进程树身份清理运行夹具。
 - **验证边界**：GitHub connector 仅提供源码读写，本轮没有本地 checkout/设备 Shell 执行能力；因此 smoke 脚本、全仓 `sh -n`、TCP_INFO 在目标 ROM 的实际输出、OriginOS 7/KSU 真机长时间后台验证尚未执行。`ss -i` 不提供 TCP_INFO 字段时，stalled 分支不可用，仍会继续使用 TCP 状态与缺失证据巡检，不伪造 TCP_INFO 结果。当前只能确认源码已更新并完成文本级结构核对，不能宣称测试通过。未编译、未打包、未触发 Actions、未合并、未发布。
-- **本轮提交**：监控主逻辑 `46dc0e5`、遗留路径清理 `2db2b72`、Socket/TCP_INFO scanner `ff8d634`、`41cb12f`、`5d122e1`、状态计时修正 `fd20e45` / `e198efb`、patrol zombie/进程树清理 `2a2fd54` / `2e47de3`、`a53fe4d`、`5da6a49`、`d83f996`、`665d19c`、`7abd34b`、`38edbd7`、kernel socket smoke `2d306f2` / `c4cff1b` / `46bf4e7` / `a2df8eb` / `1a7dd48` / `da6e8fe` / `801d609`、KSU watchdog 回归断言 `03a574f` / `a53fe4d` / `4276b02` / `ae2314e` / `e924bdd` / `ed79b3f`、ctl UID 查询清理 `69f344e`。交接文档以本次提交为准。
+- **本轮提交**：监控主逻辑 `46dc0e5`、遗留路径清理 `2db2b72`、Socket/TCP_INFO scanner `ff8d634`、`41cb12f`、`5d122e1`、状态计时修正 `fd20e45` / `e198efb`、patrol zombie/进程树清理 `2a2fd54` / `2e47de3`、`a53fe4d`、`5da6a49`、`d83f996`、`665d19c`、`7abd34b`、`38edbd7`、`17dbc95`、`f1fd48b`、`7258237`、`b05e145`、kernel socket smoke `2d306f2` / `c4cff1b` / `46bf4e7` / `a2df8eb` / `1a7dd48` / `da6e8fe` / `801d609`、`8b31915`、KSU watchdog 回归断言 `03a574f` / `a53fe4d` / `4276b02` / `ae2314e` / `e924bdd` / `ed79b3f`、`b6135e7`、ctl UID 查询清理 `69f344e`。交接文档以本次提交为准。
 
 ---
 
