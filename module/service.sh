@@ -59,7 +59,7 @@ case "$group" in
 esac
 wait_pid=
 timer_pid=
-service_pid=$
+service_pid=$$
 service_stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
 stop_wait() { [ -z "$wait_pid" ] || kill "$wait_pid" 2>/dev/null || :; }
 stop_timer() {
