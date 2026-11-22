@@ -283,7 +283,10 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
         case "$check_started_uptime" in ''|*[!0-9]*) check_started_uptime=0;; esac
         previous_sample="$(run_bounded 5 sh "$MODDIR/bin/fcm-monitor.sh" snapshot 2>/dev/null)"
         previous_sample_uptime="$(printf '%s\n' "$previous_sample" | sed -n 's/.*"fcm_sample_uptime":\([0-9]*\).*/\1/p')"
-        case "$previous_sample_uptime" in ''|*[!0-9]*) previous_sample_uptime=0;; esac
+        previous_sample_snapshot_valid=1
+        case "$previous_sample_uptime" in
+            ''|*[!0-9]*) previous_sample_snapshot_valid=0; previous_sample_uptime=0;;
+        esac
         check_wake_mode="$(cat "$DATA/wake-mode" 2>/dev/null || echo passive)"
         printf '[%s] fcm_check_start pid=%s uptime=%s wake=%s mode=%s\n' \
             "$(date '+%F %T')" "$$" "$now" "$wake_event" "$check_wake_mode" >> "$DATA/guard.log"
@@ -307,6 +310,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
            [ "$monitor_rc" -ne 12 ] && [ "$monitor_rc" -ne 13 ] &&
            [ "$monitor_rc" -ne 14 ] && [ "$monitor_rc" -ne 124 ] &&
            [ "$check_started_uptime" -gt 0 ] &&
+           [ "$previous_sample_snapshot_valid" = 1 ] &&
            [ -n "$observed_sample_state" ] && [ "$observed_sample_state" != stale ] &&
            [ "$observed_sample_uptime" -gt "$previous_sample_uptime" ] &&
            [ "$observed_sample_uptime" -ge "$check_started_uptime" ]; then
@@ -317,8 +321,8 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     mv -f "$DATA/patrol.sample.heartbeat.tmp" "$DATA/patrol.sample.heartbeat"
             fi
         else
-            printf '[%s] sample_heartbeat_not_refreshed rc=%s sample_epoch=%s sample_uptime=%s previous_sample_uptime=%s check_started_uptime=%s\n' \
-                "$(date '+%F %T')" "$monitor_rc" "$observed_sample_epoch" "$observed_sample_uptime" "$previous_sample_uptime" "$check_started_uptime" >> "$DATA/guard.log"
+            printf '[%s] sample_heartbeat_not_refreshed rc=%s sample_epoch=%s sample_uptime=%s previous_sample_uptime=%s previous_snapshot_valid=%s check_started_uptime=%s\n' \
+                "$(date '+%F %T')" "$monitor_rc" "$observed_sample_epoch" "$observed_sample_uptime" "$previous_sample_uptime" "$previous_sample_snapshot_valid" "$check_started_uptime" >> "$DATA/guard.log"
         fi
         if [ "$wake_event" = 1 ]; then
             printf '[%s] wake_gms_check_finished rc=%s %s\n' "$(date '+%F %T')" "$monitor_rc" "${summary:-snapshot=unavailable}" >> "$DATA/guard.log"
