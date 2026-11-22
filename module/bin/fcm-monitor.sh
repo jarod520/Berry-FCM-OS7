@@ -180,7 +180,12 @@ resolve_mtalk() {
             # shutdown can terminate them together with the monitor.
             "$TOYBOX_BIN" timeout --foreground -k 1 3 nslookup "$host" 2>/dev/null
         elif command -v timeout >/dev/null 2>&1; then
-            timeout --foreground 3 nslookup "$host" 2>/dev/null
+            timeout_help="$(timeout --help 2>&1 || :)"
+            case "$timeout_help" in
+                *--foreground*) timeout --foreground 3 nslookup "$host" 2>/dev/null;;
+                *"Run PROG."*) timeout 3 nslookup "$host" 2>/dev/null;;
+                *) :;;
+            esac
         else
             :
         fi | awk '/Address/ {ip=$NF; if(ip ~ /^[0-9A-Fa-f:.]+$/) print tolower(ip)}' >> "$tmp"
