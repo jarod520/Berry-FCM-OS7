@@ -7,7 +7,7 @@
 > - 明确区分 TCP ESTABLISHED（只证明传输层连接）、SYN-SENT（连接建立中）、TCP_INFO 中 unacked>0 且连续 retransmits>=3，或 lastrcv>=1,800,000ms（30 分钟没有收到 TCP 数据，按内核 awake time 计）的疑似卡死 Socket、已成功读取 UID/Socket 表且 MCS Socket 连续缺失（达到阈值后再复采确认）、以及检测源不可用。TCP_INFO 只在 `ss -i`/内核提供相关字段时启用；字段不可读不能伪造健康或断联。不得将 TCP 建立冒充 FCM 心跳 ACK 或消息送达。
 > - 当前断联判定要求连续缺失至少 45 秒；连接中持续 60 秒后进入二次确认。采样空档超过 90 秒重置连续性锚点。未知/不可用样本不阻断下一轮巡检，也不伪造确定状态。
 > - 每次确认断联后立即启动一个有界四动作恢复序列：`GCM_RECONNECT` → `MCS_HEARTBEAT` → `ACTION_HEARTBEAT_NOW` → `GTALK_HEARTBEAT`。广播失败立即尝试下一动作；广播被系统接受后等待约 2 秒并复采内核 Socket，仍明确为 connecting/disconnected 才继续下一动作，connected 立即停止，unknown/复采失败则停止本轮而不把未知当断联。四动作均未恢复时，才按 30/45/60/90 秒退避安排下一轮完整序列；广播返回成功不代表 GMS 已恢复，必须以后续内核 Socket 样本确认。
-> - `dumpsys` 未来如需保留，只能用于独立辅助诊断或展示计时，不得写入连接状态机、恢复门控、巡检心跳或重连动作选择。旧版原生 MCS 主判据、Close 事件判据、connectTime 停滞恢复方案均已废弃。
+> - `fcm-monitor.sh` 的连接检测和恢复决策禁止调用 `dumpsys`。当前仅 `ctl.sh` 的独立应用管理路径仍使用 `dumpsys package` 读取 stopped/suspended/hidden 状态以决定应用解冻，并用 `dumpsys activity broadcasts` 做接收器诊断；这些不是 MCS 连接状态证据，不得进入 MCS 状态机、巡检心跳或重连动作选择。若要求连独立应用管理也完全取消 dump 决策，则会同时取消 stopped-state 自动解冻功能，不能把它与 FCM 主检测混为一谈。旧版原生 MCS 主判据、Close 事件判据、connectTime 停滞恢复方案均已废弃。
 > - 后台 patrol 与单轮 monitor 必须解耦：单次检查超时/锁冲突/证据不可用/某个广播失败，都不能退出 patrol 主循环。service watchdog 继续分别监督 patrol 心跳和有效采样心跳；patrol 退出后，只有确认旧 monitor owner/process group 已清理，才允许启动替代 patrol，避免残留 monitor 导致重复巡检反复撞锁。身份无法确认时不得误杀无关进程，也不得启动重复巡检。
 
 ## 2026-11-23 KSU RC5 初始记录（后续复审修正见下节）
