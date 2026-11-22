@@ -339,6 +339,11 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     maintenance_watchdog_pid=$!
                     wait "$maintenance_child_pid"
                     fix_rc=$?
+                    if "$maintenance_group_tool" kill -0 "-$maintenance_child_pgid" 2>/dev/null; then
+                        "$maintenance_group_tool" kill -TERM "-$maintenance_child_pgid" 2>/dev/null || :
+                        sleep 1
+                        "$maintenance_group_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
+                    fi
                     kill "$maintenance_watchdog_pid" 2>/dev/null || :
                     wait "$maintenance_watchdog_pid" 2>/dev/null || :
                     maintenance_watchdog_pid=
