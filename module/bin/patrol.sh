@@ -4,6 +4,7 @@ MODDIR="$(cd "$MODDIR" 2>/dev/null && pwd)" || exit 1
 DATA=/data/adb/berry_fcm_ksu
 MAINTENANCE_LOCK="$DATA/maintenance.lock"
 TOYBOX_BIN="${BERRY_TOYBOX_BIN:-/system/bin/toybox}"
+KSU_BUSYBOX="${BERRY_KSU_BUSYBOX:-/data/adb/ksu/bin/busybox}"
 MONITOR_TIMEOUT="${BERRY_MONITOR_TIMEOUT_SECONDS:-25}"
 MONITOR_KILL_GRACE="${BERRY_MONITOR_KILL_GRACE:-3}"
 case "$MONITOR_TIMEOUT" in ""|*[!0-9]*) MONITOR_TIMEOUT=45;; esac
@@ -26,9 +27,9 @@ run_bounded() {
     seconds="$1"; shift
     if [ -x "$TOYBOX_BIN" ] && "$TOYBOX_BIN" --list 2>/dev/null | grep -qx timeout; then
         "$TOYBOX_BIN" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
-    elif [ -x /data/adb/ksu/bin/busybox ] &&
-         /data/adb/ksu/bin/busybox --list 2>/dev/null | grep -qx timeout; then
-        /data/adb/ksu/bin/busybox timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
+    elif [ -x "$KSU_BUSYBOX" ] &&
+         "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx timeout; then
+        "$KSU_BUSYBOX" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
     elif command -v timeout >/dev/null 2>&1; then
         timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
     else
