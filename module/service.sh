@@ -49,6 +49,8 @@ stop_stale_patrol() {
             "$(date '+%F %T')" "$stale_patrol_pid" "$stale_patrol_stamp" >> "$DATA/guard.log"
         return 1
     fi
+    printf '[%s] stale_patrol_stopped pid=%s start=%s before service restart\n' \
+        "$(date '+%F %T')" "$stale_patrol_pid" "$stale_patrol_stamp" >> "$DATA/guard.log"
     return 0
 }
 
