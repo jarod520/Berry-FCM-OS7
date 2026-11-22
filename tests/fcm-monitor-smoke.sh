@@ -32,6 +32,11 @@ else
     echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:101'
 fi
 MOCK
+cat > "$TMP/bin/nslookup" <<'MOCK'
+#!/bin/sh
+echo "$1" >> "$MCS_DNS_LOG"
+exit 1
+MOCK
 cat > "$TMP/bin/am" <<'MOCK'
 #!/bin/sh
 echo "$*" >> "$MCS_AM_LOG"
@@ -421,3 +426,19 @@ settime 40377
 run monitor; requests 4
 test "$(sed -n '4p' "$MCS_AM_LOG")" = 'broadcast --user 0 -a com.google.android.intent.action.GTALK_HEARTBEAT -p com.google.android.gms'
 echo 'PASS: staged GMS reconnect fallbacks are ordered and independently rate-limited'
+
+# Failed DNS lookups are cached too; repeated unknown samples must not spend
+# up to six seconds resolving mtalk on every 20-second patrol cycle.
+export BERRY_FCM_DATA="$TMP/dns-failure-data"
+mkdir -p "$BERRY_FCM_DATA"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+export MCS_SS_MODE=unknown MCS_DNS_LOG="$TMP/dns.log"
+: > "$MCS_DNS_LOG"
+settime 50000
+printf '%s\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
+run status
+[ "$(wc -l < "$MCS_DNS_LOG" | tr -d ' ')" = 2 ]
+settime 50020
+run status
+[ "$(wc -l < "$MCS_DNS_LOG" | tr -d ' ')" = 2 ]
+echo 'PASS: failed mtalk DNS lookup is cached for 10 minutes'
