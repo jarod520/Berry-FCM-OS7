@@ -763,3 +763,9 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - 修正：把 heartbeat 更新移到 monitor 后的 snapshot 之后，解析持久化的 fcm_sample_time，仅当其不早于本轮 check_started_epoch 且 rc 不是 13/124 时刷新。未知状态若本轮确实更新了 sample_time，仍然刷新；只有旧样本/无样本才保留 stale 证据并记录 sample_heartbeat_not_refreshed。
 - 回归场景：测试 mock 改为持久化动态 sample epoch；新增 observe 前失败 rc=12 场景，要求 heartbeat 不刷新；保留 unknown 有效采样和 monitor 后置非零 rc=10 的有效采样场景。
 - 验证边界：需复核 smoke 固定断言与脚本语法；完整 KSU/FCM smoke、全仓 Shell gate、Android/KernelSU 实机验证仍未执行。未触发 Actions、构建、编译、打包、合并或发布。
+
+### 2026-11-22 本轮最终静态检查
+- KSU smoke 固定源码断言：正向 **124/124**、负向 **5/5** 全部匹配，覆盖 6 个脚本源码文件。注意这是逐条匹配测试脚本中的 grep 约束，不代表执行了 KSU smoke。
+- sample heartbeat 新增 rc=12（observe 前失败）回归场景；fixture 只在模拟本轮成功 observe 后更新 sample epoch。rc=10（采样已完成但后续返回非零）和 state=unknown（有效未知样本）仍应刷新 heartbeat。
+- sample heartbeat 判定片段与 bounded watchdog 身份复核片段均通过宿主 sh -n 局部语法解析；未执行全仓语法 gate、完整 KSU/FCM smoke 或 Android/KernelSU 实机测试。
+- 未触发 GitHub Actions、构建、编译、打包、合并或发布。
