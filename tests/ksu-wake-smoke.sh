@@ -402,7 +402,6 @@ cat > "$TMP/fcm-monitor.sh" <<'MOCK'
 #!/bin/sh
 /bin/sleep 30 &
 echo "$!" > "$TEST_DIR/startup-monitor-child-pid"
-wait
 MOCK
 chmod +x "$TMP/fcm-monitor.sh"
 "$TMP/bin/toybox" setsid sh "$TMP/fcm-monitor.sh" &
@@ -417,7 +416,8 @@ while [ ! -s "$TMP/startup-monitor-child-pid" ] && [ "$n" -lt 60 ]; do
 done
 test -s "$TMP/startup-monitor-child-pid"
 startup_monitor_child="$(cat "$TMP/startup-monitor-child-pid")"
-printf '%s %s %s 1\n' "$startup_monitor_pid" "$startup_monitor_stamp" "$startup_monitor_pgid" > "$TMP/data/mcs-monitor.lock.owner"
+wait "$startup_monitor_pid" 2>/dev/null || :
+printf '%s %s\n' "$startup_monitor_pid" "$startup_monitor_stamp" > "$TMP/data/mcs-monitor.lock.owner"
 sh "$TMP/module/service.sh" &
 service_pid=$!
 n=0
