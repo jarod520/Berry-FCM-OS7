@@ -116,7 +116,7 @@ stop_maintenance_child() {
     if kill -0 "$child_file_pid" 2>/dev/null; then
         [ "$(proc_start_time "$child_file_pid")" = "$child_file_stamp" ] &&
             [ "$(proc_group_id "$child_file_pid")" = "$child_file_pgid" ] || {
-                printf '[%s] maintenance_child_pid_reused_or_moved pid=%s; refusing group signal\\n' "$(date '+%F %T')" "$child_file_pid" >> "$DATA/guard.log"
+                printf '[%s] maintenance_child_pid_reused_or_moved pid=%s; refusing group signal\n' "$(date '+%F %T')" "$child_file_pid" >> "$DATA/guard.log"
                 return 1
             }
     fi
