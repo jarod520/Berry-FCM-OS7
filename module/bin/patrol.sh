@@ -277,6 +277,12 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
         fi
         check_started_epoch="$(date +%s 2>/dev/null)"
         case "$check_started_epoch" in ''|*[!0-9]*) check_started_epoch=0;; esac
+        # Capture the persisted sample before running the monitor. Wall-clock
+        # seconds have one-second granularity, so >= check_started alone can
+        # mistake the previous sample for a fresh one when both share a second.
+        previous_sample="$(run_bounded 5 sh "$MODDIR/bin/fcm-monitor.sh" snapshot 2>/dev/null)"
+        previous_sample_epoch="$(printf '%s\n' "$previous_sample" | sed -n 's/.*"fcm_sample_time":\([0-9]*\).*/\1/p')"
+        case "$previous_sample_epoch" in ''|*[!0-9]*) previous_sample_epoch=0;; esac
         check_wake_mode="$(cat "$DATA/wake-mode" 2>/dev/null || echo passive)"
         printf '[%s] fcm_check_start pid=%s uptime=%s wake=%s mode=%s\n' \
             "$(date '+%F %T')" "$$" "$now" "$wake_event" "$check_wake_mode" >> "$DATA/guard.log"
@@ -290,8 +296,14 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
         summary="$(printf '%s\n' "$sample" | sed -n 's/.*"fcm_state":"\([a-z_]*\)".*"fcm_sample_time":\([0-9]*\).*"fcm_recovery_decision":"\([a-z_]*\)".*/state=\1 sample_epoch=\2 recovery=\3/p')"
         observed_sample_epoch="$(printf '%s\n' "$summary" | sed -n 's/.*sample_epoch=\([0-9][0-9]*\).*/\1/p')"
         case "$observed_sample_epoch" in ""|*[!0-9]*) observed_sample_epoch=0;; esac
-        if [ "$monitor_rc" -ne 13 ] && [ "$monitor_rc" -ne 124 ] &&
+        # These codes fail before observe() can commit a sample. For all
+        # other results, require the persisted sample epoch to advance beyond
+        # the pre-check snapshot as well as belong to this check window.
+        if [ "$monitor_rc" -ne 10 ] && [ "$monitor_rc" -ne 11 ] &&
+           [ "$monitor_rc" -ne 12 ] && [ "$monitor_rc" -ne 13 ] &&
+           [ "$monitor_rc" -ne 14 ] && [ "$monitor_rc" -ne 124 ] &&
            [ "$check_started_epoch" -gt 0 ] &&
+           [ "$observed_sample_epoch" -gt "$previous_sample_epoch" ] &&
            [ "$observed_sample_epoch" -ge "$check_started_epoch" ]; then
             sample_now="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
             case "$sample_now" in ""|*[!0-9]*) sample_now=0;; esac
@@ -300,8 +312,8 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     mv -f "$DATA/patrol.sample.heartbeat.tmp" "$DATA/patrol.sample.heartbeat"
             fi
         else
-            printf '[%s] sample_heartbeat_not_refreshed rc=%s sample_epoch=%s check_started=%s\n' \
-                "$(date '+%F %T')" "$monitor_rc" "$observed_sample_epoch" "$check_started_epoch" >> "$DATA/guard.log"
+            printf '[%s] sample_heartbeat_not_refreshed rc=%s sample_epoch=%s previous_sample_epoch=%s check_started=%s\n' \
+                "$(date '+%F %T')" "$monitor_rc" "$observed_sample_epoch" "$previous_sample_epoch" "$check_started_epoch" >> "$DATA/guard.log"
         fi
         if [ "$wake_event" = 1 ]; then
             printf '[%s] wake_gms_check_finished rc=%s %s\n' "$(date '+%F %T')" "$monitor_rc" "${summary:-snapshot=unavailable}" >> "$DATA/guard.log"
