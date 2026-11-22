@@ -1,3 +1,29 @@
+# Berry-FCM-OS7 开发交接
+
+> **最高优先级架构约束（2026-11-23 起生效，覆盖下方所有旧记录）**
+>
+> - KernelSU FCM 连接检测与自动/手动重连决策，**不得使用 `dumpsys` 作为状态来源或必要前提**。读取失败、超时、解析失败、无输出都不得改变连接状态、阻断巡检或阻止下一种恢复动作。
+> - 当前 KSU 监控唯一决策来源是 GMS UID 归属的内核 TCP Socket 证据：优先使用可提供 UID/状态/端点的 `ss -tnpe`；不可用时回退读取 `/proc/net/tcp` 与 `/proc/net/tcp6`。无法取得 GMS UID 或无法读取 Socket 表时，结果是“本轮证据不可用”，不是断联，也不是连接正常。
+> - 明确区分 TCP ESTABLISHED（只证明传输层连接）、SYN-SENT（连接建立中）、已成功读取 UID/Socket 表且 MCS Socket 连续缺失（达到阈值后再复采确认）、以及检测源不可用。不得将 TCP 建立冒充 FCM 心跳 ACK 或消息送达。
+> - 当前断联判定要求连续缺失至少 45 秒；连接中持续 60 秒后进入二次确认。采样空档超过 90 秒重置连续性锚点。未知/不可用样本不阻断下一轮巡检，也不伪造确定状态。
+> - 自动恢复按轮次尝试四个既有 GMS 定向动作：`GCM_RECONNECT` → `MCS_HEARTBEAT` → `ACTION_HEARTBEAT_NOW` → `GTALK_HEARTBEAT`。每次命令后继续采样；仍断联时按 30/45/60/90 秒递增退避进入下一动作，后续循环保持 90 秒。命令返回成功只表示广播请求已提交，不代表 GMS 已恢复；必须由后续内核 Socket 样本验证。四个动作均无效时继续按退避周期轮换，不停止巡检。
+> - `dumpsys` 未来如需保留，只能用于独立辅助诊断或展示计时，不得写入连接状态机、恢复门控、巡检心跳或重连动作选择。旧版原生 MCS 主判据、Close 事件判据、connectTime 停滞恢复方案均已废弃。
+> - 后台 patrol 与单轮 monitor 必须解耦：单次检查超时/锁冲突/证据不可用/某个广播失败，都不能退出 patrol 主循环。service watchdog 继续分别监督 patrol 心跳和有效采样心跳；身份无法确认时不得误杀无关进程，也不得启动重复巡检。
+
+## 2026-11-23 KSU RC5：移除 dumpsys 决策链、内核 Socket 主检测与多阶段恢复
+
+- **代码分支**：`fix/rc5-mcs-patrol-20261122`。本轮只修改该分支，不合并 main、不发布、不触发 GitHub Actions。
+- **监控主脚本**：`module/bin/fcm-monitor.sh` 已删除 GMS service dump 轮询、dump 解析器、wrapper 重试、package stopped dump 门控、原生 Close 事件降级判据和 connectTime 停滞恢复分支。当前脚本不再调用 `dumpsys`。
+- **连接检测**：以 GMS UID 的 MCS TCP Socket 为唯一决策证据。先用 `ss -tnpe` 获取 socket 状态和 UID；没有可验证 UID 标记时回退 `/proc/net/tcp`、`tcp6`。精确 MCS 端口 5228–5230 和经过验证的 mtalk :443 候选继续区分；普通 GMS HTTPS 不作为 MCS。TCP ESTABLISHED 只记为传输层连接。
+- **状态与计时**：已读取到 UID/Socket 表但无 MCS socket 时先累计连续缺失 45 秒，再复采确认；SYN-SENT 保留首次观察时间，达到 60 秒后复采确认。检测源不可用时记录 unavailable/unknown 样本，但 patrol 继续运行；超过 90 秒的采样空档重置连续性锚点。
+- **多阶段恢复**：依次尝试四种既有 GMS 定向广播动作 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、`GTALK_HEARTBEAT`。每轮先复采确认，执行后仍由后续 Socket 样本验证；未恢复则按 30/45/60/90 秒退避进入下一动作，之后每 90 秒继续轮换。广播失败同样消耗当前阶段并进入下一阶段，避免某个动作永久卡住恢复流程。
+- **后台 watchdog**：`patrol.sh` 的 bounded child 身份判断新增 zombie 状态排除，避免已退出但尚未 wait 回收的子进程被误认为仍存活、造成误超时。service 仍分别监督 patrol heartbeat 与有效 sample heartbeat。
+- **回归测试更新**：`tests/fcm-monitor-smoke.sh` 改为 kernel socket fixture，覆盖 connected、持续 SYN-SENT、多阶段四动作、后续 Socket 恢复、连续缺失阈值、检测源不可用，以及 monitor 不调用 dumpsys；`tests/ksu-wake-smoke.sh` 增加 bounded child zombie 防回归断言。
+- **验证边界**：GitHub connector 仅提供源码读写，本轮没有本地 checkout/设备 Shell 执行能力；因此 smoke 脚本、全仓 `sh -n`、OriginOS 7/KSU 真机长时间后台验证尚未执行。当前只能确认源码已更新并完成文本级结构核对，不能宣称测试通过。未编译、未打包、未触发 Actions、未合并、未发布。
+- **本轮提交**：监控主逻辑 `46dc0e5`、遗留路径清理 `2db2b72`、patrol zombie 身份复核 `2a2fd54`、kernel socket smoke `2d306f2` / `c4cff1b`、KSU watchdog 回归断言 `03a574f`。交接文档以本次提交为准。
+
+---
+
 ## 2026-11-22 BusyBox timeout -k 能力探测
 
 - 复核 `module/bin/patrol.sh` 发现旧逻辑只通过 `--list` 判断 timeout applet 是否存在，随后无条件传入 `-k`。这把“有 timeout applet”错误等同于“支持 -k”。
@@ -76,14 +102,14 @@
 - `run_bounded` 的无 timeout 兜底：存在 `setsid` 时可按独立进程组清理 monitor 及子进程；目标系统同时缺少 timeout 与 setsid 时，只能确认终止 monitor 主进程，无法证明所有后代均退出。暂不引入依赖 `/proc` 递归枚举的复杂杀进程逻辑，后续结合目标设备实际 Toybox applet 清单确认是否需要调整。`LEARNED_IPS` 同一启动周期内长期保留，仍存在远端 IP 后续复用时将普通 GMS HTTPS :443 误识别为 MCS 的理论风险；需先完善有 TTL 的回归样例再改动，当前不把理论风险当作已发生故障。
 - 当前仍未运行两个完整 smoke 套件、未触发构建/打包、未合并 PR、未发布 Release，也未进行 OriginOS 7 实机验证。工作流保持仅 `workflow_dispatch`；按用户要求，全部代码修改与检查结束后再告知用户可以进行一次完整构建，不提前触发。
 
-## 2026-11-22 KSU RC7：原生 Close 辅助判据、分阶段恢复与卸载清理
+## 历史实现（已废弃，2026-11-23 起不得沿用）：2026-11-22 KSU RC7 原生 Close 辅助判据
 
 - 基于 RC6 提交 `d9312e44a6b0c4110a6dbc383c39def40bde131b`；本轮候选版本 `1.0-rc.7 / 10007`，仍属于测试候选，不合并 main、不发布正式 Release。
-- GMS dump 只有 ActivityManager wrapper 时仍保留 unknown；Root 可见的精确 GMS UID MCS TCP 缺失连续 30 秒后才转为断联，并经第二次采样确认。连续巡检超过 15 分钟不会清零断联计时；只有采样空档超过 90 秒才重置连续性锚点。持续 SYN-SENT 会保留首次观察时间，达到 60 秒进入恢复判断。最近 Close 事件在 Socket 所有权不可读、持续 30–900 秒且没有更新的 Connected 事件时，作为有限期辅助证据；单次 Close 不直接触发重连。
-- 自动恢复按连续未恢复轮次依次尝试 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、`GTALK_HEARTBEAT`；每轮只发送一种动作，后续轮次必须由新采样再次确认仍断联并经过退避。广播返回成功只记录为已请求，不等于 GMS 已恢复；恢复必须由后续原生状态或精确 MCS Socket 证据确认。
+- **历史方案，已废弃**：曾以 GMS dump 为主、Socket 缺失/Close 事件为后备。该方案已被 2026-11-23 的内核 Socket 唯一决策方案替代；不得恢复 Close 事件或 dump 作为断联判据。
+- 自动恢复四动作顺序仍保留，但当前已改为每轮只依赖内核 Socket 二次确认；不得等待原生 dump。广播返回成功只记录为已请求，不等于 GMS 已恢复；恢复只由后续内核 Socket 样本确认传输层恢复。
 - service 独立监督 patrol：PID/starttime/cmdline 身份校验；同时监控 patrol 进程心跳和成功完成的 FCM 样本心跳，避免 patrol 循环仍在运行、但监控锁长期被占用时被误判为健康；记录 monitor 锁所有者 PID/starttime，样本超时后只终止身份核验通过的卡死 monitor。service 清理 worker 未确认退出时保留锁；新 service 回收旧锁前先核验并终止遗留 patrol，无法确认退出则拒绝启动重复巡检。首次心跳缺失也有 90 秒兜底。停止 monitor/timer/patrol 使用有界 TERM/KILL 等待，未确认退出时不启动重复 worker。热安装/卸载等待旧 service 最长 24 秒，KILL 后再复核；热安装若旧进程仍存活则取消新启动。保留数据目录配置与历史，不强制重启。
 - 开源参考：继续参考 microG GmsCore 的 MCS 连接/心跳恢复模型及 AOSP Toybox `timeout` 的进程组超时清理。本项目当前第四阶段使用 `GTALK_HEARTBEAT`；未将 HyperOS 专用 Chimera Provider 查询直接移植到 OriginOS。DNS 解析失败也缓存 10 分钟，避免每轮重复等待。
-- 本轮巡检兜底修复：没有可用 `timeout` applet 时不再返回 125 并跳过采样；改用 watchdog 限时，若 Toybox / KernelSU BusyBox 同时提供 `setsid` 与 `kill`，按独立进程组清理 monitor 子进程。后台每轮读取 Socket，原生 `GcmService` dumpsys 默认每 60 秒刷新一次；手动恢复及原生二次确认强制刷新，`no_current_state` 额外重试也限制为每 60 秒最多一次。两次原生采样之间，最近一次有效 connected 状态不会因 Socket 缺失/所有权不可读而被误判断联；最近一次有效断开/连接中状态也不会因 Socket 缺失/不可读或暂时 ESTABLISHED 而被覆盖，须等下一次原生采样或独立 Socket 缺失阈值确认状态变化。新增对应 smoke 用例；目前尚未执行整套 smoke 或完整构建，不能记为测试通过。
+- **历史巡检设计，已废弃**：当时每 60 秒刷新一次 GMS dumpsys，并在 Socket 证据不足时保留原生状态。现版本已完全移除该刷新与状态保留门控；Socket 证据不可用只影响本轮状态，不影响 patrol 下一轮执行。
 - 当前进度：源码与回归用例仍在集中修复，尚未执行本轮完整 smoke 套件、完整构建或 OriginOS 7 实机验证。`.github/workflows/` 下所有工作流已改为仅 `workflow_dispatch`，不再由 push/PR 自动触发。按用户要求，全部代码修改与静态检查完成后，只手动触发一次完整构建；不自动编译、不自动打包、不合并、不发布。
 
 # Berry-FCM-OS7 开发进度与接续交接
@@ -105,11 +131,11 @@
 
 > 最近整理：2026-11-22。**唯一产品基线：** [PRODUCT_PLAN.md](PRODUCT_PLAN.md)。本文件只记录当前真实状态、构建证据、未验证项目和接续动作。全部代码和文档在 GitHub；不跳转 Work。用户电脑文件仅允许存放 D:\Codex，未获许可不触碰 C 盘。
 
-## 0. 2026-11-22 接续：SU/KSU 原生状态与长采样空档
+## 历史接续记录（已被 2026-11-23 内核 Socket 主判据取代）：2026-11-22 SU/KSU 状态与长采样空档
 
 - 用户确认这次检查的是 SU/KSU 版本；手机持续亮屏，后台模式设为定时巡检 1 分钟。现有记录中的空档为 128、162、512 秒。**不能用熄屏 Doze 解释，也不能从旧日志判定是定时器、GMS 检查调用、守护修复命令还是服务进程造成**；旧版没有逐次调用的开始/结束证据。
 - `v1.0-rc.4` KSU 测试包在 `guard.log` 记录 `service_started`、每次 `fcm_check_start/end` 及每轮 `maintenance_start/end`；`wake-timer.log` 自带 `wake_timer_armed/fired`、迟到和 suspend 时长。以后可按最后一条完整记录定位空档所在阶段。**这些字段不会补写旧空档。**
-- 当 `dumpsys` 只有 ActivityManager wrapper 行时，SU/KSU 将读取 Root 可见的精确 GMS UID MCS TCP：连接/连接中作为正证据；连续缺失至少 60 秒并复核后才可判定断开并进入原有恢复判断。普通 443、UID 表读取失败不当作断联。APK UID2000 不使用 Root 才能观察到的缺失判断。
+- **历史方案，已废弃**：曾在 dump wrapper 无状态时用 Root Socket 作为后备；现 KSU 版本不再读取 dump，内核 Socket 是唯一连接状态决策源。
 - 若原生仍报 Connected 且 `connectTime` 正数连续 5 分钟不增长，SU/KSU 会二次采样；自动守护开启时仅发定向 `GCM_RECONNECT`，不会 force-stop GMS。计时恢复则取消。
 - 更新和安装：保留 KernelSU 官方 hot-install 入口，启动新服务替代旧服务；源码没有发出设备 reboot 命令。`reboot` 事件只是观察到启动周期变化。
 - 诊断与恢复源码在 `71e6ba4` 已推送 `main`；其最近一次 GitHub Actions 未通过，RC4 不宣称 CI 验证完成。本地 KSU 包基于该提交，仅升级模块版本号并编译 ARM64 定时器；本轮未推送版本号更新、未创建 Release、未运行回归、未在手机实测。后续根据手机日志和失败 CI 定位修复，再走云端完整验证与测试 Release。
@@ -292,7 +318,7 @@
 - **CI 使用约束**：本次各模块 UI/后端与回归测试先全部暂存 GitHub blobs，最后只发布一个 main 提交，触发一次 Actions；不产生中间测试版本、不自动发布 GitHub Release。CI 通过后才确认构建版本。
 - **未实测**：OriginOS 私有无线调试入口是否直达、系统是否禁止通知/新 FGS、GMS Socket 对 uid=2000 可见性、完整长期保活以及旧版本直接覆盖安装。实机验证由用户负责。
 
-## 2026-11-18 实机纠错：GMS MCS 原生状态优先（未合并、未编译）
+## 历史方案（已废弃）：2026-11-18 实机纠错——GMS MCS 原生状态优先（未合并、未编译）
 
 alpha.43 的用户截图证明 TCP Socket 观测不能代表 FCM MCS 应用层状态。Google FCM Diagnostics 在 Wi-Fi 无 GFW 限制的环境下显示 Connecting、alt7-mtalk.google.com:5228、Time disconnected 55:15、ERR_IO_RST_HB；此前约 06:46 起长时间重连失败。后续 08:05 起 Wi-Fi/Cell 交替是用户出门造成的网络变化，不能混入之前的稳定网络异常分析。心跳调度延迟在截图中为 68～143 秒量级，仅为诊断线索，不确定根因。
 
@@ -308,7 +334,7 @@ APK 新增独立原生状态模拟回归脚本：已登录、TCP 已建立但 MC
 
 源码实现提交：[3e43c1a](https://github.com/jarod360/Berry-FCM-OS7/commit/3e43c1a2b39947b93b63f5748753ff0e7d809abc)，仍位于 `dev/native-fcm-state`，未合并 main，未构建 APK 或 KernelSU 安装包。
 
-- 原生 MCS 状态为唯一在线判据；区分 `permission_denied`、`timeout`、`service_unavailable`、`gms_stopped`、`empty` 等具体读取异常。部分 dumpsys 超时不接受为当前在线证据。
+- **已废弃的旧约束**：曾把原生 MCS/dumpsys 当作唯一在线判据；该设计已被本文件顶部的 2026-11-23 最高优先级架构约束彻底取代。
 - 默认允许自动恢复（可单独关闭而继续监测）。应用默认网络变化后观察 45 秒，无活动网络或网络信息不可读时暂停自动干预；应用默认网络只是保守门槛，不证明 GMS 具体路由。原生未连接达到 120 秒、持续观测至少 15 秒后才请求 GCM_RECONNECT；连续重试间隔为 5、10、15 分钟，上限 15 分钟，恢复后清除连续重试级别。手动请求也先读取原生状态并作 60 秒防重复限制。
 - 广播退出码及拒绝/异常文本共同判断请求是否得到提交确认；只有后续原生状态恢复才记录观察到恢复，不能证明广播造成恢复。
 - ADB 命令改为直接命令流、随机完成标记、45 秒等待上限及取消处理，规避交互 Shell 回显、EOF 时序与无限阻塞；保留调用方原有结果解析约定。脚本安装先写临时文件并 `sh -n`，成功后替换并校验安装完成标记；合并重复采样和重连请求。
