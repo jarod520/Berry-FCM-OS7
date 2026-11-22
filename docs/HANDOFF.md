@@ -1,3 +1,12 @@
+## 2026-11-22 KSU lifecycle smoke 重复块清理与 Toybox timeout 核实
+
+- 复核 `tests/ksu-wake-smoke.sh` 发现测试主体从 hotinstall 顺序断言开始被重复追加 4 次；每个重复块前还有一条裸执行 `"$ROOT/module/bin/patrol.sh"` 的孤立命令，且后续重复块缺少 `hot_stop_line` 赋值。原脚本会在 `set -e` 下提前失败，不能作为有效验收。
+- 已保留第一份完整测试主体（312 行），删除后续三份重复主体和孤立命令。源码复核确认 `hot_enabled_line`、`hot_stop_line`、hung monitor、orphan patrol、no-timeout fallback 等核心场景现在各保留一份。
+- 与前一项 FCM smoke 修复合并核对：学习 IP TTL 区块只有一份；不存在将 learned-IP 数据文件当命令执行的行；TTL 区块单独 `sh -n` 通过。
+- **Toybox 方案核实**：上游 Toybox `timeout` 默认创建独立进程组，并对负 PID 发送 TERM/KILL，因此该 applet 能将超时信号传给命令的进程组及其子进程；当前 patrol 在检测到 Toybox timeout 时优先使用它。来源： https://github.com/landley/toybox/blob/master/toys/other/timeout.c 。这证明上游实现的行为，但尚不能证明用户设备上的具体 Toybox 构建包含该 applet。
+- 无 timeout 时，当前脚本检测 setsid + kill 后自行创建会话并按进程组清理；同时缺少 timeout 与 setsid 时只能直接终止 monitor PID，不能保证所有后代退出。暂不添加复杂递归杀进程实现。
+- **验证状态**：本轮只做源码结构检查与修复后 TTL 片段 `sh -n`；两个完整 smoke 套件尚未运行，完整 Shell 语法检查、实际 Android/KernelSU 运行均未完成。不得标记测试通过或允许构建。
+- 未触发任何 workflow、编译、打包或发布；PR 未合并。
 ## 2026-11-22 smoke 测试脚本修复：学习 IP TTL 用例
 
 - 复核 `tests/fcm-monitor-smoke.sh` 末尾发现学习 IP TTL 用例存在实际脚本错误：一条 `grep -q` 命令缺少闭合引号和文件参数；第一次输出 PASS 后又残留一行将数据文件路径当作命令执行，并重复了整段 TTL 用例。
