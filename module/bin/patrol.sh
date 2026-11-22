@@ -84,7 +84,8 @@ maintenance_child_alive() {
 bounded_process_identity_alive() {
     [ -n "$bounded_pid" ] && [ -n "$bounded_stamp" ] &&
         kill -0 "$bounded_pid" 2>/dev/null &&
-        [ "$(proc_start_time "$bounded_pid")" = "$bounded_stamp" ]
+        [ "$(proc_start_time "$bounded_pid")" = "$bounded_stamp" ] &&
+        [ "$(proc_state "$bounded_pid" 2>/dev/null)" != Z ]
 }
 bounded_group_identity_alive() {
     bounded_process_identity_alive &&
