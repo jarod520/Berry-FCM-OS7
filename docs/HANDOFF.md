@@ -3,7 +3,8 @@
 - 复核完整 `tests/fcm-monitor-smoke.sh` 时发现 OriginOS GMS 状态解析区段前，测试已在 native-poll 场景将 `MCS_AM_LOG` 清零，并明确验证该场景累计请求数为 1；随后 OriginOS 状态解析场景只新增一次重连请求，因此原断言 `requests 5` 与实际累计日志不一致，会在完整 smoke 中提前失败。
 - 同一计数区段后续的 socket fallback 与 unknown-absence 场景也沿用同一累计日志，原 `5/6/7` 断言整体偏大 3。已统一修正为 `2/3/4`，仅调整测试期望，不改变运行时代码与重连策略。
 - 修正提交：`cfd6e9b3b55748ee7631b74e2ff30da3254dedd8`。
-- **验证边界**：通过源码顺序追踪确认计数器清零点与各新增请求点；尚未执行完整 `fcm-monitor-smoke.sh`，不能将本次静态修正记为 smoke 通过。未触发 workflow、编译、打包或发布。
+- **追加静态审查**：逐项提取并核对 `tests/ksu-wake-smoke.sh` 中 95 条 `grep -Fq` 正向/负向源码断言，当前对应源码全部匹配；核对 `tests/fcm-monitor-smoke.sh` 中 8 条固定源码断言，全部匹配。此项只验证测试脚本引用的代码锚点存在/不存在，不替代 Shell 语法检查或运行时测试。
+- **验证边界**：通过源码顺序追踪确认计数器清零点与各新增请求点；尚未执行完整 `fcm-monitor-smoke.sh`、`ksu-wake-smoke.sh` 或全仓 Shell syntax gate，不能将本次静态修正记为 smoke 通过。未触发 workflow、编译、打包或发布。
 
 ## 2026-11-22 DNS timeout applet fallback修复
 
