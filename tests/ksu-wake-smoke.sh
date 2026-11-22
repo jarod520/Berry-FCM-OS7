@@ -433,7 +433,7 @@ test ! -e "$TMP/data/mcs-monitor.lock.owner"
 kill -TERM "$service_pid"
 wait "$service_pid" 2>/dev/null || :
 test ! -d "$TMP/data/service.lock"
-echo 'PASS: startup cleans orphaned monitor group before service lock publication'
+echo 'PASS: startup cleans legacy monitor group before patrol start'
 
 # If timeout is missing from Toybox, KernelSU BusyBox and PATH, the watchdog
 # fallback must still execute and bound the monitor rather than skip sampling.
