@@ -307,6 +307,10 @@ printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService 1234abcd pid=321 u
 j="$(run status)"
 assert_json "$j" fcm_state=disconnected
 assert_json "$j" fcm_source=gms
+printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService 1234abcd pid=321 user=0' '  Not connected' > "$MCS_FIXTURE"
+j="$(run status)"
+assert_json "$j" fcm_state=disconnected
+assert_json "$j" fcm_source=gms
 settime 13017
 run monitor
 requests 5
