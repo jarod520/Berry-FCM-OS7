@@ -1,12 +1,6 @@
 name: BerryFCM pre-build source and functional gates
 
 on:
-  push:
-    branches: [main, release/1.0-rc.1]
-    paths:
-      - 'app/**'
-      - 'tests/**'
-      - '.github/workflows/verify-prebuild.yml'
   workflow_dispatch:
 
 permissions:
