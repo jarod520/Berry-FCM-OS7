@@ -42,6 +42,10 @@ case "$mode" in
     echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:103 unacked:0 retrans:0/0'
     echo ' cubic wscale:7,7 rto:204 rtt:20/2 unacked:1 retrans:3/10'
     ;;
+  idle)
+    echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:104 unacked:0 retrans:0/0'
+    echo ' cubic wscale:7,7 rto:204 rtt:20/2 lastrcv:1800001'
+    ;;
   unknown|proc_connected) echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228';;
   *) exit 2;;
 esac
@@ -158,25 +162,41 @@ j="$(run status)"
 assert_json "$j" fcm_state=connected
 requests 5
 
-# Continuous, successfully-readable absence is timed; one absent sample is not enough.
-echo absent > "$TMP/mode"
-settime 10240
-j="$(run status)"
-assert_json "$j" fcm_state=unknown
-requests 5
-settime 10285
+# A connected socket with no TCP data received for 30 minutes is also suspected stalled.
+echo idle > "$TMP/mode"
+settime 10215
 j="$(run status)"
 assert_json "$j" fcm_state=disconnected
-settime 10300
+assert_json "$j" fcm_tcp_hint=stalled
+settime 10230
 run monitor >/dev/null
 requests 6
+echo connected > "$TMP/mode"
+settime 10231
+run monitor >/dev/null
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+requests 6
+
+# Continuous, successfully-readable absence is timed; one absent sample is not enough.
+echo absent > "$TMP/mode"
+settime 10257
+j="$(run status)"
+assert_json "$j" fcm_state=unknown
+requests 6
+settime 10302
+j="$(run status)"
+assert_json "$j" fcm_state=disconnected
+settime 10317
+run monitor >/dev/null
+requests 7
 
 # An unreadable ownership/source sample is unavailable, not falsely disconnected.
 echo unknown > "$TMP/mode"
-settime 10301
+settime 10318
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
-requests 6
+requests 7
 
 # When ss cannot expose UID, the root-readable /proc TCP tables are the fallback.
 mkdir -p "$TMP/proc"
@@ -189,12 +209,12 @@ cat > "$TMP/proc/tcp6" <<'PROC'
 PROC
 export BERRY_PROC_NET_DIR="$TMP/proc"
 echo proc_connected > "$TMP/mode"
-settime 10302
+settime 10319
 j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=gms_socket
 assert_json "$j" fcm_tcp_hint=established
-requests 6
+requests 7
 
 [ ! -s "$TMP/dumpsys.log" ] || fail "dumpsys was invoked by the monitor"
-echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO stall recovery, four-stage recovery, and dump independence"
+echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO retransmission and 30-minute receive-idle recovery, four-stage recovery, and dump independence"
