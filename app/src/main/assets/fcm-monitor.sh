@@ -226,7 +226,7 @@ observe() {
     load_state
     nowm="$(num "$(monotime)")"; nowe="$(num "$(now_epoch)")"
     [ "$nowm" -gt 0 ] && [ "$nowe" -gt 0 ] || return 12
-    # Discard pre-migration states whose authority was the old dumpsys parser.
+    # Discard pre-migration states whose authority was the legacy native parser.
     legacy_source=
     if [ -f "$EVIDENCE" ]; then IFS='|' read -r legacy_source _ < "$EVIDENCE" || :; fi
     case "$legacy_source" in
