@@ -419,11 +419,12 @@ request_reconnect() {
                     ;;
                 esac
             else
-                # A failed follow-up sample cannot overwrite committed state.
-                # The next bounded trigger is still attempted because recovery
-                # has not been positively confirmed.
+                # observe() may have changed globals before its evidence/state
+                # commit failed. Reload the last committed state before the
+                # next action or final save_state(), so no failed sample leaks.
+                load_state
                 confirmation_unavailable=1
-                record_event recovery_confirmation_unavailable "恢复命令 $action_label 后内核复采失败；保留已提交样本，继续下一种恢复触发"
+                record_event recovery_confirmation_unavailable "恢复命令 $action_label 后内核复采失败；已恢复最后一次提交的样本，继续下一种恢复触发"
             fi
         else
             [ "$sequence_requested" = 1 ] || last_result=failed
