@@ -13,6 +13,8 @@ grep -Fq 'case "$pid:$stamp" in *[!0-9:]*|:*|*:) return 1;; esac' "$ROOT/module/
 grep -Fq '[ "$(proc_start_time "$pid")" = "$stamp" ]' "$ROOT/module/uninstall.sh"
 grep -Fq 'case "$pid:$stamp" in *[!0-9:]*|:*|*:) pid=0;; esac' "$ROOT/module/bin/ctl.sh"
 grep -Fq '[ "$n" -lt 45 ]' "$ROOT/module/uninstall.sh"
+grep -Fq 'if [ -d "$LOCK" ]; then' "$ROOT/module/uninstall.sh"
+grep -Fq '后台 worker 清理未确认' "$ROOT/module/uninstall.sh"
 grep -Fq '旧 BerryFCM 守护进程仍未退出' "$ROOT/module/hotinstall.sh"
 grep -Fq 'while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ]; do' "$ROOT/module/service.sh"
 grep -Fq 'while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive; do' "$ROOT/module/bin/patrol.sh"
