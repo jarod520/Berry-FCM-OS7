@@ -821,7 +821,7 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **patrol freshness gate**：采样前 snapshot 必须成功解析出 `fcm_sample_uptime`；采样后要求状态字段存在且不为 stale、样本 uptime 严格大于前一 snapshot，并且不早于本轮检查开始 uptime。仍排除 rc=10/11/12/13/14/124；unknown 是有效样本，不能因为状态未知停止巡检。若前置 snapshot 读取失败，即使后置 snapshot 仍有一个看似新鲜的旧值，也不刷新 heartbeat。
 - **回归夹具**：KSU smoke 覆盖未变化的旧 sample uptime、前置 snapshot 读取失败、wall-clock 回拨但 monotonic 样本前进、rc=14 前置失败、stale snapshot 和非零但已提交新样本。FCM smoke 覆盖 wall-clock 回拨后状态仍 connected、sample age 仍为 0，以及旧 27 列状态读取并升级为 28 列。
 - **采样空档同步修正**：sample-gap 判定也改为比较 `nowm - sample_mono`，不再用 wall-clock 差值；旧 27 列状态仅在缺少 monotonic 字段时暂时回退 epoch 判断。新增 FCM smoke：wall-clock 大幅前跳但 uptime 只前进 10 秒不产生 sample_gap；wall-clock 不变而 uptime 前进 100 秒则必须产生 sample_gap。
-- **定向验证**：KSU smoke 固定源码断言正向 **136/136**、负向 **5/5** 匹配；FCM smoke 固定源码断言 **2/2** 匹配。对 sample-age、patrol gate、KSU mock 做了 POSIX sh 片段语法和行为模拟；验证了旧 27 列/新 28 列 state 的读取兼容。以上不是完整 smoke 执行。
+- **定向验证**：KSU smoke 固定源码断言正向 **136/136**、负向 **5/5** 匹配；FCM smoke 固定源码断言正向 **16/16**、负向 **1/1** 匹配。对 sample-age、sample-gap、patrol gate、KSU mock 做了 POSIX sh 片段语法和行为模拟；验证了旧 27 列/新 28 列 state 的读取兼容。以上不是完整 smoke 执行。
 - **验证边界**：完整 `ksu-wake-smoke.sh`、`fcm-monitor-smoke.sh`、全仓 Shell syntax gate 和 Android/KernelSU 实机测试仍未执行。未触发 Actions、构建、编译、打包、合并或发布。
 
 
@@ -832,3 +832,4 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **state 临时文件清理**：`save_state()` 的写入或 rename 失败时，立即删除本次临时文件并返回原错误码。
 - **回归夹具**：FCM smoke 分别注入 evidence rename 失败和 state rename 失败。后者要求 evidence 文件存在且为 7 列、state 文件未发布、state 临时文件已清理，snapshot 必须报告 stale、sample uptime=0、decision=sample_unavailable。
 - **验证边界**：新增用例尚未运行完整 `fcm-monitor-smoke.sh`；当前只完成源码静态断言和局部 POSIX sh 语法/行为模拟。未触发 workflow、构建、编译、打包、合并或发布。
+- 最终固定源码断言复核：KSU smoke **136/136 正向、5/5 负向**；FCM smoke **16/16 正向、1/1 负向**，均无缺失或误匹配。完整 smoke 与全仓 Shell 语法 gate 仍未执行。
