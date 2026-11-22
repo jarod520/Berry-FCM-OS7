@@ -77,7 +77,7 @@ service_stop_patrol_line="$(grep -n 'stop_patrol || cleanup_ok=0' "$ROOT/module/
 service_stop_monitor_line="$(grep -n 'stop_monitor_owner || cleanup_ok=0' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
 [ "$service_stop_patrol_line" -lt "$service_stop_monitor_line" ]
 watchdog_stop_patrol_line="$(grep -n '^            stop_patrol || :' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
-watchdog_stop_monitor_line="$(grep -n '^            if \\[ "$sample_stale" = 1 \\]; then stop_monitor_owner || :; fi' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
+watchdog_stop_monitor_line="$(grep -nF '            if [ "$sample_stale" = 1 ]; then stop_monitor_owner || :; fi' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
 [ "$watchdog_stop_patrol_line" -lt "$watchdog_stop_monitor_line" ]
 grep -Fq 'maintenance_owner_alive()' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'proc_start_time "$maintenance_pid"' "$ROOT/module/bin/patrol.sh"
