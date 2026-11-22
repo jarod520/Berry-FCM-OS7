@@ -192,7 +192,16 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     [ -n "$maintenance_owner_stamp" ] || exit 1
                     printf '%s %s\n' "$maintenance_owner_pid" "$maintenance_owner_stamp" > "$MAINTENANCE_LOCK/owner.tmp.$maintenance_owner_pid" &&
                         mv -f "$MAINTENANCE_LOCK/owner.tmp.$maintenance_owner_pid" "$MAINTENANCE_LOCK/owner" || exit 1
+                    maintenance_child_pid=
+                    maintenance_stop_child() {
+                        [ -z "$maintenance_child_pid" ] || {
+                            kill -TERM "$maintenance_child_pid" 2>/dev/null || :
+                            wait "$maintenance_child_pid" 2>/dev/null || :
+                            maintenance_child_pid=
+                        }
+                    }
                     maintenance_cleanup() {
+                        maintenance_stop_child
                         current_owner=; current_stamp=
                         IFS=' ' read -r current_owner current_stamp < "$MAINTENANCE_LOCK/owner" 2>/dev/null || :
                         if [ "$current_owner" = "$maintenance_owner_pid" ] &&
@@ -201,12 +210,16 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                         fi
                     }
                     trap maintenance_cleanup EXIT
+                    trap 'maintenance_stop_child; exit 143' HUP INT TERM
                     fix_started_epoch="$(date +%s 2>/dev/null)"
                     case "$fix_started_epoch" in ''|*[!0-9]*) fix_started_epoch=0;; esac
                     printf '[%s] maintenance_start pid=%s uptime=%s operation=guard_fix\n' \
                         "$(date '+%F %T')" "$service_pid" "$now" >> "$DATA/guard.log"
-                    HEARTBEAT_MODE=auto sh "$MODDIR/bin/ctl.sh" fix >> "$DATA/guard.log" 2>&1
+                    HEARTBEAT_MODE=auto sh "$MODDIR/bin/ctl.sh" fix >> "$DATA/guard.log" 2>&1 &
+                    maintenance_child_pid=$!
+                    wait "$maintenance_child_pid"
                     fix_rc=$?
+                    maintenance_child_pid=
                     fix_finished_epoch="$(date +%s 2>/dev/null)"
                     case "$fix_finished_epoch" in ''|*[!0-9]*) fix_finished_epoch=0;; esac
                     fix_elapsed=unknown
