@@ -14,6 +14,8 @@ DNS_IPS="$DATA/mcs-mtalk-dns-ips.txt"
 LEARNED_IPS="$DATA/mcs-mtalk-learned-ips.txt"
 DNS_TIME="$DATA/mcs-mtalk-dns-time"
 NATIVE_HINT="$DATA/mcs-native-hint"
+LOCK_OWNER="$DATA/mcs-monitor.lock.owner"
+lock_owner_stamp=
 SS_BIN="${BERRY_SS_BIN:-ss}"
 PROC_NET_DIR="${BERRY_PROC_NET_DIR:-/proc/net}"
 CMD_BIN="${BERRY_CMD_BIN:-cmd}"
@@ -33,6 +35,24 @@ num() { is_uint "${1:-}" && printf '%s\n' "$1" || printf '0\n'; }
 now_epoch() { date +%s 2>/dev/null | awk '/^[0-9]+$/ {print; found=1} END {if (!found) print 0}'; }
 monotime() { awk '{printf "%d\n", $1}' "$UPTIME_FILE" 2>/dev/null | head -n 1; }
 boot_id() { cat "$BOOT_ID_FILE" 2>/dev/null; }
+proc_start_time() {
+    [ -r "/proc/$1/stat" ] || return 1
+    tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $20}'
+}
+write_lock_owner() {
+    lock_owner_stamp="$(proc_start_time "$")"
+    [ -n "$lock_owner_stamp" ] || return 1
+    printf "%s %s\n" "$" "$lock_owner_stamp" > "$LOCK_OWNER.tmp.$" &&
+        mv -f "$LOCK_OWNER.tmp.$" "$LOCK_OWNER"
+}
+clear_lock_owner() {
+    [ -n "$lock_owner_stamp" ] || return 0
+    owner_pid=; owner_stamp=
+    IFS=' ' read -r owner_pid owner_stamp < "$LOCK_OWNER" 2>/dev/null || :
+    if [ "$owner_pid" = "$" ] && [ "$owner_stamp" = "$lock_owner_stamp" ]; then
+        rm -f "$LOCK_OWNER"
+    fi
+}
 
 # Persisted fields use a fixed pipe-delimited schema. Never source the file.
 load_state() {
@@ -985,7 +1005,12 @@ with_flock() {
         printf "无法取得 GMS 检查锁：%s\n" "${lock_error:-退出码 $rc}" >&2
         return 14
     fi
+    if write_lock_owner; then trap 'clear_lock_owner' EXIT; fi
     run_monitor_command "$command"
+    rc=$?
+    clear_lock_owner
+    trap - EXIT
+    return "$rc"
 }
 
 command="${1:-status}"
@@ -1002,10 +1027,6 @@ case "$command" in
             lock_boot="$(boot_id | tr -cd 'A-Za-z0-9-')"
             [ -n "$lock_boot" ] || exit 11
             lock_dir="$DATA/mcs-monitor-$lock_boot.lockdir"
-            proc_start_time() {
-                [ -r "/proc/$1/stat" ] || return 1
-                tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $20}'
-            }
             lock_owner_alive() {
                 owner_pid="$1"; owner_stamp="$2"
                 case "$owner_pid:$owner_stamp" in *[!0-9:]*|:*) return 1;; esac
@@ -1029,9 +1050,10 @@ case "$command" in
                 if mv "$lock_dir" "$stale_lock" 2>/dev/null; then rm -rf "$stale_lock"; fi
                 mkdir "$lock_dir" 2>/dev/null || { echo "后台正在检查 GMS，请稍后重试" >&2; exit 13; }
             fi
-            echo $$ > "$lock_dir/pid"
-            proc_start_time "$$" > "$lock_dir/starttime"
-            trap 'rm -f "$lock_dir/pid" "$lock_dir/starttime"; rmdir "$lock_dir" 2>/dev/null || :' EXIT
+            echo $ > "$lock_dir/pid"
+            proc_start_time "$" > "$lock_dir/starttime"
+            write_lock_owner || :
+            trap 'clear_lock_owner; rm -f "$lock_dir/pid" "$lock_dir/starttime"; rmdir "$lock_dir" 2>/dev/null || :' EXIT
             trap 'exit 130' HUP INT TERM
             run_monitor_command "$command"
         fi
