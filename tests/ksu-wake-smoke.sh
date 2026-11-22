@@ -69,7 +69,11 @@ MOCK
 cat > "$TMP/bin/sleep" <<'MOCK'
 #!/bin/sh
 echo "$1" >> "$TEST_DIR/sleeps"
-/bin/sleep 0.15
+if [ "${TEST_NO_TIMEOUT:-0}" = 1 ]; then
+    case "$1" in 1|2|3) /bin/sleep "$1";; *) /bin/sleep 0.15;; esac
+else
+    /bin/sleep 0.15
+fi
 if [ "${TEST_KILL_PATROL:-0}" = 1 ] && [ ! -e "$TEST_DIR/kill.done" ] && [ -s "$TEST_DIR/data/service.lock/patrol" ]; then
     p="$(awk '{print $1}' "$TEST_DIR/data/service.lock/patrol")"
     kill -KILL "$p" 2>/dev/null || :
@@ -277,11 +281,12 @@ echo 'PASS: stale service lock cannot spawn a duplicate patrol'
 # If timeout is missing from Toybox, KernelSU BusyBox and PATH, the watchdog
 # fallback must still execute and bound the monitor rather than skip sampling.
 mkdir -p "$TMP/no-timeout-bin"
-for bin in awk cat date grep head id mkdir mv rm rmdir sed sh sleep tail tr wc; do
+for bin in awk cat date grep head id mkdir mv rm rmdir sed sh sleep tail touch tr wc; do
     ln -sf "$(command -v "$bin")" "$TMP/no-timeout-bin/$bin"
 done
 ln -sf "$TMP/bin/id" "$TMP/no-timeout-bin/id"
 ln -sf "$TMP/bin/getprop" "$TMP/no-timeout-bin/getprop"
+ln -sf "$TMP/bin/sleep" "$TMP/no-timeout-bin/sleep"
 touch "$TMP/module/module.prop"
 echo 1 > "$TMP/data/enabled"
 : > "$TMP/samples"
