@@ -67,6 +67,9 @@ grep -Fq 'lock_owner_group_stamp="$(proc_start_time "$lock_owner_pgid")"' "$ROOT
 grep -Fq 'read -r monitor_pid monitor_stamp monitor_pgid monitor_isolated monitor_group_stamp' "$ROOT/module/service.sh"
 grep -Fq 'proc_start_time "$monitor_pgid")" = "$monitor_group_stamp"' "$ROOT/module/service.sh"
 grep -Fq 'process_group_alive "$monitor_pgid"' "$ROOT/module/service.sh"
+grep -Fq 'monitor_group_identity_alive()' "$ROOT/module/service.sh"
+[ "$(grep -cF 'monitor_group_identity_alive || {' "$ROOT/module/service.sh")" = 2 ]
+grep -Fq 'monitor_group_identity_unverified_before_kill' "$ROOT/module/service.sh"
 grep -Fq 'stop_monitor_owner()' "$ROOT/module/service.sh"
 grep -Fq "IFS=' ' read -r service_pid _ < /proc/self/stat" "$ROOT/module/service.sh"
 ! grep -Fq "$(printf '\044\044')" "$ROOT/module/service.sh"
