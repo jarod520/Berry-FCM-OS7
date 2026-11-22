@@ -50,12 +50,15 @@ grep -Fq 'while patrol_identity_alive' "$ROOT/module/service.sh"
 grep -Fq 'rm -f "$DATA/patrol.heartbeat"' "$ROOT/module/service.sh"
 grep -Fq 'elif [ "$hb" -eq 0 ]' "$ROOT/module/service.sh"
 grep -Fq 'patrol.sample.heartbeat' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'sample_heartbeat_not_refreshed rc=%s sample_epoch=%s previous_sample_epoch=%s check_started=%s' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'sample_heartbeat_not_refreshed rc=%s sample_epoch=%s sample_uptime=%s previous_sample_uptime=%s check_started_uptime=%s' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'observed_sample_epoch' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'observed_sample_state' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'observed_sample_uptime' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'previous_sample_uptime' "$ROOT/module/bin/patrol.sh"
 grep -Fq '[ "$observed_sample_state" != stale ]' "$ROOT/module/bin/patrol.sh"
-grep -Fq '[ "$observed_sample_epoch" -ge "$check_started_epoch" ]' "$ROOT/module/bin/patrol.sh"
-grep -Fq '[ "$observed_sample_epoch" -gt "$previous_sample_epoch" ]' "$ROOT/module/bin/patrol.sh"
+grep -Fq '[ "$observed_sample_uptime" -ge "$check_started_uptime" ]' "$ROOT/module/bin/patrol.sh"
+grep -Fq '[ "$observed_sample_uptime" -gt "$previous_sample_uptime" ]' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'sample_mono=0' "$ROOT/module/bin/fcm-monitor.sh"
+grep -Fq '"fcm_sample_uptime":%s' "$ROOT/module/bin/fcm-monitor.sh"
 grep -Fq 'monitor_rc" -ne 10' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'monitor_rc" -ne 11' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'monitor_rc" -ne 12' "$ROOT/module/bin/patrol.sh"
@@ -189,14 +192,6 @@ cat > "$TMP/bin/getprop" <<'MOCK'
 #!/bin/sh
 echo 1
 MOCK
-cat > "$TMP/bin/date" <<'MOCK'
-#!/bin/sh
-if [ "$*" = '+%s' ] && [ -n "${TEST_FIXED_EPOCH:-}" ]; then
-    echo "$TEST_FIXED_EPOCH"
-else
-    exec /bin/date "$@"
-fi
-MOCK
 cat > "$TMP/bin/sleep" <<'MOCK'
 #!/bin/sh
 echo "$1" >> "$TEST_DIR/sleeps"
@@ -235,12 +230,13 @@ MOCK
 cat > "$TMP/module/bin/fcm-monitor.sh" <<'MOCK'
 if [ "$1" = snapshot ]; then
     sample_epoch="$(cat "$TEST_DIR/sample-epoch" 2>/dev/null || echo 0)"
+    sample_uptime="$(cat "$TEST_DIR/sample-uptime" 2>/dev/null || echo 0)"
     if [ "${TEST_MONITOR_STALE:-0}" = 1 ]; then
-        echo "{\"fcm_state\":\"stale\",\"fcm_sample_time\":$sample_epoch,\"fcm_recovery_decision\":\"sample_unavailable\"}"
+        echo "{\"fcm_state\":\"stale\",\"fcm_sample_time\":$sample_epoch,\"fcm_sample_uptime\":$sample_uptime,\"fcm_recovery_decision\":\"sample_unavailable\"}"
     elif [ "${TEST_MONITOR_UNKNOWN:-0}" = 1 ]; then
-        echo "{\"fcm_state\":\"unknown\",\"fcm_sample_time\":$sample_epoch,\"fcm_recovery_decision\":\"sample_unavailable\"}"
+        echo "{\"fcm_state\":\"unknown\",\"fcm_sample_time\":$sample_epoch,\"fcm_sample_uptime\":$sample_uptime,\"fcm_recovery_decision\":\"sample_unavailable\"}"
     else
-        echo "{\"fcm_state\":\"connected\",\"fcm_sample_time\":$sample_epoch,\"fcm_recovery_decision\":\"not_disconnected\"}"
+        echo "{\"fcm_state\":\"connected\",\"fcm_sample_time\":$sample_epoch,\"fcm_sample_uptime\":$sample_uptime,\"fcm_recovery_decision\":\"not_disconnected\"}"
     fi
 else
     before="$(wc -l < "$TEST_DIR/samples")"
@@ -255,6 +251,14 @@ else
         sample_epoch=$((previous_sample_epoch + 1))
     fi
     printf '%s\n' "$sample_epoch" > "$TEST_DIR/sample-epoch"
+    sample_uptime="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
+    previous_sample_uptime="$(cat "$TEST_DIR/sample-uptime" 2>/dev/null || echo 0)"
+    case "$sample_uptime" in ""|*[!0-9]*) sample_uptime=0;; esac
+    case "$previous_sample_uptime" in ""|*[!0-9]*) previous_sample_uptime=0;; esac
+    if [ "$sample_uptime" -le "$previous_sample_uptime" ]; then
+        sample_uptime=$((previous_sample_uptime + 1))
+    fi
+    printf '%s\n' "$sample_uptime" > "$TEST_DIR/sample-uptime"
     if [ -n "${TEST_MONITOR_RC:-}" ]; then exit "$TEST_MONITOR_RC"; fi
     if [ "${TEST_HANG_FIRST:-0}" = 1 ] && [ "$before" = 0 ]; then
         /bin/sleep 30 &
@@ -430,21 +434,24 @@ grep -q 'sample_heartbeat_not_refreshed rc=12' "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo "PASS: failed observe does not refresh sample heartbeat"
 
-# A non-excluded post-attempt error with an unchanged same-second snapshot
-# must still be rejected: timestamp >= check start is not enough by itself.
+# A non-excluded post-attempt error with an unchanged sample uptime must be
+# rejected even if that old sample timestamp is newer than check start.
 touch "$TMP/module/module.prop"
 echo 1 > "$TMP/data/enabled"
 echo passive > "$TMP/data/wake-mode"
 : > "$TMP/samples"
 : > "$TMP/data/guard.log"
 echo 1700000000 > "$TMP/sample-epoch"
-export TEST_FIXED_EPOCH=1700000000 TEST_MONITOR_NO_SAMPLE_RC=42
+sample_uptime_now="$(awk '{print int($1)}' /proc/uptime)"
+old_sample_uptime=$((sample_uptime_now + 10))
+echo "$old_sample_uptime" > "$TMP/sample-uptime"
+export TEST_MONITOR_NO_SAMPLE_RC=42
 timeout 8 sh "$TMP/module/service.sh"
-unset TEST_FIXED_EPOCH TEST_MONITOR_NO_SAMPLE_RC
+unset TEST_MONITOR_NO_SAMPLE_RC
 test ! -s "$TMP/data/patrol.sample.heartbeat"
-grep -q 'sample_heartbeat_not_refreshed rc=42 sample_epoch=1700000000 previous_sample_epoch=1700000000 check_started=1700000000' "$TMP/data/guard.log"
+grep -q "sample_heartbeat_not_refreshed rc=42 .*sample_uptime=$old_sample_uptime previous_sample_uptime=$old_sample_uptime check_started_uptime=" "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
-echo 'PASS: unchanged same-second sample cannot refresh patrol heartbeat'
+echo 'PASS: unchanged sample uptime cannot refresh patrol heartbeat'
 
 # A pre-observe owner-registration failure must not reuse an old sample whose
 # wall-clock second happens to equal the start of this patrol check.
@@ -454,11 +461,13 @@ echo passive > "$TMP/data/wake-mode"
 : > "$TMP/samples"
 : > "$TMP/data/guard.log"
 date +%s > "$TMP/sample-epoch"
+sample_uptime_now="$(awk '{print int($1)}' /proc/uptime)"
+echo "$((sample_uptime_now + 10))" > "$TMP/sample-uptime"
 export TEST_MONITOR_PRE_SAMPLE_RC=14
 timeout 8 sh "$TMP/module/service.sh"
 unset TEST_MONITOR_PRE_SAMPLE_RC
 test ! -s "$TMP/data/patrol.sample.heartbeat"
-grep -q 'sample_heartbeat_not_refreshed rc=14 .*previous_sample_epoch=' "$TMP/data/guard.log"
+grep -q 'sample_heartbeat_not_refreshed rc=14 .*previous_sample_uptime=' "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: pre-observe owner failure cannot refresh heartbeat from a same-second old sample'
 
@@ -471,6 +480,8 @@ echo passive > "$TMP/data/wake-mode"
 : > "$TMP/data/guard.log"
 rm -f "$TMP/data/patrol.sample.heartbeat"
 date +%s > "$TMP/sample-epoch"
+sample_uptime_now="$(awk '{print int($1)}' /proc/uptime)"
+echo "$((sample_uptime_now + 10))" > "$TMP/sample-uptime"
 /bin/sleep 1
 export TEST_MONITOR_RC=42 TEST_MONITOR_STALE=1
 timeout 8 sh "$TMP/module/service.sh"
