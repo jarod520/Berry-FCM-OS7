@@ -735,3 +735,9 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - KSU smoke 中 6 个被源码固定断言覆盖的脚本文件已重新拉取并逐条匹配：固定正向断言 **113/113** 通过，固定负向断言 **4/4** 通过。该结果仅验证源码字符串约束，不代表执行了 ksu-wake-smoke.sh。
 - watchdog 清理分支静态确认：patrol stop 必须先成功，才会尝试 monitor owner 清理；两者任一步失败都会保留 heartbeat，并记录失败原因。maintenance 进程组清理路径的 TERM/KILL 前身份锚点、child owner 保留及 EXIT lock 保留约束均匹配。
 - 仍未执行完整 KSU/FCM smoke、全仓 Shell syntax gate、Android/KernelSU 实机验证；未触发 Actions、构建、编译、打包、合并或发布。
+
+### 2026-11-22 EXIT cleanup 同样阻止 patrol 未停止时清理 monitor owner
+- **复审发现**：service watchdog 的 stale 清理已改为 stop_patrol 成功后才清理 monitor owner，但 service 的 EXIT cleanup 仍忽略 patrol 停止失败并继续清理 monitor owner。若 patrol 仍在运行，它可能在 monitor owner 删除后重新发布/启动 monitor。
+- **修正**：service_cleanup 只有在 stop_patrol 成功后才进入 monitor owner 与 maintenance owner 清理；patrol 停止未确认时保留 owner locks 并记录阻塞原因，防止残留 patrol 继续工作却失去监管锁。
+- **回归约束**：KSU smoke 改为断言 EXIT cleanup 的 stop_patrol 成功分支先于 monitor owner 清理，并检查失败时保留 owner locks 的日志。
+- **验证边界**：本次源码与固定断言更新后需复核；完整 KSU/FCM smoke、全仓 Shell syntax gate、Android/KernelSU 实机仍未执行。未触发 Actions、构建或打包。
