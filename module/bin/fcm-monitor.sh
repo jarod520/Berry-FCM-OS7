@@ -242,7 +242,8 @@ scan_sockets() {
     # If ss does not expose GMS UID ownership, use the root-readable kernel tables.
     if [ -z "$raw" ] || ! printf '%s\n' "$raw" | grep -Eq "uid:${uid}([^0-9]|$)"; then
         [ -r "$PROC_NET_DIR/tcp" ] || { printf 'unknown||||proc_net_tcp_unreadable\n'; return; }
-        if [ -e "$PROC_NET_DIR/tcp6" ] && [ ! -r "$PROC_NET_DIR/tcp6" ]; then
+        if { [ -e "$PROC_NET_DIR/tcp6" ] || [ -r "$PROC_NET_DIR/if_inet6" ]; } &&
+           [ ! -r "$PROC_NET_DIR/tcp6" ]; then
             printf 'unknown||||proc_net_tcp6_unreadable\n'
             return
         fi
