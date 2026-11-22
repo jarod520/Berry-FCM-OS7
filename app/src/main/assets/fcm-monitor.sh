@@ -226,6 +226,20 @@ observe() {
     load_state
     nowm="$(num "$(monotime)")"; nowe="$(num "$(now_epoch)")"
     [ "$nowm" -gt 0 ] && [ "$nowe" -gt 0 ] || return 12
+    # Discard pre-migration states whose authority was the old dumpsys parser.
+    legacy_source=
+    if [ -f "$EVIDENCE" ]; then IFS='|' read -r legacy_source _ < "$EVIDENCE" || :; fi
+    case "$legacy_source" in
+      gms_socket|gms_socket_absence) :;;
+      *)
+        if [ "$state" != unknown ] || [ "$outage_hint_mono" -gt 0 ] || [ "$down_observed" -gt 0 ]; then
+            record_event legacy_dump_state_discarded "旧版状态来源不是内核 MCS Socket；清除旧连接/断联计时，重新建立内核证据"
+        fi
+        state=unknown; conn_key=; conn_since=0; conn_since_mono=0
+        missing_since=0; missing_epoch=0; down_observed=0; outage_hint_mono=0
+        last_try_mono=0; retry_streak=0
+        ;;
+    esac
     previous_down_state="$state"; previous_missing_epoch="$missing_epoch"
     previous_down_observed="$(num "${outage_hint_mono:-0}")"
     [ "$previous_down_observed" -gt 0 ] || previous_down_observed="$(num "${down_observed:-0}")"
@@ -370,6 +384,10 @@ status_json() {
     [ "$sample_epoch" -gt 0 ] && [ "$nowe" -ge "$sample_epoch" ] && age=$((nowe-sample_epoch))
     source=unavailable; duration=-1; close_code=; tcp_hint=none; native_reason=not_used; decision=not_evaluated
     if [ -f "$EVIDENCE" ]; then IFS='|' read -r source duration close_code tcp_hint native_reason decision < "$EVIDENCE" || :; fi
+    case "$source" in
+      gms_socket|gms_socket_absence) :;;
+      *) state=unknown; source=unavailable; duration=-1; close_code=; tcp_hint=unknown; native_reason=not_used; decision=sample_unavailable;;
+    esac
     case "${decision:-}" in not_evaluated|not_disconnected|sample_unavailable|disabled|network_gate|cooldown|requested|request_failed|waiting_duration|confirmation_changed|confirmation_recovered) :;; *) decision=not_evaluated;; esac
     case "$native_reason" in not_used) :;; *) native_reason=not_used;; esac
     case "$duration" in -1) :;; *) is_uint "$duration" || duration=-1;; esac
