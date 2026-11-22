@@ -696,14 +696,16 @@ EOF_SOCKET
         # Socket ownership is absent or unreadable. A later fresh native sample
         # remains authoritative; the 30-second socket fallback may still promote
         # a continuous absence to its own explicit evidence source.
-        if [ "$native_poll_due" = 0 ] && [ "$old_source" = gms ] &&
+        if [ "$native_poll_due" = 0 ] &&
            { [ "$previous_down_state" = connected ] || [ "$previous_down_state" = connecting ] || [ "$previous_down_state" = disconnected ]; } &&
            { [ "$tcp_hint" = absent ] || [ "$tcp_hint" = unknown ]; }; then
-            observed="$previous_down_state"; source=gms
+            # Preserve the last known state for the remainder of the native
+            # poll interval; do not relabel a socket-derived state as native.
+            observed="$previous_down_state"; source="${old_source:-unavailable}"
             duration="${old_duration:--1}"; close_code="$old_close"
             new_transport="$transport"; new_remote="$remote"
             native_reason="${previous_native_reason:-none}"
-            parse_detail=retained_native_down_state
+            parse_detail=retained_recent_state
         fi
         if [ "$native_poll_due" = 1 ]; then
             dump_shape="parser=${parse_detail:-none} rc=$dump_rc $(printf '%s' "$dump" | dump_state_shape)"
@@ -756,7 +758,7 @@ EOF_SOCKET
             fi
             socket_down_age=$((socket_now-outage_hint_mono))
             if [ "$socket_down_age" -ge 30 ] &&
-               { [ "$native_poll_due" = 1 ] || [ "$old_source" != gms ] || [ "$previous_down_state" != connected ]; }; then
+               { [ "$native_poll_due" = 1 ] || [ "$previous_down_state" != connected ]; }; then
                 observed=disconnected; source=gms_socket_fallback
                 new_transport=; new_remote=
                 [ "$previous_down_state" = disconnected ] ||
