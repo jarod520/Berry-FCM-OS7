@@ -18,6 +18,7 @@ is_guardian() {
 }
 if is_guardian; then
     kill -TERM "$pid" 2>/dev/null || :
+    # service_cleanup may need up to about 36 seconds for all bounded workers.
     n=0
     while is_guardian && [ "$n" -lt 45 ]; do
         sleep 1
