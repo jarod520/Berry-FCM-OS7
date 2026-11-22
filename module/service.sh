@@ -85,7 +85,7 @@ stop_maintenance_child() {
     IFS=' ' read -r child_file_pid child_file_stamp < "$MAINTENANCE_LOCK/child" 2>/dev/null || :
     case "$child_file_pid:$child_file_stamp" in
         *[!0-9:]*|:*|*:)
-            printf '[%s] maintenance_child_identity_invalid; refusing to clear maintenance lock\\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+            printf '[%s] maintenance_child_identity_invalid; refusing to clear maintenance lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
             return 1
             ;;
     esac
@@ -117,7 +117,7 @@ stop_maintenance_child() {
     if maintenance_child_identity &&
        [ "$maintenance_child_pid" = "$maintenance_child_stop_pid" ] &&
        [ "$maintenance_child_stamp" = "$maintenance_child_stop_stamp" ]; then
-        printf '[%s] maintenance_child_stop_unconfirmed pid=%s start=%s\\n' \\
+        printf '[%s] maintenance_child_stop_unconfirmed pid=%s start=%s\n' \
             "$(date '+%F %T')" "$maintenance_child_stop_pid" "$maintenance_child_stop_stamp" >> "$DATA/guard.log"
         return 1
     fi
