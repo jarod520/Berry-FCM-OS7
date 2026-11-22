@@ -100,8 +100,8 @@ bounded_descendants_snapshot() {
     awk -v root="$root" '
       FNR==1 {
         pid=FILENAME
-        sub(/^.*\\//,"",pid)
         sub(/\\/stat$/,"",pid)
+        sub(/^.*\\//,"",pid)
         stat=$0; sub(/^.*[)] /,"",stat); split(stat,f," ")
         state[pid]=f[1]; parent[pid]=f[2]; stamp[pid]=f[20]
       }
