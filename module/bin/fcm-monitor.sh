@@ -207,7 +207,7 @@ refresh_learned_ips() {
               sub(/^::ffff:/, "", ip); print tolower(ip) "|" now
             }
           }'
-    } | awk -F'|' -v now="$learned_now" -v ttl=300 '
+    } | awk -F'|' -v now="$learned_now" -v ttl=120 '
       function valid_ip(ip, a,n,i) {
         if(length(ip)<3 || length(ip)>45 || ip !~ /^[0-9a-f:.]+$/) return 0
         if(index(ip,":")) return 1
