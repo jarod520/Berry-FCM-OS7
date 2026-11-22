@@ -172,6 +172,15 @@ stop_maintenance_worker() {
     fi
     maintenance_worker_pid=; maintenance_worker_stamp=
 }
+reap_maintenance_worker() {
+    [ -n "$maintenance_worker_pid" ] || return 0
+    if ! kill -0 "$maintenance_worker_pid" 2>/dev/null ||
+       [ "$(proc_start_time "$maintenance_worker_pid")" != "$maintenance_worker_stamp" ] ||
+       [ "$(proc_state "$maintenance_worker_pid" 2>/dev/null)" = Z ]; then
+        wait "$maintenance_worker_pid" 2>/dev/null || :
+        maintenance_worker_pid=; maintenance_worker_stamp=
+    fi
+}
 stop_patrol_children() {
     stop_wait
     stop_maintenance_worker
@@ -185,6 +194,7 @@ trap on_mode USR1
 register_patrol_identity || exit 1
 printf '[%s] patrol_started pid=%s service_pid=%s\n' "$(date '+%F %T')" "$$" "$SERVICE_PID" >> "$DATA/guard.log"
 while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive; do
+    reap_maintenance_worker
     now="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
     case "$now" in ""|*[!0-9]*) now=0;; esac
     printf '%s\n' "$now" > "$DATA/patrol.heartbeat.tmp" && mv -f "$DATA/patrol.heartbeat.tmp" "$DATA/patrol.heartbeat"
