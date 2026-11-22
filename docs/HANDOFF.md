@@ -592,3 +592,13 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **GMS 自身恢复情况**：05:29、05:34、05:59、06:09、06:14、06:24、07:24、08:14、08:34 等见 heartbeat delay / close err:28，常常 1–3 秒重新 connected；日志中最大可见延迟 298,550ms（08:14:52），是心跳定时器迟到，并非直接等于断联持续时间；err:20/24/28 不应在无 GMS 源码佐证时强行译成固定网络错误含义。累计 GMS native close=126、connected=127，不能当作当夜次数或单条推送送达证据。
 - **未通过/尚无证据的事项**：任一轮 3 次救援仍未恢复后的完整退出与 CPU 锁释放、动作真正导致恢复的因果、夜间 FCM 消息端到端送达与耗时、整体耗电/待机电量损耗。快照 `fcm_last_result=requested` 是最后命令状态，不等于当前 GMS 未连接；当前为 `connected`。历史“ADB 认证已通过·当前待验证”与 Binder 可运行不能混同。
 - **下一批改进建议（只登记）**：(1) `sample_gap` 日志拆分“预期 Doze 延迟”和“可能异常停摆”，降低每 90s 以上反复报错的误导；(2) 统计每轮 `rescue_started` / `rescue_request` / `rescue_restored` / `rescue_finished` 及每次请求后原生连接时间，确保脚本与 Java 重名 `rescue_finished` 在诊断界面不混淆；(3) 继续以 GMS 原生连接证据为门槛，切勿仅因 watchdog 延迟就发心跳；(4) 连同已登记的诊断页图标和通知计时去秒一次处理。本次**只保存诊断结论，不改代码、不构建、不发布新 Release**。
+
+
+### 2026-11-22 RC7 后续静态审查：GMS 状态解析与 monitor/service 生命周期
+- **GMS 原生状态解析**：目标 `SERVICE com.google.android.gms/.gcm.GcmService` 区块本身作为当前状态作用域；即使没有前置 `DeviceID:`、`disconnectTime` 等字段，区块内精确的裸 `Not connected` 也不再被误判为 `unknown`。增加了该格式的回归样例。未知状态仍不等于断联，不允许仅凭未知直接重连。
+- **monitor 进程组身份**：`patrol.sh` 对 Toybox、BusyBox、PATH timeout 和 setsid 路径传递隔离候选标记；`fcm-monitor.sh` 只有在运行时核实 monitor 的 PGID 等于 PID 后，才将 owner 标记为隔离组。owner 文件原子记录 PID、starttime、PGID、隔离标志。
+- **service 清理**：`service.sh` 在清理 monitor 时验证 PID/starttime、PGID 和命令行，再对隔离组发送 TERM/KILL，避免只杀 monitor shell 而遗留 dumpsys、广播等后代。兼容旧版两字段 owner：只有 PID、starttime、PGID 仍可验证时才推断隔离组；不能安全验证时不按 PID 猜测组。
+- **启动顺序**：service 从 `/proc/self/stat` 读取自身 PID，先发布 PID/starttime 锁，再清理残留 monitor owner，最后启动 patrol。这样既防止并发 supervisor，也避免旧 monitor 的 flock 阻塞新巡检。新增测试核对锁 PID/starttime 与实际 service 进程一致，并覆盖新格式和旧格式 monitor owner 的进程组清理。
+- **巡检 worker 回收**：patrol 每轮检查已结束的 maintenance worker，并调用 `wait` 回收，避免正常结束的后台 worker 长期残留 zombie PID。
+- **当前验证边界**：静态核对了 KSU smoke 中 83 项源码断言，除专门用于检查转义的负向断言外均能在源码中找到对应实现；检查了新增回归用例没有重复主体。容器中分别模拟了 `/proc/self/stat` PID 读取、setsid 进程组身份与组内子进程清理。**完整 `fcm-monitor-smoke.sh`、`ksu-wake-smoke.sh`、所有 Shell 文件的 `sh -n`、目标 Android/KernelSU/GMS 实机测试尚未执行**；上述模拟不能替代 Android 实机验证。
+- **构建约束**：本轮未触发 workflow、编译、打包或 Release；PR #1 仍保持 open / not merged。待代码与静态审查全部结束后，再由用户手动触发完整构建。
