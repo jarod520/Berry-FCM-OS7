@@ -124,6 +124,8 @@ export MCS_AM_FAIL_ACTION=GCM_RECONNECT
 run monitor >/dev/null
 unset MCS_AM_FAIL_ACTION
 requests 1
+j="$(run status)"
+assert_json "$j" fcm_last_result=failed
 grep -Fq 'GCM_RECONNECT' "$TMP/am.log" || fail "first recovery stage missing"
 
 # If the first request does not restore transport, continue through every next action.
