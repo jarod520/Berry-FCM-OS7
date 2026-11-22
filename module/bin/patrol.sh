@@ -236,19 +236,22 @@ run_bounded() {
                     if process_group_alive "$bounded_pgid"; then
                         if bounded_group_identity_alive; then
                             "$group_tool" kill -KILL "-$bounded_pgid" 2>/dev/null || :
+                        elif bounded_process_identity_alive; then
+                            echo 'bounded_watchdog_group_identity_unverified_before_kill; falling back to direct child signal' >> "$DATA/guard.log"
+                            kill -KILL "$bounded_pid" 2>/dev/null || :
                         else
-                            if bounded_process_identity_alive; then
-                                echo 'bounded_watchdog_group_identity_unverified_before_kill; falling back to direct child signal' >> "$DATA/guard.log"
-                                kill -KILL "$bounded_pid" 2>/dev/null || :
-                            else
-                                echo 'bounded_watchdog_group_identity_unverified_before_kill; refusing signal' >> "$DATA/guard.log"
-                            fi
+                            echo 'bounded_watchdog_group_identity_unverified_before_kill; refusing signal' >> "$DATA/guard.log"
                         fi
                     fi
                 else
                     signal_bounded_descendants KILL "$descendants_file"
                     if bounded_process_identity_alive; then
                         kill -KILL "$bounded_pid" 2>/dev/null || :
+                    elif kill -0 "$bounded_pid" 2>/dev/null &&
+                         [ "$(proc_state "$bounded_pid" 2>/dev/null)" != Z ]; then
+                        # PID still exists but its start time no longer matches:
+                        # it was reused by an unrelated process, so do not signal it.
+                        echo 'bounded_watchdog_process_identity_unverified_before_kill; refusing signal' >> "$DATA/guard.log"
                     fi
                     rm -f "$descendants_file"
                 fi

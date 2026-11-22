@@ -30,7 +30,7 @@ grep -Fq 'MONITOR_TIMEOUT="${BERRY_MONITOR_TIMEOUT_SECONDS:-25}"' "$ROOT/module/
 grep -Fq 'MONITOR_TIMEOUT=25;; esac' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'MONITOR_KILL_GRACE="${BERRY_MONITOR_KILL_GRACE:-3}"' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'has_setsid()' "$ROOT/module/bin/patrol.sh"
-grep -Fq '&& has_setsid; then' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'has_setsid; then' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'result="$(run_bounded "$MONITOR_TIMEOUT" sh "$MODDIR/bin/fcm-monitor.sh" monitor 2>&1)"' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'bounded_process_identity_alive()' "$ROOT/module/bin/patrol.sh"
 grep -Fq '[ "$(proc_state "$bounded_pid" 2>/dev/null)" != Z ]' "$ROOT/module/bin/patrol.sh"
@@ -109,7 +109,9 @@ grep -Fq 'stop_monitor_owner()' "$ROOT/module/service.sh"
 grep -Fq 'prepare_patrol_start()' "$ROOT/module/service.sh"
 grep -Fq 'monitor_process_exists()' "$ROOT/module/service.sh"
 grep -Fq 'case "$monitor_cmdline_text" in *fcm-monitor.sh*) return 0;; esac' "$ROOT/module/service.sh"
-! grep -Fq 'grep -Fq "fcm-monitor.sh"' "$ROOT/module/service.sh"
+# monitor_process_exists() must scan /proc with a shell case, not a grep pipeline;
+# other helpers legitimately grep a single, already-identified cmdline.
+! sed -n '/^monitor_process_exists()/,/^}/p' "$ROOT/module/service.sh" | grep -Fq 'grep -Fq "fcm-monitor.sh"'
 grep -Fq 'stale_monitor_owner_record_cleared reason=no_monitor_process' "$ROOT/module/service.sh"
 grep -Fq 'if [ -s "$DATA/mcs-monitor.lock.owner" ] && ! stop_monitor_owner; then' "$ROOT/module/service.sh"
 grep -Fq 'if prepare_patrol_start; then' "$ROOT/module/service.sh"
@@ -124,7 +126,8 @@ startup_trap_line="$(grep -nF 'trap service_cleanup EXIT' "$ROOT/module/service.
 grep -Fq "IFS=' ' read -r service_pid _ < /proc/self/stat" "$ROOT/module/service.sh"
 ! grep -Fq "$(printf '\044\044')" "$ROOT/module/service.sh"
 ! grep -Fq 'echo $ > "$LOCK/pid"' "$ROOT/module/service.sh"
-monitor_cleanup_line="$(grep -n 'stop_monitor_owner || exit 0' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
+monitor_cleanup_line="$(grep -nF 'if ! stop_monitor_owner; then' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
+[ -n "$monitor_cleanup_line" ]
 service_pid_write_line="$(grep -nF 'echo "$service_pid" > "$LOCK/pid"' "$ROOT/module/service.sh" | head -n 1 | cut -d: -f1)"
 [ "$service_pid_write_line" -lt "$monitor_cleanup_line" ]
 grep -Fq 'mcs-monitor.lock.owner' "$ROOT/module/service.sh"
@@ -167,9 +170,9 @@ grep -Fq 'elif bounded_process_identity_alive; then' "$ROOT/module/bin/patrol.sh
 grep -Fq 'bounded_stamp="$(proc_start_time "$bounded_pid")"' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'bounded_pgid="$(proc_group_id "$bounded_pid")"' "$ROOT/module/bin/patrol.sh"
 maintenance_stop_block="$(sed -n '/^                    maintenance_stop_child() {/,/^                    }$/p' "$ROOT/module/bin/patrol.sh")"
-maintenance_term_line="$(printf '%s\n' "$maintenance_stop_block" | grep -nF 'kill -TERM "-$maintenance_child_pgid"' | cut -d: -f1)"
-maintenance_kill_guard_line="$(printf '%s\n' "$maintenance_stop_block" | grep -nF 'if process_group_alive "$maintenance_child_pgid"; then' | cut -d: -f1)"
-maintenance_kill_line="$(printf '%s\n' "$maintenance_stop_block" | grep -nF 'kill -KILL "-$maintenance_child_pgid"' | cut -d: -f1)"
+maintenance_term_line="$(printf '%s\n' "$maintenance_stop_block" | grep -nF 'kill -TERM "-$maintenance_child_pgid"' | head -n 1 | cut -d: -f1)"
+maintenance_kill_guard_line="$(printf '%s\n' "$maintenance_stop_block" | grep -nF 'if process_group_alive "$maintenance_child_pgid"; then' | head -n 1 | cut -d: -f1)"
+maintenance_kill_line="$(printf '%s\n' "$maintenance_stop_block" | grep -nF 'kill -KILL "-$maintenance_child_pgid"' | head -n 1 | cut -d: -f1)"
 [ -n "$maintenance_term_line" ] && [ -n "$maintenance_kill_guard_line" ] && [ -n "$maintenance_kill_line" ]
 [ "$maintenance_term_line" -lt "$maintenance_kill_guard_line" ] && [ "$maintenance_kill_guard_line" -lt "$maintenance_kill_line" ]
 grep -Fq 'maintenance_group_tool" kill -KILL' "$ROOT/module/bin/patrol.sh"
