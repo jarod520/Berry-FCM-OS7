@@ -578,10 +578,10 @@ status_json() {
     [ "$age" -ge 0 ] && [ "$age" -le 90 ] || state=stale
     # Never present stale duration as live and never extrapolate past the sample.
     connected=0; missing=0
-    [ "$state" = connected ] && [ "$conn_since_mono" -gt 0 ] && [ "$nowm" -ge "$conn_since_mono" ] && connected=$((nowm-conn_since_mono-age))
+    [ "$state" = connected ] && [ "$age" -ge 0 ] && [ "$conn_since_mono" -gt 0 ] && [ "$nowm" -ge "$conn_since_mono" ] && connected=$((nowm-conn_since_mono-age))
     [ "$connected" -ge 0 ] 2>/dev/null || connected=0
     [ "$connected" -gt 0 ] && conn_since=$((nowe-connected))
-    { [ "$state" = connecting ] || [ "$state" = disconnected ]; } && [ "$down_observed" -gt 0 ] && [ "$nowm" -ge "$down_observed" ] && missing=$((nowm-down_observed-age))
+    { [ "$state" = connecting ] || [ "$state" = disconnected ]; } && [ "$age" -ge 0 ] && [ "$down_observed" -gt 0 ] && [ "$nowm" -ge "$down_observed" ] && missing=$((nowm-down_observed-age))
     [ "$missing" -ge 0 ] 2>/dev/null || missing=0
     closes=0; successes=0
     if [ -f "$NATIVE_EVENTS" ]; then
