@@ -53,7 +53,8 @@ MOCK
 cat > "$TMP/bin/am" <<'MOCK'
 #!/bin/sh
 echo "$*" >> "$MCS_AM_LOG"
-if [ "${MCS_AM_FAIL:-0}" = 1 ]; then
+if [ "${MCS_AM_FAIL:-0}" = 1 ] ||
+   { [ -n "${MCS_AM_FAIL_ACTION:-}" ] && printf '%s' "$*" | grep -Fq "$MCS_AM_FAIL_ACTION"; }; then
     echo 'Permission Denial: fixture' >&2
     exit 1
 fi
@@ -119,7 +120,9 @@ settime 10001
 j="$(run status)"
 assert_json "$j" fcm_state=connecting
 settime 10061
+export MCS_AM_FAIL_ACTION=GCM_RECONNECT
 run monitor >/dev/null
+unset MCS_AM_FAIL_ACTION
 requests 1
 grep -Fq 'GCM_RECONNECT' "$TMP/am.log" || fail "first recovery stage missing"
 
