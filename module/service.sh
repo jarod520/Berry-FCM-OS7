@@ -68,7 +68,23 @@ service_stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
 stop_wait() { [ -z "$wait_pid" ] || kill "$wait_pid" 2>/dev/null || :; }
 stop_timer() {
     [ -n "$timer_pid" ] || return 0
-    kill "$timer_pid" 2>/dev/null || :
+    kill -TERM "$timer_pid" 2>/dev/null || :
+    n=0
+    while kill -0 "$timer_pid" 2>/dev/null && [ "$(proc_state "$timer_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 4 ]; do
+        sleep 1; n=$((n + 1))
+    done
+    if kill -0 "$timer_pid" 2>/dev/null && [ "$(proc_state "$timer_pid" 2>/dev/null)" != Z ]; then
+        kill -KILL "$timer_pid" 2>/dev/null || :
+        n=0
+        while kill -0 "$timer_pid" 2>/dev/null && [ "$(proc_state "$timer_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 3 ]; do
+            sleep 1; n=$((n + 1))
+        done
+    fi
+    if kill -0 "$timer_pid" 2>/dev/null && [ "$(proc_state "$timer_pid" 2>/dev/null)" != Z ]; then
+        printf '[%s] timer_stop_unconfirmed pid=%s; refusing to start a duplicate timer worker\n' \
+            "$(date '+%F %T')" "$timer_pid" >> "$DATA/guard.log"
+        return 1
+    fi
     wait "$timer_pid" 2>/dev/null || :
     timer_pid=
 }
@@ -108,7 +124,7 @@ timer_worker() {
 }
 
 sync_timer() {
-    stop_timer
+    stop_timer || return 1
     if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ] &&
        [ "$(cat "$DATA/wake-mode" 2>/dev/null)" = timed ]; then
         if [ "$cgroup_ready" = 1 ]; then
