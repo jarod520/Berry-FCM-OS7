@@ -301,7 +301,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
         observed_sample_uptime="$(printf '%s\n' "$sample" | sed -n 's/.*"fcm_sample_uptime":\([0-9]*\).*/\1/p')"
         case "$observed_sample_uptime" in ""|*[!0-9]*) observed_sample_uptime=0;; esac
         # These codes fail before observe() can commit a sample. For all
-        # other results, require the persisted sample epoch to advance beyond
+        # other results, require the persisted monotonic sample uptime to advance beyond
         # the pre-check snapshot as well as belong to this check window.
         if [ "$monitor_rc" -ne 10 ] && [ "$monitor_rc" -ne 11 ] &&
            [ "$monitor_rc" -ne 12 ] && [ "$monitor_rc" -ne 13 ] &&
