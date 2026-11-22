@@ -1,3 +1,12 @@
+## 2026-11-22 KSU RC7 追加审查：维护锁身份校验
+
+- 本轮继续审查 `module/bin/patrol.sh` 的后台维护任务锁。原实现只用 `kill -0 PID` 判断 `maintenance.lock` 是否仍被占用：PID 被系统复用时，可能把无关进程误认为维护任务仍在运行；旧维护子进程退出时也可能误删后来创建的新锁。
+- 已修正：维护子进程从 `/proc/self/stat` 读取自身 PID，并记录 PID + `/proc/<pid>/stat` starttime 到原子替换的 `maintenance.lock/owner`；巡检只在 PID、starttime 同时匹配时认定维护任务存活。清理时再次核对 owner 身份，只允许当前维护进程删除自己持有的锁。发现刚创建但尚未写入 owner 的锁时，先等待 1 秒再判定，避免直接清理启动中的任务。
+- 已为 `tests/ksu-wake-smoke.sh` 增加维护任务身份登记、starttime 校验和 owner 限定清理的静态断言。**本轮没有执行 smoke 脚本**，因此只记录代码与测试用例已更新，不记录测试通过。
+- 本轮提交：`550d06a52c7efcc3fe4207728d319ee9e0b51ce8`（维护锁实现）；`929593b46e96d641f47ff37a926c51a4c89e51f3`（测试断言）。随后更新本交接文档；以本次文档提交后的分支 HEAD 为最新基线。
+- 仍待进一步审查的边界：patrol 启动后、service 写入 `service.lock/patrol` marker 前的极短登记窗口；`run_bounded` 在目标系统既无 timeout 又无 setsid 时只能保证终止 monitor 主进程，不能证明其所有后代均被清理；`LEARNED_IPS` 在同一启动周期内长期保留，存在远端 IP 后续复用时将普通 GMS HTTPS :443 误识别为 MCS 的理论风险。当前没有足够证据贸然增加复杂逻辑，继续评估并补齐可验证的最小修复。
+- 当前仍未运行两个完整 smoke 套件、未触发构建/打包、未合并 PR、未发布 Release，也未进行 OriginOS 7 实机验证。工作流保持仅 `workflow_dispatch`；按用户要求，全部代码修改与检查结束后再告知用户可以进行一次完整构建，不提前触发。
+
 ## 2026-11-22 KSU RC7：原生 Close 辅助判据、分阶段恢复与卸载清理
 
 - 基于 RC6 提交 `d9312e44a6b0c4110a6dbc383c39def40bde131b`；本轮候选版本 `1.0-rc.7 / 10007`，仍属于测试候选，不合并 main、不发布正式 Release。
