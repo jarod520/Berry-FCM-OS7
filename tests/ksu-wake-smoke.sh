@@ -50,7 +50,7 @@ grep -Fq 'while patrol_identity_alive' "$ROOT/module/service.sh"
 grep -Fq 'rm -f "$DATA/patrol.heartbeat"' "$ROOT/module/service.sh"
 grep -Fq 'elif [ "$hb" -eq 0 ]' "$ROOT/module/service.sh"
 grep -Fq 'patrol.sample.heartbeat' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'sample_heartbeat_not_refreshed rc=%s sample_epoch=%s check_started=%s' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'sample_heartbeat_not_refreshed rc=%s sample_epoch=%s previous_sample_epoch=%s check_started=%s' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'observed_sample_epoch' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'observed_sample_state' "$ROOT/module/bin/patrol.sh"
 grep -Fq '[ "$observed_sample_state" != stale ]' "$ROOT/module/bin/patrol.sh"
@@ -240,7 +240,8 @@ else
     if [ -n "${TEST_MONITOR_PRE_SAMPLE_RC:-}" ]; then exit "$TEST_MONITOR_PRE_SAMPLE_RC"; fi
     sample_epoch="$(date +%s)"
     previous_sample_epoch="$(cat "$TEST_DIR/sample-epoch" 2>/dev/null || echo 0)"
-    case "$sample_epoch:$previous_sample_epoch" in *[!0-9:]*) previous_sample_epoch=0;; esac
+    case "$sample_epoch" in ""|*[!0-9]*) sample_epoch=0;; esac
+    case "$previous_sample_epoch" in ""|*[!0-9]*) previous_sample_epoch=0;; esac
     if [ "$sample_epoch" -le "$previous_sample_epoch" ]; then
         sample_epoch=$((previous_sample_epoch + 1))
     fi
