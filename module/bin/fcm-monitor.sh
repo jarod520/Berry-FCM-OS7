@@ -691,6 +691,19 @@ EOF_SOCKET
             fi
             ;;
         esac
+        # Preserve a recent native down state between native polls when
+        # Socket ownership is absent or unreadable. A later fresh native sample
+        # remains authoritative; the 30-second socket fallback may still promote
+        # a continuous absence to its own explicit evidence source.
+        if [ "$native_poll_due" = 0 ] && [ "$old_source" = gms ] &&
+           { [ "$previous_down_state" = connecting ] || [ "$previous_down_state" = disconnected ]; } &&
+           { [ "$tcp_hint" = absent ] || [ "$tcp_hint" = unknown ]; }; then
+            observed="$previous_down_state"; source=gms
+            duration="${old_duration:--1}"; close_code="$old_close"
+            new_transport="$transport"; new_remote="$remote"
+            native_reason="${previous_native_reason:-none}"
+            parse_detail=retained_native_down_state
+        fi
         if [ "$native_poll_due" = 1 ]; then
             dump_shape="parser=${parse_detail:-none} rc=$dump_rc $(printf '%s' "$dump" | dump_state_shape)"
             dump_shape="$(printf '%s' "$dump_shape" | cut -c1-220)"
