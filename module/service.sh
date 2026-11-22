@@ -80,6 +80,18 @@ stop_maintenance_owner() {
         printf '[%s] maintenance_owner_unpublished; refusing to clear maintenance lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
         return 1
     fi
+    maintenance_pid=; maintenance_stamp=
+    IFS=' ' read -r maintenance_pid maintenance_stamp < "$MAINTENANCE_LOCK/owner" 2>/dev/null || :
+    case "$maintenance_pid:$maintenance_stamp" in
+        *[!0-9:]*|:*|*:)
+            printf '[%s] maintenance_owner_identity_invalid; refusing to clear maintenance lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+            return 1
+            ;;
+    esac
+    [ "$maintenance_pid" -gt 1 ] && [ "$maintenance_stamp" -gt 0 ] || {
+        printf '[%s] maintenance_owner_identity_invalid; refusing to clear maintenance lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+        return 1
+    }
     if ! maintenance_owner_identity; then
         rm -rf "$MAINTENANCE_LOCK"
         return 0
