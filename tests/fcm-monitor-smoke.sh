@@ -159,6 +159,20 @@ assert_json "$j" fcm_sample_uptime=20010
 assert_json "$j" fcm_sample_age_seconds=0
 echo 'PASS: wall-clock rollback does not stale a fresh monotonic GMS sample'
 
+# Existing 27-field state files remain readable; the next sample upgrades them
+# by appending the new monotonic sample timestamp as field 28.
+awk -F'|' 'BEGIN { OFS="|" } { NF=NF-1; print }' "$BERRY_FCM_DATA/mcs-monitor.state" > "$TMP/legacy-state"
+mv "$TMP/legacy-state" "$BERRY_FCM_DATA/mcs-monitor.state"
+[ "$(awk -F'|' '{print NF}' "$BERRY_FCM_DATA/mcs-monitor.state")" = 27 ]
+j="$(run snapshot)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_sample_age_seconds=0
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_sample_uptime=20010
+[ "$(awk -F'|' '{print NF}' "$BERRY_FCM_DATA/mcs-monitor.state")" = 28 ]
+echo 'PASS: legacy 27-field state upgrades to the monotonic 28-field schema'
+
 # Unknown is not a confirmed down state: a retained outage hint must not
 # produce a false recovery event when the next usable observation is connected.
 export BERRY_FCM_DATA="$TMP/unknown-to-connected-data"
