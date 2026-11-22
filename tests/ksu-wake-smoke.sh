@@ -403,6 +403,7 @@ cat > "$TMP/fcm-monitor.sh" <<'MOCK'
 #!/bin/sh
 /bin/sleep 30 &
 echo "$!" > "$TEST_DIR/startup-monitor-child-pid"
+wait
 MOCK
 chmod +x "$TMP/fcm-monitor.sh"
 "$TMP/bin/toybox" setsid sh "$TMP/fcm-monitor.sh" &
