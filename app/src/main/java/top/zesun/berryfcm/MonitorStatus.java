@@ -19,6 +19,8 @@ final class MonitorStatus {
     static String label(State state, String source) {
         if (state == State.CONNECTED && "gms_socket".equals(source))
             return "GMS MCS TCP 已建立（FCM 认证未证实）";
+        if (state == State.CONNECTING && "gms_socket".equals(source))
+            return "GMS MCS TCP 正在连接（尚未建立）";
         if (state == State.DISCONNECTED && "gms_socket_absence".equals(source))
             return "GMS MCS TCP 持续缺失（Root 观察）";
         return state.label;
