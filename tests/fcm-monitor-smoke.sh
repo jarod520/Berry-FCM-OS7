@@ -25,7 +25,7 @@ cat > "$TMP/bin/ss" <<'MOCK'
 if [ "${MCS_SS_MODE:-connected}" = unknown ]; then
     echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228'
 elif [ "${MCS_SS_MODE:-connected}" = absent ]; then
-    echo 'ESTAB 0 0 192.168.1.8:45000 1.1.1.1:443 uid:1000 ino:202'
+    echo 'TIME-WAIT 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:202'
 else
     echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:101'
 fi
