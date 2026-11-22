@@ -706,3 +706,9 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 ### 2026-11-22 KSU smoke heartbeat 注释断言空格修正
 - 107 条 KSU smoke 固定源码断言复核中，发现 heartbeat 注释断言使用 grep -Fq 且模式以 # 开头，但源码注释前有缩进空格，导致固定匹配失败。当前测试虽已同步到新注释内容，仍因缩进而无法命中。
 - 已将断言改为匹配注释正文，不依赖行首缩进；同一段的 13|124) :;; 行为断言保留。未改运行时代码。
+
+### 2026-11-22 monitor owner 登记失败时拒绝无监管运行
+- **复审发现**：flock 路径在 `write_lock_owner()` 失败时仍继续执行 `run_monitor_command()`；目录锁路径也用 `write_lock_owner || :` 忽略失败。service 依赖 `mcs-monitor.lock.owner` 识别并清理 monitor，身份登记失败却继续运行会产生无 owner 可追踪的后台进程，service 退出可能漏清理。
+- **修正**：两种锁路径都在 owner 身份登记失败时拒绝执行 monitor，返回专用错误码 14；目录锁路径先安装 EXIT 清理 trap，确保失败时释放目录锁。flock 路径仍写入锁结果文件并向调用方返回 14，flock 自身释放 FD 锁。
+- **回归约束**：FCM smoke 增加静态断言，要求存在登记失败拒绝分支、错误码 14，且不再存在忽略登记失败的 `write_lock_owner || :`。
+- **验证边界**：待做本次修改的局部 Shell 语法和源码断言复核；完整 FCM/KSU smoke、全仓语法 gate、Android/KernelSU 实机尚未执行。未触发构建、Actions 或 Release。
