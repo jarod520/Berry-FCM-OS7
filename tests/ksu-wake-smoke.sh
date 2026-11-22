@@ -234,7 +234,13 @@ else
     before="$(wc -l < "$TEST_DIR/samples")"
     echo "$1" >> "$TEST_DIR/samples"
     if [ -n "${TEST_MONITOR_PRE_SAMPLE_RC:-}" ]; then exit "$TEST_MONITOR_PRE_SAMPLE_RC"; fi
-    date +%s > "$TEST_DIR/sample-epoch"
+    sample_epoch="$(date +%s)"
+    previous_sample_epoch="$(cat "$TEST_DIR/sample-epoch" 2>/dev/null || echo 0)"
+    case "$sample_epoch:$previous_sample_epoch" in *[!0-9:]*) previous_sample_epoch=0;; esac
+    if [ "$sample_epoch" -le "$previous_sample_epoch" ]; then
+        sample_epoch=$((previous_sample_epoch + 1))
+    fi
+    printf '%s\\n' "$sample_epoch" > "$TEST_DIR/sample-epoch"
     if [ -n "${TEST_MONITOR_RC:-}" ]; then exit "$TEST_MONITOR_RC"; fi
     if [ "${TEST_HANG_FIRST:-0}" = 1 ] && [ "$before" = 0 ]; then
         /bin/sleep 30 &
@@ -301,10 +307,10 @@ grep -q 'wake_timer_armed .*delay_s=180' "$TMP/data/wake-timer.log"
 grep -q 'wake_timer_fired .*elapsed_s=180 suspend_s=150 late_s=0' "$TMP/data/wake-timer.log"
 grep -q 'timer_worker_started service_pid=.*interval_min=3' "$TMP/data/wake-timer.log"
 grep -q 'timer_worker_exited service_pid=.*rc=1' "$TMP/data/wake-timer.log"
-grep -q 'wake_gms_check_finished rc=0 state=connected sample_epoch=1234 recovery=not_disconnected' "$TMP/data/guard.log"
+grep -q 'wake_gms_check_finished rc=0 state=connected sample_epoch=[0-9][0-9]* recovery=not_disconnected' "$TMP/data/guard.log"
 grep -q 'service_started pid=.*wake_mode=timed enabled=1 cgroup_ready=1' "$TMP/data/guard.log"
 grep -q 'fcm_check_start pid=.*wake=1 mode=timed' "$TMP/data/guard.log"
-grep -q 'fcm_check_end rc=0 elapsed_s=.*state=connected sample_epoch=1234 recovery=not_disconnected' "$TMP/data/guard.log"
+grep -q 'fcm_check_end rc=0 elapsed_s=.*state=connected sample_epoch=[0-9][0-9]* recovery=not_disconnected' "$TMP/data/guard.log"
 grep -q 'maintenance_start pid=.*operation=guard_fix' "$TMP/data/guard.log"
 grep -q 'maintenance_end pid=.*operation=guard_fix rc=0 elapsed_s=' "$TMP/data/guard.log"
 grep -q 'fixture permission denied' "$TMP/data/wake-timer.log"
