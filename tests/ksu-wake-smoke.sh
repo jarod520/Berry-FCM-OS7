@@ -53,6 +53,12 @@ grep -Fq 'patrol.sample.heartbeat' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'sample_heartbeat_not_refreshed rc=%s sample_epoch=%s check_started=%s' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'observed_sample_epoch' "$ROOT/module/bin/patrol.sh"
 grep -Fq '[ "$observed_sample_epoch" -ge "$check_started_epoch" ]' "$ROOT/module/bin/patrol.sh"
+grep -Fq '[ "$observed_sample_epoch" -gt "$previous_sample_epoch" ]' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'monitor_rc" -ne 10' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'monitor_rc" -ne 11' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'monitor_rc" -ne 12' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'monitor_rc" -ne 14' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'previous_sample_epoch=%s' "$ROOT/module/bin/patrol.sh"
 ! grep -Fq '13|124) :;;' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'sample_stale=1' "$ROOT/module/service.sh"
 grep -Fq 'reason=monitor_sample' "$ROOT/module/service.sh"
@@ -380,13 +386,13 @@ echo 1 > "$TMP/data/enabled"
 echo passive > "$TMP/data/wake-mode"
 : > "$TMP/samples"
 : > "$TMP/data/guard.log"
-export TEST_MONITOR_RC=10
+export TEST_MONITOR_RC=42
 timeout 8 sh "$TMP/module/service.sh"
 unset TEST_MONITOR_RC
 test -s "$TMP/data/patrol.sample.heartbeat"
-grep -q "fcm_check_end rc=10" "$TMP/data/guard.log"
+grep -q "fcm_check_end rc=42" "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
-echo "PASS: completed non-contention monitor errors refresh patrol heartbeat"
+echo "PASS: nonzero monitor result after a committed sample refreshes patrol heartbeat"
 
 # A monitor error before observe() produces a fresh sample must not refresh
 # the sample heartbeat; the supervisor must retain stale-sample evidence.
@@ -403,6 +409,22 @@ test ! -s "$TMP/data/patrol.sample.heartbeat"
 grep -q 'sample_heartbeat_not_refreshed rc=12' "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo "PASS: failed observe does not refresh sample heartbeat"
+
+# A pre-observe owner-registration failure must not reuse an old sample whose
+# wall-clock second happens to equal the start of this patrol check.
+touch "$TMP/module/module.prop"
+echo 1 > "$TMP/data/enabled"
+echo passive > "$TMP/data/wake-mode"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+date +%s > "$TMP/sample-epoch"
+export TEST_MONITOR_PRE_SAMPLE_RC=14
+timeout 8 sh "$TMP/module/service.sh"
+unset TEST_MONITOR_PRE_SAMPLE_RC
+test ! -s "$TMP/data/patrol.sample.heartbeat"
+grep -q 'sample_heartbeat_not_refreshed rc=14 .*previous_sample_epoch=' "$TMP/data/guard.log"
+test ! -d "$TMP/data/service.lock"
+echo 'PASS: pre-observe owner failure cannot refresh heartbeat from a same-second old sample'
 
 touch "$TMP/module/module.prop"
 echo 1 > "$TMP/data/enabled"
