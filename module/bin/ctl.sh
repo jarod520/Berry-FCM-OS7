@@ -197,7 +197,7 @@ fix() {
         installed "$pkg" || { echo "$pkg 未安装，跳过"; continue; }
         [ "$count" -lt 10 ] || { echo '本轮最多修复 10 个应用'; break; }
         count=$((count + 1))
-        # Do not query dumpsys stopped flags to decide whether to issue unstop.
+        # Package-state diagnostics must not decide whether to issue unstop.
         # The package command itself is the operation result; a failed diagnostic
         # must never prevent the independent MCS heartbeat below.
         if cmd package unstop --user 0 "$pkg" >/dev/null 2>&1; then
