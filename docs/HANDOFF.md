@@ -956,3 +956,10 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **修正**：后续结果只接受 gms_socket；tests/apk-module-smoke.sh 增加负向断言，禁止再次使用旧 dump-derived gms source。
 - **测试门禁补强**：tests/apk-module-smoke.sh 现在会直接 javac 并运行 GuardOpsSmoke.java，覆盖 GuardOps repair 不调用 dump、安装路径确认、unstop 提交标记和分批目标完整性，而不再只是保留一份未被工作流调用的测试类。
 - **验证边界**：以上修改已通过 GitHub 源码回读确认；没有在当前运行环境执行 shell、javac、Gradle 或完整 smoke。没有触发 GitHub Actions、编译、构建、打包、合并或发布。
+
+### 2026-11-23 APK 状态提交失败清理与回归覆盖
+
+- `save_state()` 与 `write_evidence()` 改为显式分步写入、原子 rename；写入或 rename 失败时删除各自临时文件并返回失败。`observe()` 会传播两种提交错误，避免将未成功提交的样本作为正常结果继续执行。
+- `tests/apk-native-fcm-smoke.sh` 增加 `mv` 故障注入，分别模拟 state rename 失败与 evidence rename 失败，检查命令必须失败且对应临时文件被清理。该用例尚未执行。
+- `tests/apk-module-smoke.sh` 已将 GuardOpsSmoke 加入可执行测试入口；`tests/apk-no-dump-smoke.sh` 同时检查 observe 持久化和提交错误传播。
+- 当前仍未运行 shell smoke、POSIX sh 语法检查、javac、Gradle 或设备测试。不得把新增回归用例描述为已通过；未触发 Actions、编译、构建、打包、合并或发布。
