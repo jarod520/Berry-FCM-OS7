@@ -694,3 +694,9 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **修正**：新增 monitor_group_identity_alive()，每次发送组信号前重新核对记录的 group leader（PID、starttime、PGID、命令行）或 monitor 自身（PID、starttime、PGID、命令行）至少一个身份仍锚定原组。TERM 前与 KILL 前都必须通过；无法确认时拒绝信号并保留 owner lock，交由后续清理重试。
 - **回归约束**：KSU smoke 检查身份复核函数存在、在 TERM/KILL 两次组信号前均被调用，以及 KILL 前拒绝原因日志存在。
 - **验证边界**：源码结构与固定断言静态验证；完整 KSU/FCM smoke、全仓 Shell syntax gate 和 Android 实机尚未执行。未触发 Actions、编译、打包、合并或 Release。
+
+### 2026-11-22 service 启动早期失败的锁回收
+- **复审发现**：service 在安装 EXIT cleanup trap 之前调用 stop_monitor_owner()；若旧 monitor owner 身份无法确认，该函数失败后直接 exit 0，会把当前刚创建的 service.lock 留在磁盘上。
+- **修正**：提前固定当前 service starttime；stop_monitor_owner() 失败时，仅当 lock 中 PID、starttime 仍与当前 service 进程完全一致，才删除本次启动创建的 service.lock；保留旧 monitor owner 文件，并记录 service_start_aborted，避免误清理其他实例的锁。
+- **回归约束**：KSU smoke 检查早期失败日志、锁归属二次核验，以及失败分支确实位于 EXIT trap 安装之前。
+- **验证边界**：本次为源码和断言静态检查；完整 smoke、全仓 Shell syntax gate 和设备验证尚未执行。未触发 Actions、编译、打包、合并或 Release。
