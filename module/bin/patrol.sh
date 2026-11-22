@@ -327,10 +327,13 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     maintenance_group_tool=
                     maintenance_watchdog_pid=
                     maintenance_stop_child() {
-                        if [ -n "$maintenance_child_pgid" ] && [ -n "$maintenance_group_tool" ]; then
+                        if [ -n "$maintenance_child_pgid" ] && [ -n "$maintenance_group_tool" ] &&
+                           process_group_alive "$maintenance_child_pgid"; then
                             "$maintenance_group_tool" kill -TERM "-$maintenance_child_pgid" 2>/dev/null || :
                             sleep 1
-                            "$maintenance_group_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
+                            if process_group_alive "$maintenance_child_pgid"; then
+                                "$maintenance_group_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
+                            fi
                         fi
                         [ -z "$maintenance_watchdog_pid" ] || {
                             kill "$maintenance_watchdog_pid" 2>/dev/null || :
