@@ -47,6 +47,7 @@ case "$mode" in
     echo ' cubic wscale:7,7 rto:204 rtt:20/2 lastrcv:1800001'
     ;;
   unknown|proc_connected) echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228';;
+  unverified443) echo 'ESTAB 0 0 192.168.1.8:45000 1.1.1.1:443 uid:10200 ino:105';;
   *) exit 2;;
 esac
 MOCK
@@ -243,6 +244,17 @@ j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=gms_socket
 assert_json "$j" fcm_tcp_hint=established
+requests 18
+
+# A GMS-owned HTTPS socket to an unrelated peer must remain unknown even when
+# mtalk DNS candidates are available; it must never age into false absence.
+printf '%s\\n' '142.250.157.188' > "$TMP/data/mcs-mtalk-dns-ips.txt"
+echo 1700010000 > "$TMP/data/mcs-mtalk-dns-time"
+echo unverified443 > "$TMP/mode"
+settime 10320
+j="$(run status)"
+assert_json "$j" fcm_state=unknown
+assert_json "$j" fcm_source=unavailable
 requests 18
 
 # If a recovery follow-up cannot atomically publish evidence, it must not
