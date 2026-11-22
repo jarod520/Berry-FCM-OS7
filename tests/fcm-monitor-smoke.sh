@@ -47,6 +47,7 @@ case "$mode" in
     echo ' cubic wscale:7,7 rto:204 rtt:20/2 lastrcv:1800001'
     ;;
   unknown|proc_connected) echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228';;
+  unknown_uid) echo 'ESTAB 0 0 192.168.1.8:45000 1.1.1.1:443 uid:10200 ino:106';;
   unverified443) echo 'ESTAB 0 0 192.168.1.8:45000 1.1.1.1:443 uid:10200 ino:105';;
   *) exit 2;;
 esac
@@ -59,10 +60,16 @@ if [ "${MCS_AM_FAIL:-0}" = 1 ] ||
     echo 'Permission Denial: fixture' >&2
     exit 1
 fi
+if [ -n "${MCS_AM_UNKNOWN_ON_ACTION:-}" ] && printf '%s' "$*" | grep -Fq "$MCS_AM_UNKNOWN_ON_ACTION"; then
+    echo unknown_uid > "$MCS_MODE_FILE"
+fi
 if [ -n "${MCS_AM_CONNECT_ON_ACTION:-}" ] && printf '%s' "$*" | grep -Fq "$MCS_AM_CONNECT_ON_ACTION"; then
     echo connected > "$MCS_MODE_FILE"
 fi
-if [ -n "${MCS_AM_ADVANCE_UPTIME:-}" ]; then
+if [ "${MCS_AM_INCREMENT_UPTIME:-0}" = 1 ]; then
+    current_uptime="$(cat "$MCS_UPTIME_FILE")"
+    echo "$((current_uptime+1))" > "$MCS_UPTIME_FILE"
+elif [ -n "${MCS_AM_ADVANCE_UPTIME:-}" ]; then
     printf '%s\n' "$MCS_AM_ADVANCE_UPTIME" > "$MCS_UPTIME_FILE"
 fi
 echo 'Broadcast completed: result=0'
@@ -278,19 +285,38 @@ exec "$REAL_MV" "$@"
 MOCK
 chmod +x "$TMP/bin/mv"
 echo 0 > "$TMP/data/evidence-mv-count"
-export MCS_FAIL_EVIDENCE_MV=1 MCS_FAIL_EVIDENCE_MV_AT=3 MCS_AM_ADVANCE_UPTIME=10381
+export MCS_FAIL_EVIDENCE_MV=1 MCS_FAIL_EVIDENCE_MV_AT=6 MCS_AM_INCREMENT_UPTIME=1
 run monitor >/dev/null
-unset MCS_FAIL_EVIDENCE_MV MCS_FAIL_EVIDENCE_MV_AT MCS_AM_ADVANCE_UPTIME
-requests 19
-test "$(cat "$TMP/data/evidence-mv-count")" = 4
+unset MCS_FAIL_EVIDENCE_MV MCS_FAIL_EVIDENCE_MV_AT MCS_AM_INCREMENT_UPTIME
+requests 22
+test "$(cat "$TMP/data/evidence-mv-count")" = 7
 state_sample_uptime="$(awk -F'|' '{print $28}' "$TMP/data/mcs-monitor.state")"
 evidence_sample_uptime="$(awk -F'|' '{print $7}' "$TMP/data/mcs-evidence")"
-[ "$state_sample_uptime" = 10380 ] || fail "failed follow-up evidence publish advanced state sample"
+[ "$state_sample_uptime" = 10383 ] || fail "failed final follow-up evidence publish advanced state sample"
 [ "$evidence_sample_uptime" = "$state_sample_uptime" ] || fail "failed follow-up overwrote last committed evidence generation"
 j="$(sh "$MON" snapshot)"
 assert_json "$j" fcm_state=connecting
-assert_json "$j" fcm_recovery_decision=confirmation_unavailable
+assert_json "$j" fcm_recovery_decision=recovery_exhausted
 rm -f "$TMP/bin/mv"
+
+# Unknown follow-up evidence is not proof of recovery, so the bounded sequence
+# continues through the remaining triggers; only a positive connected sample stops it.
+: > "$TMP/am.log"
+echo connecting > "$TMP/mode"
+settime 10400
+j="$(run status)"
+assert_json "$j" fcm_state=connecting
+settime 10460
+export MCS_AM_UNKNOWN_ON_ACTION=GCM_RECONNECT
+run monitor >/dev/null
+unset MCS_AM_UNKNOWN_ON_ACTION
+requests 4
+for action in GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT; do
+    grep -Fq "$action" "$TMP/am.log" || fail "unknown follow-up stopped recovery before $action"
+done
+j="$(sh "$MON" snapshot)"
+assert_json "$j" fcm_state=unknown
+assert_json "$j" fcm_recovery_decision=recovery_exhausted
 
 [ ! -s "$TMP/dumpsys.log" ] || fail "dumpsys was invoked by the monitor"
 echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO stall recovery, same-cycle four-trigger escalation, evidence-first commit protection, and dump independence"
