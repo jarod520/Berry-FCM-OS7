@@ -190,6 +190,7 @@ export BERRY_FCM_DATA="$TMP/native-poll-data" MCS_DUMPSYS_LOG="$TMP/native-poll.
 mkdir -p "$BERRY_FCM_DATA"
 echo 1 > "$BERRY_FCM_DATA/enabled"
 : > "$MCS_DUMPSYS_LOG"
+: > "$MCS_AM_LOG"
 unset BERRY_FCM_TEST_MODE
 settime 70000
 printf "%s\n" "DeviceID: [fixture]" "connected=mtalk.google.com/142.250.157.188,port=5228" "connectTime=00:10/00:00" > "$MCS_FIXTURE"
