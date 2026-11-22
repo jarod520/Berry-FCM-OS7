@@ -277,6 +277,7 @@ assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=gms_socket
 assert_json "$j" fcm_transport=tcp5228
 echo 'PASS: IPv6 kernel TCP table confirms GMS-owned MCS 5228'
+export BERRY_PROC_NET_DIR="$TMP/proc-unavailable"
 
 # Unknown native state plus continuous GMS UID socket absence must age into
 # a confirmed outage even when no earlier native disconnected sample exists.
