@@ -162,6 +162,31 @@ run events | grep -q '|connection_observed_after_unknown|'
 ! run events | grep -q '|connection_restored|'
 echo 'PASS: unknown-to-connected is observed without claiming confirmed recovery'
 
+# If evidence cannot be atomically published, do not advance the persisted
+# sample state/time; clean the failed temporary evidence file.
+export BERRY_FCM_DATA="$TMP/evidence-write-fail-data"
+mkdir -p "$BERRY_FCM_DATA" "$TMP/evidence-write-fail-bin"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+export MCS_SS_MODE=connected
+settime 10100
+printf '%s\n' 'DeviceID: [fixture]' 'connected=mtalk.google.com/142.250.157.188,port=5228' 'connectTime=00:10/00:00' > "$MCS_FIXTURE"
+cat > "$TMP/evidence-write-fail-bin/mv" <<'MOCK'
+#!/bin/sh
+dest=
+for arg do dest="$arg"; done
+case "$dest" in "$BERRY_FCM_DATA/mcs-evidence") exit 1;; esac
+exec /bin/mv "$@"
+MOCK
+chmod +x "$TMP/evidence-write-fail-bin/mv"
+if PATH="$TMP/evidence-write-fail-bin:$TMP/bin:/usr/bin:/bin" run status; then
+    echo 'status unexpectedly succeeded after evidence publication failure' >&2
+    exit 1
+fi
+test ! -e "$BERRY_FCM_DATA/mcs-monitor.state"
+test ! -e "$BERRY_FCM_DATA/mcs-evidence"
+test ! -e "$BERRY_FCM_DATA/mcs-evidence.tmp"
+echo 'PASS: failed evidence publication cannot advance the sample timestamp'
+
 # A fresh native timer after resume permits a double check in the same window.
 settime 10360
 printf "%s\n" "DeviceID: [fixture]" "Not connected" "disconnectTime=02:00/00:00" > "$MCS_FIXTURE"
