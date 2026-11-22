@@ -51,8 +51,8 @@ grep -Fq 'maintenance_owner_alive()' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'proc_start_time "$maintenance_pid"' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'maintenance_stop_child()' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'trap maintenance_cleanup EXIT' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'timeout -k "$MONITOR_KILL_GRACE" 45 sh "$MODDIR/bin/ctl.sh" fix' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'maintenance_skipped reason=no_timeout_applet' "$ROOT/module/bin/patrol.sh"
+grep -Fq '"$TOYBOX_BIN" setsid sh "$MODDIR/bin/ctl.sh" fix' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'maintenance_skipped reason=no_setsid_or_kill_applet' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'maintenance_child_identity()' "$ROOT/module/service.sh"
 grep -Fq 'maintenance_child_alive()' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'stop_maintenance_child()' "$ROOT/module/service.sh"
@@ -153,7 +153,7 @@ if [ "$1" = --list ]; then
     if [ "${TEST_NO_TIMEOUT:-0}" = 1 ]; then
         printf '%s\n' setsid kill
     else
-        echo timeout
+        printf '%s\n' timeout setsid kill
     fi
     exit 0
 fi
@@ -311,14 +311,14 @@ cat > "$TMP/orphan-maintenance-child.sh" <<'MOCK'
 exec /bin/sleep 30
 MOCK
 chmod +x "$TMP/orphan-maintenance-child.sh"
-"$TMP/orphan-maintenance-child.sh" &
+"$TMP/bin/toybox" setsid "$TMP/orphan-maintenance-child.sh" &
 orphan_child_pid=$!
 orphan_child_stamp="$(tr -d '\n' < "/proc/$orphan_child_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
 mkdir -p "$TMP/data/service.lock" "$TMP/data/maintenance.lock"
 echo 999999 > "$TMP/data/service.lock/pid"
 echo 1 > "$TMP/data/service.lock/starttime"
 echo '999998 1' > "$TMP/data/maintenance.lock/owner"
-printf '%s %s\n' "$orphan_child_pid" "$orphan_child_stamp" > "$TMP/data/maintenance.lock/child"
+printf '%s %s %s %s\n' "$orphan_child_pid" "$orphan_child_stamp" "$orphan_child_pid" "$TMP/bin/toybox" > "$TMP/data/maintenance.lock/child"
 echo 1 > "$TMP/data/enabled"
 touch "$TMP/module/module.prop"
 : > "$TMP/samples"
