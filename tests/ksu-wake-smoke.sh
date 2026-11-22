@@ -20,6 +20,8 @@ grep -Fq 'patrol_stop_unconfirmed' "$ROOT/module/service.sh"
 grep -Fq 'timer_stop_unconfirmed' "$ROOT/module/service.sh"
 grep -Fq 'stop_timer || return 1' "$ROOT/module/service.sh"
 grep -Fq 'while patrol_identity_alive' "$ROOT/module/service.sh"
+grep -Fq 'rm -f "$DATA/patrol.heartbeat"' "$ROOT/module/service.sh"
+grep -Fq 'elif [ "$hb" -eq 0 ]' "$ROOT/module/service.sh"
 hot_stop_line="$(grep -n '^if is_guardian' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 hot_enabled_line="$(grep -n 'berry_fcm_ksu/enabled' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 [ "$hot_stop_line" -lt "$hot_enabled_line" ]
