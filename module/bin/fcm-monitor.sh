@@ -642,6 +642,14 @@ observe() {
     load_state
     nowm="$(num "$(monotime)")"; nowe="$(num "$(now_epoch)")"
     [ "$nowm" -gt 0 ] && [ "$nowe" -gt 0 ] || return 12
+    # Measure sample gaps with monotonic uptime. Only legacy state files
+    # without sample_mono fall back to wall-clock age for one migration cycle.
+    sample_gap_age=-1
+    if [ "$sample_mono" -gt 0 ] && [ "$nowm" -ge "$sample_mono" ]; then
+        sample_gap_age=$((nowm-sample_mono))
+    elif [ "$sample_mono" -le 0 ] && [ "$sample_epoch" -gt 0 ] && [ "$nowe" -ge "$sample_epoch" ]; then
+        sample_gap_age=$((nowe-sample_epoch))
+    fi
     # Keep the previous observation only as a hint across a suspend gap.
     # Never represent that gap as proven continuous downtime.
     previous_down_observed=0; previous_down_state="$state"; previous_missing_epoch="$missing_epoch"
@@ -659,7 +667,7 @@ observe() {
     fi
     # Keep continuous absence evidence regardless of total outage length.
     # A real sampling gap, not an arbitrary 15-minute age cap, resets it.
-    if [ "$sample_epoch" -gt 0 ] && [ "$nowe" -gt "$sample_epoch" ] && [ $((nowe-sample_epoch)) -gt 90 ]; then
+    if [ "$sample_gap_age" -gt 90 ]; then
         previous_down_observed=0
     fi
     outage_hint_mono="$previous_down_observed"
@@ -670,9 +678,9 @@ observe() {
     fi
     decision=not_evaluated
     gap_detected=0
-    if [ "$sample_epoch" -gt 0 ] && [ "$nowe" -gt "$sample_epoch" ] && [ $((nowe-sample_epoch)) -gt 90 ]; then
+    if [ "$sample_gap_age" -gt 90 ]; then
         gap_detected=1
-        record_event sample_gap "距离上次有效采样 $((nowe-sample_epoch)) 秒；空档内没有状态样本，现重新读取 Google 状态"
+        record_event sample_gap "距离上次有效采样 $sample_gap_age 秒；空档内没有状态样本，现重新读取 Google 状态"
         state=unknown; missing_since=0; missing_epoch=0; conn_since=0; down_observed=0
         # A timer anchor from before an unobserved interval cannot prove a
         # continuous stalled native timer after sampling resumes.
