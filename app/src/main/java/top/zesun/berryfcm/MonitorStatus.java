@@ -14,14 +14,13 @@ final class MonitorStatus {
     }
     private MonitorStatus() {}
     static boolean hasStateEvidence(String source) {
-        return "gms".equals(source) || "gms_socket".equals(source)
-                || "gms_socket_fallback".equals(source);
+        return "gms_socket".equals(source) || "gms_socket_absence".equals(source);
     }
     static String label(State state, String source) {
         if (state == State.CONNECTED && "gms_socket".equals(source))
             return "GMS MCS TCP 已建立（FCM 认证未证实）";
-        if (state == State.DISCONNECTED && "gms_socket_fallback".equals(source))
-            return "FCM TCP 持续缺失（Root 观察）";
+        if (state == State.DISCONNECTED && "gms_socket_absence".equals(source))
+            return "GMS MCS TCP 持续缺失（Root 观察）";
         return state.label;
     }
     static State resolve(boolean authorized, boolean enabled, boolean running,
