@@ -4,7 +4,7 @@ DATA=/data/adb/berry_fcm_ksu
 LOCK="$DATA/service.lock"
 pid="$(cat "$LOCK/pid" 2>/dev/null)"
 stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
-case "$stamp" in ""|*[!0-9]*) stamp=;; esac
+case "$stamp" in ""|0|*[!0-9]*) stamp=;; esac
 proc_start_time() {
     [ -r "/proc/$1/stat" ] || return 1
     tr -d '\n' < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $20}'
