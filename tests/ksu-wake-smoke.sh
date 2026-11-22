@@ -48,6 +48,10 @@ grep -Fq 'proc_group_id()' "$ROOT/module/bin/fcm-monitor.sh"
 grep -Fq 'printf "%s %s %s %s\n"' "$ROOT/module/bin/fcm-monitor.sh"
 grep -Fq 'monitor_owner_alive()' "$ROOT/module/service.sh"
 grep -Fq 'monitor_group_tool()' "$ROOT/module/service.sh"
+grep -Fq 'lock_owner_group_stamp="$(proc_start_time "$lock_owner_pgid")"' "$ROOT/module/bin/fcm-monitor.sh"
+grep -Fq 'printf "%s %s %s %s %s\\n"' "$ROOT/module/bin/fcm-monitor.sh"
+grep -Fq 'read -r monitor_pid monitor_stamp monitor_pgid monitor_isolated monitor_group_stamp' "$ROOT/module/service.sh"
+grep -Fq 'proc_start_time "$monitor_pgid")" = "$monitor_group_stamp"' "$ROOT/module/service.sh"
 grep -Fq 'process_group_alive "$monitor_pgid"' "$ROOT/module/service.sh"
 grep -Fq 'stop_monitor_owner()' "$ROOT/module/service.sh"
 grep -Fq "IFS=' ' read -r service_pid _ < /proc/self/stat" "$ROOT/module/service.sh"
@@ -398,6 +402,55 @@ child_state="$(awk '{print $3}' "/proc/$monitor_child/stat" 2>/dev/null || :)"
 test ! -e "$TMP/data/mcs-monitor.lock.owner"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: service cleanup terminates isolated monitor process groups'
+
+# timeout owns a separate process group: monitor PID differs from PGID.
+# Cleanup must validate the group leader identity and kill the whole group.
+echo passive > "$TMP/data/wake-mode"
+echo 0 > "$TMP/data/enabled"
+touch "$TMP/module/module.prop"
+: > "$TMP/data/guard.log"
+sh "$TMP/module/service.sh" &
+service_pid=$!
+n=0
+while ! grep -q 'service_started pid=' "$TMP/data/guard.log" 2>/dev/null && [ "$n" -lt 60 ]; do
+    /bin/sleep 0.1
+    n=$((n + 1))
+done
+grep -q 'service_started pid=' "$TMP/data/guard.log"
+cat > "$TMP/timeout-monitor.sh" <<'MOCK'
+#!/bin/sh
+IFS=' ' read -r monitor_pid _ < /proc/self/stat
+monitor_stamp="$(tr -d '\\n' < "/proc/$monitor_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
+monitor_pgid="$(tr -d '\\n' < "/proc/$monitor_pid/stat" | sed 's/^.*) //' | awk '{print $3}')"
+group_stamp="$(tr -d '\\n' < "/proc/$monitor_pgid/stat" | sed 's/^.*) //' | awk '{print $20}')"
+printf '%s %s %s 1 %s\\n' "$monitor_pid" "$monitor_stamp" "$monitor_pgid" "$group_stamp" > "$TEST_DIR/data/mcs-monitor.lock.owner"
+ /bin/sleep 30 &
+echo "$!" > "$TEST_DIR/timeout-monitor-child-pid"
+wait
+MOCK
+chmod +x "$TMP/timeout-monitor.sh"
+"$TMP/bin/toybox" timeout 30 sh "$TMP/timeout-monitor.sh" &
+timeout_pid=$!
+n=0
+while [ ! -s "$TMP/data/mcs-monitor.lock.owner" ] && [ "$n" -lt 60 ]; do
+    /bin/sleep 0.1
+    n=$((n + 1))
+done
+test -s "$TMP/data/mcs-monitor.lock.owner"
+read -r timeout_monitor_pid timeout_monitor_stamp timeout_monitor_pgid timeout_isolated timeout_group_stamp < "$TMP/data/mcs-monitor.lock.owner"
+[ "$timeout_isolated" = 1 ]
+[ "$timeout_monitor_pid" != "$timeout_monitor_pgid" ]
+[ "$timeout_monitor_pgid" = "$timeout_pid" ]
+timeout_monitor_child="$(cat "$TMP/timeout-monitor-child-pid")"
+kill -TERM "$service_pid"
+wait "$service_pid" 2>/dev/null || :
+wait "$timeout_pid" 2>/dev/null || :
+child_state="$(awk '{print $3}' "/proc/$timeout_monitor_child/stat" 2>/dev/null || :)"
+[ -z "$child_state" ] || [ "$child_state" = Z ]
+test ! -e "$TMP/data/mcs-monitor.lock.owner"
+test ! -d "$TMP/data/service.lock"
+grep -q 'monitor_group_leader' "$TMP/data/guard.log" && ! grep -q 'monitor_group_leader_reused_or_moved' "$TMP/data/guard.log" || :
+echo 'PASS: service cleanup terminates timeout-owned monitor groups when monitor PID differs from PGID'
 
 # A new supervisor must clean an orphaned isolated monitor group before publishing its service lock.
 echo passive > "$TMP/data/wake-mode"
