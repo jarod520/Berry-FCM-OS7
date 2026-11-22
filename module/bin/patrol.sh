@@ -282,23 +282,27 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
             "$(date '+%F %T')" "$$" "$now" "$wake_event" "$check_wake_mode" >> "$DATA/guard.log"
         result="$(run_bounded "$MONITOR_TIMEOUT" sh "$MODDIR/bin/fcm-monitor.sh" monitor 2>&1)"
         monitor_rc=$?
-        # Refresh only after a completed non-contention, non-timeout monitor attempt.
-        # rc=13 means another owner holds the monitor lock; rc=124 means this attempt timed out.
-        # Keep the watchdog heartbeat stale for both so it can clean a stuck owner/monitor.
-        case "$monitor_rc" in
-            13|124) :;;
-            *)
-                sample_now="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
-                case "$sample_now" in ""|*[!0-9]*) sample_now=0;; esac
-                if [ "$sample_now" -gt 0 ]; then
-                    printf '%s\n' "$sample_now" > "$DATA/patrol.sample.heartbeat.tmp" &&
-                        mv -f "$DATA/patrol.sample.heartbeat.tmp" "$DATA/patrol.sample.heartbeat"
-                fi
-                ;;
-        esac
+        # Snapshot the persisted sample after the monitor attempt. A non-contention
+        # exit code alone is not proof that observe() produced a fresh sample:
+        # e.g. rc=12 (clock/uptime unavailable) and rc=14 (owner registration failed).
         sample="$(run_bounded 5 sh "$MODDIR/bin/fcm-monitor.sh" snapshot 2>/dev/null)"
 
         summary="$(printf '%s\n' "$sample" | sed -n 's/.*"fcm_state":"\([a-z_]*\)".*"fcm_sample_time":\([0-9]*\).*"fcm_recovery_decision":"\([a-z_]*\)".*/state=\1 sample_epoch=\2 recovery=\3/p')"
+        observed_sample_epoch="$(printf '%s\n' "$summary" | sed -n 's/.*sample_epoch=\([0-9][0-9]*\).*/\1/p')"
+        case "$observed_sample_epoch" in ""|*[!0-9]*) observed_sample_epoch=0;; esac
+        if [ "$monitor_rc" -ne 13 ] && [ "$monitor_rc" -ne 124 ] &&
+           [ "$check_started_epoch" -gt 0 ] &&
+           [ "$observed_sample_epoch" -ge "$check_started_epoch" ]; then
+            sample_now="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
+            case "$sample_now" in ""|*[!0-9]*) sample_now=0;; esac
+            if [ "$sample_now" -gt 0 ]; then
+                printf '%s\n' "$sample_now" > "$DATA/patrol.sample.heartbeat.tmp" &&
+                    mv -f "$DATA/patrol.sample.heartbeat.tmp" "$DATA/patrol.sample.heartbeat"
+            fi
+        else
+            printf '[%s] sample_heartbeat_not_refreshed rc=%s sample_epoch=%s check_started=%s\n' \
+                "$(date '+%F %T')" "$monitor_rc" "$observed_sample_epoch" "$check_started_epoch" >> "$DATA/guard.log"
+        fi
         if [ "$wake_event" = 1 ]; then
             printf '[%s] wake_gms_check_finished rc=%s %s\n' "$(date '+%F %T')" "$monitor_rc" "${summary:-snapshot=unavailable}" >> "$DATA/guard.log"
         fi
