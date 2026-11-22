@@ -1,13 +1,6 @@
 name: Build KernelSU ZIP
 
 on:
-  push:
-    branches: [main, release/1.0-rc.1, 'fix/**']
-    paths:
-      - 'module/**'
-      - 'module-src/**'
-      - 'tests/**'
-      - '.github/workflows/build-ksu.yml'
   workflow_dispatch:
 
 permissions:
