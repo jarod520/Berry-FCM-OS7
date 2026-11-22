@@ -1023,7 +1023,7 @@ confirm_stalled_timer() {
 auto_recovery() {
     decision=not_disconnected
     if [ "$native_reason" = gms_stopped ]; then
-        decision=gms_stopped_unknown
+        if [ "$state" = connected ]; then decision=not_disconnected; else decision=gms_stopped_unknown; fi
         return 0
     fi
     if [ "$source" = gms ] && [ "$state" = connected ] && [ "$native_timer_since" -gt 0 ]; then
