@@ -341,6 +341,8 @@ public final class GuardActivity extends Ui {
             switch (code) {
                 case "not_stopped": case "running": return "上次未被强制停止";
                 case "stopped": return "上次处于强制停止状态";
+                case "unstop_submitted": return "已提交解除停止命令（未做状态复检）";
+                case "not_installed": return "目标未安装";
                 case "restored": return "上次已解除停止";
                 case "repair_failed": return "上次恢复失败";
                 case "unknown": return "上次无法判断";
