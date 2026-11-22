@@ -127,10 +127,14 @@ resolve_mtalk() {
     now="$(now_epoch)"; old="$(cat "$DNS_TIME" 2>/dev/null)"; old="$(num "$old")"
     [ -s "$DNS_IPS" ] && [ "$old" -gt 0 ] && [ "$now" -ge "$old" ] && [ $((now-old)) -lt 600 ] && return 0
     tmp="$DNS_IPS.$$"; : > "$tmp"
-    for host in mtalk.google.com mtalk4.google.com mtalk-staging.google.com mtalk-dev.google.com \
-      alt1-mtalk.google.com alt2-mtalk.google.com alt3-mtalk.google.com alt4-mtalk.google.com \
-      alt5-mtalk.google.com alt6-mtalk.google.com alt7-mtalk.google.com alt8-mtalk.google.com; do
-        resolve_host "$host" >> "$tmp" 2>/dev/null || :
+    for host in mtalk.google.com alt1-mtalk.google.com; do
+        if [ -x /system/bin/toybox ]; then
+            /system/bin/toybox timeout -k 1 3 nslookup "$host" 2>/dev/null
+        elif command -v timeout >/dev/null 2>&1; then
+            timeout 3 nslookup "$host" 2>/dev/null
+        else
+            continue
+        fi | awk '/Address/ {ip=$NF; if(ip ~ /^[0-9A-Fa-f:.]+$/) print tolower(ip)}' >> "$tmp"
     done
     if [ -s "$tmp" ]; then sort -u "$tmp" > "$DNS_IPS.new" && mv -f "$DNS_IPS.new" "$DNS_IPS"; fi
     rm -f "$tmp"
@@ -150,6 +154,7 @@ gms_uid() {
 
 scan_sockets() {
     uid="$(gms_uid 2>/dev/null)" || { printf 'unknown||||gms_uid_unavailable\n'; return; }
+    resolve_mtalk >/dev/null 2>&1 || :
     raw=
     if command -v "$SS_BIN" >/dev/null 2>&1; then
         raw="$("$SS_BIN" -tnpe 2>/dev/null)" || raw=
@@ -166,10 +171,11 @@ scan_sockets() {
                   p=(port=="146C"?5228:(port=="146D"?5229:5230))
                   if (st=="01" && rank<3) {rank=3; kind="connected"; transport="tcp" p; key=$2 ">" $3 "#" $10}
                   else if (st=="02" && rank<1) {rank=1; kind="connecting"; transport="tcp" p; key=$2 ">" $3 "#" $10}
-                }
+                } else if (port=="01BB" && st=="01") {unverified443=1}
               }
               END {
                 if (rank>0) printf "%s|%s|proc-net|%s|\n",kind,transport,key
+                else if (unverified443) print "unknown||||proc_net_443_unverified"
                 else print "absent||||proc_net_no_mcs_socket"
               }' "$table"
         done | awk -F'|' '
