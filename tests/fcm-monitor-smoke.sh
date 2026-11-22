@@ -2,6 +2,9 @@
 set -eu
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 MON="${BERRY_MONITOR_SCRIPT:-$ROOT/module/bin/fcm-monitor.sh}"
+grep -Fq '"$TOYBOX_BIN" timeout --foreground -k 1 3 nslookup "$host"' "$MON"
+grep -Fq 'timeout --foreground 3 nslookup "$host"' "$MON"
+grep -Fq '*"Run PROG."*) timeout 3 nslookup "$host"' "$MON"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 mkdir -p "$TMP/bin" "$TMP/data"
