@@ -4,7 +4,7 @@ ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 grep -q 'MODULE_HOT_INSTALL_REQUEST=true' "$ROOT/module/customize.sh"
 grep -q 'MODULE_HOT_RUN_SCRIPT=hotinstall.sh' "$ROOT/module/customize.sh"
 test -f "$ROOT/module/hotinstall.sh"
-grep -q 'starting updated background monitor service' "$ROOT/module/hotinstall.sh"
+grep -q 'sh "$DIR/service.sh" </dev/null >/dev/null 2>&1 &' "$ROOT/module/hotinstall.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/data" "$TMP/module/bin" "$TMP/bin"
