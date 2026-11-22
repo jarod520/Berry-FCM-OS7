@@ -765,6 +765,11 @@ $socket
 EOF_SOCKET
         tcp_hint="$socket_state"
         case "$tcp_hint" in connected) tcp_hint=established;; connecting|absent|unknown) :;; *) tcp_hint=unknown;; esac
+        if [ "$native_reason" = gms_stopped ]; then
+            # Socket absence during an intentional package stop is not a
+            # continuous outage sample; start a fresh anchor after it resumes.
+            previous_down_observed=0; outage_hint_mono=0; down_observed=0
+        fi
         source=unavailable; duration=-1; close_code=
         case "$tcp_hint" in
           unknown|absent)
@@ -833,17 +838,21 @@ EOF_SOCKET
                 record_event socket_connecting '本轮原生状态字段未提供；UID0 已观察到 GMS MCS TCP 正在连接'
             ;;
           absent)
-            if [ "$outage_hint_mono" -le 0 ] || [ "$socket_now" -lt "$outage_hint_mono" ]; then
-                outage_hint_mono="$socket_now"
-                record_event tcp_absence_started 'UID0 未观察到 GMS MCS TCP；开始连续缺失计时，暂不据单次缺失重连'
-            fi
-            socket_down_age=$((socket_now-outage_hint_mono))
-            if [ "$native_reason" != gms_stopped ] && [ "$socket_down_age" -ge 30 ] &&
-               { [ "$native_poll_due" = 1 ] || [ "$previous_down_state" != connected ]; }; then
-                observed=disconnected; source=gms_socket_fallback
-                new_transport=; new_remote=
-                [ "$previous_down_state" = disconnected ] ||
-                    record_event tcp_absence_confirmed "UID0 连续 $socket_down_age 秒未观察到 GMS MCS TCP；按断联进入恢复判断"
+            if [ "$native_reason" = gms_stopped ]; then
+                socket_down_age=0
+            else
+                if [ "$outage_hint_mono" -le 0 ] || [ "$socket_now" -lt "$outage_hint_mono" ]; then
+                    outage_hint_mono="$socket_now"
+                    record_event tcp_absence_started 'UID0 未观察到 GMS MCS TCP；开始连续缺失计时，暂不据单次缺失重连'
+                fi
+                socket_down_age=$((socket_now-outage_hint_mono))
+                if [ "$socket_down_age" -ge 30 ] &&
+                   { [ "$native_poll_due" = 1 ] || [ "$previous_down_state" != connected ]; }; then
+                    observed=disconnected; source=gms_socket_fallback
+                    new_transport=; new_remote=
+                    [ "$previous_down_state" = disconnected ] ||
+                        record_event tcp_absence_confirmed "UID0 连续 $socket_down_age 秒未观察到 GMS MCS TCP；按断联进入恢复判断"
+                fi
             fi
             ;;
         esac
@@ -1142,8 +1151,13 @@ case "${1:-status}" in
            { [ "$state" = unknown ] && socket_fallback_ready "$duration"; }; then
             confirm_recovery manual || exit $?
         else
-            decision=not_disconnected
-            record_event reconnect_skipped "GMS 已连接或状态不可确认，未发送手动重连"
+            if [ "$native_reason" = gms_stopped ]; then
+                decision=gms_stopped_unknown
+                record_event reconnect_skipped "GMS 套件处于 stopped 状态，未发送手动重连"
+            else
+                decision=not_disconnected
+                record_event reconnect_skipped "GMS 已连接或状态不可确认，未发送手动重连"
+            fi
         fi
         write_evidence || exit $?
         case "$decision" in
