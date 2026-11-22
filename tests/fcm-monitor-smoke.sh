@@ -250,6 +250,12 @@ echo 'PASS: failed evidence publication cannot advance the sample timestamp'
 export BERRY_FCM_DATA="$TMP/state-write-fail-data"
 mkdir -p "$BERRY_FCM_DATA" "$TMP/state-write-fail-bin"
 echo 1 > "$BERRY_FCM_DATA/enabled"
+export MCS_SS_MODE=connected
+settime 10100
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+previous_committed_sample="$(awk -F'|' '{print $28}' "$BERRY_FCM_DATA/mcs-monitor.state")"
+test "$previous_committed_sample" = 10100
 settime 10110
 cat > "$TMP/state-write-fail-bin/mv" <<'MOCK'
 #!/bin/sh
@@ -263,9 +269,11 @@ if PATH="$TMP/state-write-fail-bin:$TMP/bin:/usr/bin:/bin" run status; then
     echo 'status unexpectedly succeeded after state publication failure' >&2
     exit 1
 fi
-test ! -e "$BERRY_FCM_DATA/mcs-monitor.state"
+test -e "$BERRY_FCM_DATA/mcs-monitor.state"
+test "$(awk -F'|' '{print $28}' "$BERRY_FCM_DATA/mcs-monitor.state")" = "$previous_committed_sample"
 test -e "$BERRY_FCM_DATA/mcs-evidence"
 test "$(awk -F'|' '{print NF}' "$BERRY_FCM_DATA/mcs-evidence")" = 7
+test "$(awk -F'|' '{print $7}' "$BERRY_FCM_DATA/mcs-evidence")" = 10110
 if find "$BERRY_FCM_DATA" -maxdepth 1 -name 'mcs-monitor.state.*' | grep -q .; then
     echo 'state temporary file leaked after failed rename' >&2
     exit 1
@@ -274,7 +282,14 @@ j="$(run snapshot)"
 assert_json "$j" fcm_state=stale
 assert_json "$j" fcm_sample_uptime=0
 assert_json "$j" fcm_recovery_decision=sample_unavailable
-echo 'PASS: evidence/state generation mismatch is marked stale and temp state is cleaned'
+export MCS_SS_MODE=unknown
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_source=unavailable
+assert_json "$j" fcm_sample_uptime=10110
+test "$(awk -F'|' '{print $28}' "$BERRY_FCM_DATA/mcs-monitor.state")" = 10110
+test "$(awk -F'|' '{print $7}' "$BERRY_FCM_DATA/mcs-evidence")" = 10110
+echo 'PASS: uncommitted evidence generation is ignored on the next observation'
 
 # A sampling gap breaks continuity of the native connectTime stall timer.
 export BERRY_FCM_DATA="$TMP/native-timer-gap-data"
