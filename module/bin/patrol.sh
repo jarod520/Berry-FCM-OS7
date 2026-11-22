@@ -18,6 +18,10 @@ proc_start_time() {
     [ -r "/proc/$1/stat" ] || return 1
     tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $20}'
 }
+proc_state() {
+    [ -r "/proc/$1/stat" ] || return 1
+    tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $1}'
+}
 parent_alive() {
     case "$SERVICE_PID" in ""|*[!0-9]*) return 1;; esac
     kill -0 "$SERVICE_PID" 2>/dev/null || return 1
@@ -29,7 +33,8 @@ maintenance_owner_alive() {
     case "$maintenance_pid:$maintenance_stamp" in *[!0-9:]*|:*|*:) return 1;; esac
     [ "$maintenance_pid" -gt 1 ] && [ "$maintenance_stamp" -gt 0 ] &&
         kill -0 "$maintenance_pid" 2>/dev/null || return 1
-    [ "$(proc_start_time "$maintenance_pid")" = "$maintenance_stamp" ]
+    [ "$(proc_start_time "$maintenance_pid")" = "$maintenance_stamp" ] || return 1
+    [ "$(proc_state "$maintenance_pid")" != Z ]
 }
 run_bounded() {
     seconds="$1"; shift
