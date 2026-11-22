@@ -620,7 +620,7 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **发现的实际风险**：原 `patrol.sh` 将 BusyBox `timeout` 也设置 `BERRY_FCM_ISOLATED_GROUP=1`。BusyBox 不创建独立组时，monitor 会继承 service 所在进程组；`service.sh` 若按该标记对负 PGID 发信号，可能误杀整个 service 进程组。与此同时，Toybox/coreutils timeout 的进程组 leader 可能与 monitor PID 不同，旧逻辑只接受 `PGID == monitor PID`，导致实际独立组被降级为只杀 monitor shell，探测子进程可能遗留。
 - **本次修正**：
   - Toybox timeout 保留其原生独立进程组标记。
-  - BusyBox timeout 与 PATH 来源不确定的 timeout，优先通过 Toybox/BusyBox `setsid` 建立私有会话后才标记为 isolated；没有可用 `setsid` 时明确标记 `BERRY_FCM_ISOLATED_GROUP=0`，禁止把继承的 service 组当作 monitor 组。
+  - BusyBox timeout 与 PATH 来源不确定的 timeout，优先通过 Toybox/BusyBox `setsid` 建立私有会话后才标记为 isolated；没有可用 `setsid` 时明确标记 `BERRY_FCM_ISOLATED_GROUP=0`，禁止把继承的 service 组当作 monitor 组。 无 timeout/setsid 的最后 watchdog 兜底也显式设置为 0，防止外部环境变量残留造成误标。
   - `fcm-monitor.sh` 的 owner 文件扩展为五字段：monitor PID、monitor starttime、PGID、isolated 标记、PGID leader starttime。这样兼容 PGID 与 monitor PID 相同或不同的隔离方式。
   - `service.sh` 在组信号前核验 PGID leader 的 starttime/PGID/cmdline，并再次核验 monitor PID/starttime/PGID；旧四字段 isolated owner 仅在 monitor 自身就是组 leader 时兼容推断，不能把旧的未知组号当作安全组。
   - 正常 `service_cleanup()` 和巡检 watchdog 回收都改为先停止 patrol，再读取并清理 monitor owner，避免 patrol 在 owner 检查后才发布新的 monitor。
