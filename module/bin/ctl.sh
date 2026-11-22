@@ -195,24 +195,23 @@ fix() {
     changed=0; failed=0; count=0
     for pkg in $(target_list); do
         installed "$pkg" || { echo "$pkg 未安装，跳过"; continue; }
-        st="$(stopped "$pkg")"
-        [ "$st" = 0 ] && { echo "$pkg 未停止"; continue; }
-        [ "$st" = -1 ] && { echo "$pkg stopped 状态未知，跳过"; failed=$((failed + 1)); continue; }
         [ "$count" -lt 10 ] || { echo '本轮最多修复 10 个应用'; break; }
         count=$((count + 1))
-        if cmd package unstop --user 0 "$pkg" >/dev/null 2>&1 && [ "$(stopped "$pkg")" = 0 ]; then
-            echo "$pkg 已解除 stopped (复检通过)"
+        # Do not query dumpsys stopped flags to decide whether to issue unstop.
+        # The package command itself is the operation result; a failed diagnostic
+        # must never prevent the independent MCS heartbeat below.
+        if cmd package unstop --user 0 "$pkg" >/dev/null 2>&1; then
+            echo "$pkg 已提交 unstop 命令"
             changed=$((changed + 1))
         else
-            echo "$pkg 解除 stopped 失败 (可能权限/系统限制)"
+            echo "$pkg unstop 命令失败 (可能权限/系统限制)"
             failed=$((failed + 1))
         fi
     done
-    # Package-state diagnostics may be unavailable; they must never gate an MCS recovery trigger.
     if installed "$GMS"; then
         heartbeat || echo '部分心跳未确认，并不代表推送必然失败'
     fi
-    echo "本轮解除 stopped: $changed, 失败: $failed"
+    echo "本轮 unstop 命令成功: $changed, 失败: $failed"
     [ "$failed" = 0 ]
 }
 watch() {
