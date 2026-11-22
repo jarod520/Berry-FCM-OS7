@@ -664,7 +664,7 @@ EOF_SOCKET
         esac
         # A recent native MCS Close event is secondary evidence only when
         # socket ownership is unreadable; a later Connected event supersedes it.
-        if [ "$observed" = unknown ] && native_close_fallback_ready; then
+        if [ "$observed" = unknown ] && [ "$tcp_hint" = unknown ] && native_close_fallback_ready; then
             observed=disconnected; source=gms_native_event_fallback
             duration=-1
             close_code=
@@ -944,7 +944,7 @@ case "${1:-status}" in
     reconnect)
         observe || exit $?
         if { { [ "$source" = gms ] || [ "$source" = gms_socket ] || [ "$source" = gms_socket_fallback ] || [ "$source" = gms_native_event_fallback ]; } && { [ "$state" = connecting ] || [ "$state" = disconnected ]; }; } ||
-           { [ "$state" = unknown ] && { socket_fallback_ready "$duration" || native_close_fallback_ready; }; }; then
+           { [ "$state" = unknown ] && socket_fallback_ready "$duration"; }; then
             confirm_recovery manual || exit $?
         else
             decision=not_disconnected
