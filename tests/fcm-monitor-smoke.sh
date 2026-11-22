@@ -160,6 +160,12 @@ j="$(PATH="$TMP/bin:$TMP/compatible" /bin/sh "$MON" status)"
 assert_json "$j" fcm_state=connected
 [ ! -e "$lockdir" ]
 echo "PASS: stale lockdir owner is reclaimed"
+# Also recover a directory interrupted before its owner metadata was written.
+mkdir -p "$lockdir"
+j="$(PATH="$TMP/bin:$TMP/compatible" /bin/sh "$MON" status)"
+assert_json "$j" fcm_state=connected
+[ ! -e "$lockdir" ]
+echo "PASS: incomplete lockdir initialization is recoverable"
 
 # ActivityManager can return only wrapper lines with exit code zero.
 export MCS_NEXT_FIXTURE="$TMP/next-state-dump"

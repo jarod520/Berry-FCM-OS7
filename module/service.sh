@@ -21,7 +21,11 @@ service_identity() {
 if ! mkdir "$LOCK" 2>/dev/null; then
     old="$(cat "$LOCK/pid" 2>/dev/null)"
     stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
-    if [ -n "$old" ] && [ -z "$stamp" ]; then sleep 1; stamp="$(cat "$LOCK/starttime" 2>/dev/null)"; fi
+    if [ -z "$old" ] || [ -z "$stamp" ]; then
+        sleep 1
+        old="$(cat "$LOCK/pid" 2>/dev/null)"
+        stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
+    fi
     service_identity "$old" "$stamp" && exit 0
     stale="$DATA/service.lock.stale.$$"
     if mv "$LOCK" "$stale" 2>/dev/null; then rm -rf "$stale"; fi

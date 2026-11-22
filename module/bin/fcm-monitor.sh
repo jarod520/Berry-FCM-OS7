@@ -909,7 +909,11 @@ case "$command" in
             if ! mkdir "$lock_dir" 2>/dev/null; then
                 owner_pid="$(cat "$lock_dir/pid" 2>/dev/null)"
                 owner_stamp="$(cat "$lock_dir/starttime" 2>/dev/null)"
-                if [ -n "$owner_pid" ] && [ -z "$owner_stamp" ]; then sleep 1; owner_stamp="$(cat "$lock_dir/starttime" 2>/dev/null)"; fi
+                if [ -z "$owner_pid" ] || [ -z "$owner_stamp" ]; then
+                    sleep 1
+                    owner_pid="$(cat "$lock_dir/pid" 2>/dev/null)"
+                    owner_stamp="$(cat "$lock_dir/starttime" 2>/dev/null)"
+                fi
                 if lock_owner_alive "$owner_pid" "$owner_stamp"; then
                     echo "后台正在检查 GMS，请稍后重试" >&2
                     exit 13
