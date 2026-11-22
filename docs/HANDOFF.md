@@ -699,4 +699,6 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **复审发现**：service 在安装 EXIT cleanup trap 之前调用 stop_monitor_owner()；若旧 monitor owner 身份无法确认，该函数失败后直接 exit 0，会把当前刚创建的 service.lock 留在磁盘上。
 - **修正**：提前固定当前 service starttime；stop_monitor_owner() 失败时，仅当 lock 中 PID、starttime 仍与当前 service 进程完全一致，才删除本次启动创建的 service.lock；保留旧 monitor owner 文件，并记录 service_start_aborted，避免误清理其他实例的锁。
 - **回归约束**：KSU smoke 检查早期失败日志、锁归属二次核验，以及失败分支确实位于 EXIT trap 安装之前。
+
+- **补充边界**：当前 service PID 非法、PID 不大于 1 或读取 starttime 失败时，尚未写入锁身份字段；这些早期退出分支现在仅 `rmdir` 本次创建的空锁目录，避免留下无法归属的空 `service.lock`。
 - **验证边界**：本次为源码和断言静态检查；完整 smoke、全仓 Shell syntax gate 和设备验证尚未执行。未触发 Actions、编译、打包、合并或 Release。
