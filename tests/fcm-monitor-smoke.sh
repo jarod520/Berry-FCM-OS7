@@ -163,7 +163,7 @@ echo absent > "$TMP/mode"
 settime 10300
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
-requests 6
+requests 5
 settime 10345
 j="$(run status)"
 assert_json "$j" fcm_state=disconnected
