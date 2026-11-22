@@ -686,7 +686,8 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **复审发现**：原逻辑只有 `monitor_rc == 0` 才刷新 `patrol.sample.heartbeat`，会把普通、快速返回的错误（如初始化/读取失败）误认为巡检停滞；但不能把所有非零返回都视为已完成采样：rc=13 表示 monitor 锁被其他 owner 占用，rc=124 表示有界调用超时，必须保留旧心跳，让 service watchdog 仍可清理长期占锁或卡住的 monitor。
 - **修正**：仅当 monitor 返回码不是 13（锁占用）或 124（超时）时刷新心跳。该心跳表示一次非争锁、非超时的 monitor 尝试已结束，不等同于 GMS 已成功读取；真实状态仍由返回码、状态样本和 `fcm_sample_time` 表达。rc=13/124 不刷新，避免掩盖 monitor 锁持有者长期卡住。
 - **回归用例**：KSU smoke monitor mock 新增可配置返回码；rc=10 场景要求刷新心跳，rc=13 场景要求不刷新并保留错误日志。静态断言确保 13/124 被明确排除。8 秒夹具不模拟 90 秒 watchdog 时钟，不将其描述为 watchdog 超时动态验证。
-- **已完成验证**：待本次分类修正后重新核对固定断言与局部 POSIX shell 语法；完整 KSU/FCM smoke、全仓 Shell 语法 gate、Android/KernelSU 实机仍未执行。未触发构建、Actions 或 Release。
+- **已完成验证**：KSU smoke 固定源码断言 107/107 全部匹配，FCM smoke 固定源码断言 2/2 全部匹配；新增 rc=10/13 两种行为夹具仅各出现一次，确认 13/124 不会刷新心跳。将修改后的 `case` 分支及 monitor mock 提取到隔离 Linux 环境执行 `sh -n`，并模拟确认 rc=10 刷新、rc=13 与 rc=124 保留旧心跳。以上不替代完整 smoke 或 90 秒 service watchdog 动态测试。
+- **验证边界**：完整 KSU/FCM smoke、全仓 Shell 语法 gate、Android/KernelSU 实机仍未执行。未触发构建、Actions 或 Release。
 
 ### 2026-11-22 monitor 进程组强制回收前的身份复核
 - **复审发现**：stop_monitor_owner() 在 TERM 后等待期间，原 monitor/timeout leader 可能退出；旧代码只检查相同 PGID 是否仍有成员，随后直接向负 PGID 发送 KILL。若旧组恰好结束且 PGID 被复用，存在误伤新进程组的窄竞态。
