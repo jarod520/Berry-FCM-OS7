@@ -233,7 +233,8 @@ scan_sockets() {
     resolve_mtalk >/dev/null 2>&1 || :
     raw=
     if command -v "$SS_BIN" >/dev/null 2>&1; then
-        raw="$("$SS_BIN" -tnpe 2>/dev/null)" || raw=
+        raw="$("$SS_BIN" -tinpe 2>/dev/null)" || raw=
+    [ -n "$raw" ] || raw="$("$SS_BIN" -tnpe 2>/dev/null)" || raw=
     fi
 
     # Fall back when ss does not expose the GMS UID specifically. Other UID
@@ -284,29 +285,55 @@ scan_sockets() {
     ips="$(printf '%s\n' "$ips" | awk 'NF && !seen[$0]++ {printf "%s%s",sep,$0;sep="|"}')"
     ip_count="$(printf '%s' "$ips" | awk -F'|' '{print NF}')"
     [ -n "$ips" ] || ip_count=0
-    printf '%s\n' "$raw" | awk -v u="$uid" -v ips="|$ips|" -v ip_count="$ip_count" '
-      function normip(v){sub(/:[0-9]+$/, "", v);gsub(/^\[|\]$/, "", v);sub(/^::ffff:/, "", v);return tolower(v)}
+    printf '%s\\n' "$raw" | awk -v u="$uid" -v ips="|$ips|" -v ip_count="$ip_count" '
+      function normip(v){sub(/:[0-9]+$/, "", v);gsub(/^\\[|\\]$/, "", v);sub(/^::ffff:/, "", v);return tolower(v)}
       function known(v){return index(ips,"|" normip(v) "|")>0}
+      function field_number(name, text, value) {
+        if (match(text, name ":[0-9]+")) {
+          value=substr(text,RSTART+length(name)+1,RLENGTH-length(name)-1)
+          return value+0
+        }
+        return -1
+      }
+      function emit(   established, relevant, stalled) {
+        if (!current || owner!=u+0) return
+        established=(socket_state=="ESTAB" || socket_state=="ESTABLISHED")
+        relevant=(port==5228 || port==5229 || port==5230 || (port==443 && known(peer)))
+        if (established && relevant) {
+          stalled=(unacked>0 && retrans>=3)
+          if (stalled) {
+            if (rank<2) {rank=2;kind="stalled";transport="tcp" port;remote=ip ":" port;bestkey=key}
+          } else if (rank<4) {
+            rank=4;kind="connected";transport=(port==443?"tcp443":"tcp" port);remote=ip ":" port;bestkey=key
+          }
+        } else if (!established && relevant && (socket_state=="SYN-SENT" || socket_state=="SYN_SENT")) {
+          if (rank<3) {rank=3;kind="connecting";transport="tcp" port;remote=ip ":" port;bestkey=key}
+        } else if (established && port==443 && ip_count==0) {
+          untrusted=1
+        }
+      }
       ($1=="ESTAB" || $1=="ESTABLISHED" || $1=="SYN-SENT" || $1=="SYN_SENT") {
-        if (!match($0,/uid:[0-9]+/)) next
-        owner=substr($0,RSTART+4,RLENGTH-4)+0; if(owner!=u+0) next
-        peer=$5; port=peer; sub(/^.*:/,"",port); ip=normip(peer); local=$4
+        emit()
+        current=1; socket_state=$1
+        owner=-1; if(match($0,/uid:[0-9]+/)) owner=substr($0,RSTART+4,RLENGTH-4)+0
+        peer=$5; port=peer; sub(/^.*:/,"",port); port=port+0
+        ip=normip(peer); local=$4
         inode=""; if(match($0,/ino:[0-9]+/)) inode=substr($0,RSTART+4,RLENGTH-4)
         key=local ">" peer "#" inode
-        established=($1=="ESTAB" || $1=="ESTABLISHED")
-        if(established && (port==5228 || port==5229 || port==5230)){
-          if(rank<3){rank=3;kind="connected";transport="tcp" port;remote=ip ":" port;bestkey=key}
-        } else if(established && port==443 && known(peer)){
-          if(rank<2){rank=2;kind="connected";transport="tcp443";remote=ip ":443";bestkey=key}
-        } else if(!established && ((port==5228 || port==5229 || port==5230) || (port==443 && known(peer)))){
-          if(rank<1){rank=1;kind="connecting";transport="tcp" port;remote=ip ":" port;bestkey=key}
-        } else if(established && port==443 && ip_count==0){untrusted=1}
+        unacked=field_number("unacked",$0); retrans=field_number("retrans",$0)
+      }
+      current && $1!~/^(ESTAB|ESTABLISHED|SYN-SENT|SYN_SENT)$/ {
+        if (unacked<0) unacked=field_number("unacked",$0)
+        if (retrans<0) retrans=field_number("retrans",$0)
       }
       END {
-        if(rank>0) printf "%s|%s|%s|%s|\n",kind,transport,remote,bestkey
+        emit()
+        if(rank==4) printf "connected|%s|%s|%s|\\n",transport,remote,bestkey
+        else if(rank==3) printf "connecting|%s|%s|%s|\\n",transport,remote,bestkey
+        else if(rank==2) printf "stalled|%s|%s|%s|tcp_info_unacked_retrans\\n",transport,remote,bestkey
         else if(untrusted) print "unknown||||unverified_443_no_mtalk_dns"
         else print "absent||||no_fcm_socket_observed"
-      }'
+      }'}'
 }
 
 auto_enabled() {
@@ -434,6 +461,14 @@ EOF_SOCKET
         fi
         previous_down_observed="$outage_hint_mono"
         ;;
+      stalled)
+        observed=disconnected; source=gms_socket_stalled; tcp_hint=stalled
+        if [ "$previous_down_state" != disconnected ] || [ "$outage_hint_mono" -le 0 ]; then
+            outage_hint_mono="$socket_now"
+            record_event tcp_stalled "内核 TCP_INFO 显示 MCS socket 有未确认数据且连续重传达到阈值"
+        fi
+        previous_down_observed="$outage_hint_mono"
+        ;;
       absent)
         if [ "$outage_hint_mono" -le 0 ] || [ "$socket_now" -lt "$outage_hint_mono" ]; then
             outage_hint_mono="$socket_now"
@@ -515,7 +550,10 @@ confirm_recovery() {
         record_event recovery_confirmation_recovered "二次内核 Socket 采样已观察到 MCS TCP 建立；取消本轮恢复命令"
         return 0
     fi
-    if [ "$tcp_hint" = absent ] && [ "$state" = disconnected ] &&
+    if [ "$tcp_hint" = stalled ] && [ "$state" = disconnected ] && [ "$first_tcp_hint" = stalled ]; then
+        record_event recovery_confirmed "两次内核 TCP_INFO 采样确认 MCS socket 存在未确认数据并持续重传，进入分阶段恢复"
+        request_reconnect "$1"
+    elif [ "$tcp_hint" = absent ] && [ "$state" = disconnected ] &&
        { [ "$first_tcp_hint" = absent ] || [ "$first_state" = disconnected ] || [ "$first_state" = unknown ]; }; then
         record_event recovery_confirmed "两次独立内核 Socket 采样确认 MCS TCP 连续缺失，进入分阶段恢复"
         request_reconnect "$1"
@@ -643,7 +681,7 @@ case "${1:-status}" in
         ;;
     reconnect)
         observe || exit $?
-        if { { [ "$source" = gms_socket ] || [ "$source" = gms_socket_absence ]; } && { [ "$state" = connecting ] || [ "$state" = disconnected ]; }; } ||
+        if { { [ "$source" = gms_socket ] || [ "$source" = gms_socket_absence ] || [ "$source" = gms_socket_stalled ]; } && { [ "$state" = connecting ] || [ "$state" = disconnected ]; }; } ||
            { [ "$state" = unknown ] && [ "$tcp_hint" = absent ] && socket_fallback_ready -1; }; then
             confirm_recovery manual || exit $?
         else
