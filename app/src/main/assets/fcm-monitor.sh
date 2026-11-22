@@ -16,7 +16,6 @@ DNS_TIME="$DATA/mtalk-dns-time"
 SS_BIN="${BERRY_SS_BIN:-ss}"
 CMD_BIN="${BERRY_CMD_BIN:-cmd}"
 PM_BIN="${BERRY_PM_BIN:-pm}"
-DUMPSYS_BIN="${BERRY_DUMPSYS_BIN:-dumpsys}"
 AM_BIN="${BERRY_AM_BIN:-am}"
 UPTIME_FILE="${BERRY_UPTIME_FILE:-/proc/uptime}"
 BOOT_ID_FILE="${BERRY_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}"
@@ -172,148 +171,6 @@ scan_sockets() {
 # Current state only: do not match historical "Connected" or "Connecting"
 # lines. GMS dump may contain private IDs and application data; persist only
 # the selected fields and connection lifecycle events.
-parse_mcs() {
-    awk '
-      function sec(v, a,n,i,r) {
-        sub(/\/.*/, "", v); n=split(v,a,":")
-        if(n<2 || n>3) return -1
-        r=0; for(i=1;i<=n;i++){if(a[i]!~/^[0-9]+$/ || (i>1 && a[i]+0>=60))return -1; r=r*60+a[i]}
-        return r
-      }
-      function endpoint(v) {return v ~ /^[][A-Za-z0-9.\/:_-]+$/ ? v : ""}
-      {
-        sub(/\r$/, ""); line=$0; sub(/^[[:space:]]+/, "",line); sub(/[[:space:]]+$/, "",line)
-        # GMS headings vary. When no native heading exists, accept exact
-        # current-state fields only with corroborating timing/stream metadata.
-        if(line~/^DeviceID:/ || line~/^Direct boot mode /){
-          if(header && state!=""){done=1;next}
-          header=1;next
-        }
-        if(line~/^SERVICE com\.google\.android\.gms\/(\.gcm\.GcmService|com\.google\.android\.gms\.gcm\.GcmService)([[:space:]]|$)/){
-          scoped=1;next
-        }
-        if(done) next
-        if(line~/^[0-9][0-9]-[0-9][0-9] [0-9][0-9]:/){done=1;next}
-        if(line~/^connected=/){
-          v=line;sub(/^connected=/,"",v);n=split(v,a,",port=")
-          if(n==2 && endpoint(a[1])!="" && a[2]~/^[0-9]+$/ && a[2]+0>0 && a[2]+0<=65535){
-            if(state!="" && state!="connected") conflict=1
-            state="connected"; remote=a[1] ":" a[2]; port=a[2]
-          }
-        } else if(line~/^connecting=/){
-          v=line;sub(/^connecting=/,"",v)
-          if(endpoint(v)!="" && v~/:[0-9]+$/){
-            if(state=="connected") conflict=1
-            state="connecting"; remote=v; port=v;sub(/^.*:/,"",port)
-          }
-        } else if(line~/^pending=/ && line~/,host=/){
-          v=line;sub(/^.*,host=/,"",v)
-          if(endpoint(v)!="" && v~/:[0-9]+$/){
-            if(state=="connected") conflict=1
-            if(state!="connecting"){
-              state="disconnected"; remote=endpoint(v);port=v;sub(/^.*:/,"",port)
-            }
-          }
-        } else if(line=="Server: Connected" && (header || scoped)){
-          if(state!="" && state!="connected") conflict=1
-          state="connected"; explicit_status=1
-        } else if((line=="Not connected" || line=="Server: Not connected") && (header || scoped)){
-          if(line=="Server: Not connected") explicit_status=1
-          if(state=="connected") conflict=1
-          if(state!="connecting") state="disconnected"
-        } else if(line=="Connecting" && state=="" && (header || scoped)){state="connecting"}
-        else if(line=="Disabled" && (header || scoped)){state="unknown";done=1}
-        else if(line~/^connectTime=/){v=line;sub(/^connectTime=/,"",v);ct=sec(v);has_ct=(ct>=0)}
-        else if(line~/^disconnectTime=/){v=line;sub(/^disconnectTime=/,"",v);dt=sec(v);has_dt=(dt>=0)}
-        else if(line~/^streamId=/){
-          if(line~/^streamId=[0-9]+\/[0-9]+(,|$)/) has_stream=1
-          n=split(line,a,",")
-          for(i=1;i<=n;i++){
-            sub(/^[[:space:]]+/,"",a[i])
-            if(a[i]~/^lastConnectionErrorCode=[A-Za-z0-9_]+$/){
-              err=a[i];sub(/^lastConnectionErrorCode=/,"",err)
-            }
-          }
-        } else if(line~/^lastConnectionErrorCode=[A-Za-z0-9_]+$/){
-          err=line;sub(/^lastConnectionErrorCode=/,"",err)
-        }
-      }
-      END {
-        corroborated=(state=="connected" ? has_ct : has_dt)
-        if(conflict || state=="" || state=="unknown" ||
-          (!explicit_status && !header && !corroborated && !has_stream) ||
-          (!explicit_status && !header && remote=="" && !corroborated)){
-          detail=(conflict ? "conflicting_state" : (state=="" ? "no_current_state" : (state=="unknown" ? "disabled_or_unknown" : "missing_metadata")))
-          print "unknown||||-1||" detail;exit
-        }
-        if((state=="connected" && has_dt && !has_ct) ||
-           (state!="connected" && has_ct && !has_dt)){
-          print "unknown||||-1||inconsistent_timing";exit
-        }
-        if(port!~/^[0-9]+$/ || port+0<1 || port+0>65535)port=""
-        duration=-1
-        if(state=="connected" && ct!="")duration=ct
-        if((state=="connecting" || state=="disconnected") && dt!="")duration=dt
-        printf "%s|%s|%s|%s|%d|%s\n",state,(port==""?"":"tcp"port),remote,"gms",duration,err
-      }'
-}
-
-dump_state_shape() {
-    # Keep status field spelling and order without recording endpoint values or identifiers.
-    awk '
-      {
-        line=$0
-        sub(/^[[:space:]]+/, "", line)
-        sub(/[[:space:]]+$/, "", line)
-        lower=tolower(line)
-        if (!history && line ~ /^[0-9][0-9]-[0-9][0-9] [0-9][0-9]:/) history=NR
-        if (!heading && line ~ /^(DeviceID:|Direct boot mode )/) heading=NR
-        if (lower ~ /^(not connected|connected|connecting|disconnected|disabled)$/) {
-          field=line
-        } else if (match(lower, /^(server([ _-]status)?|mcs[ _-]?(state|status)|connection[ _-]?(state|status)|state|status|connected|connecting|pending|connecttime|disconnecttime|time (dis)?connected)[[:space:]]*[:=]/)) {
-          field=substr(line,1,RLENGTH)
-          value=substr(lower,RLENGTH+1)
-          sub(/^[[:space:]]+/, "", value)
-          if (value ~ /^(not connected|connected|connecting|disconnected|pending|disabled|true|false)$/)
-            field=field " " value
-          else
-            field=field " <redacted>"
-        } else next
-        if (!seen[field]++ && ++fields <= 3) detail=detail " " NR ":" field
-      }
-      END {
-        printf "lines=%d heading=%d history=%d%s", NR, heading, history, detail
-        if (fields > 3) printf " more=%d", fields-3
-      }'
-}
-
-import_native_events() {
-    # Preserve exact event timestamps (device local time, no invented year).
-    # A Close event is a socket/MCS close, not necessarily a distinct outage:
-    # simultaneous Wi-Fi/cellular and fallback attempts can produce several.
-    tmp="$NATIVE_EVENTS.$$"
-    { [ ! -f "$NATIVE_EVENTS" ] || cat "$NATIVE_EVENTS"
-      printf '%s\n' "$1" | awk '
-        {
-          sub(/\r$/, ""); sub(/^[[:space:]]+/, "")
-          if($0 !~ /^[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9]+ net=-?[0-9]+: /) next
-          stamp=$1" "$2; msg=$0;sub(/^[^ ]+ [^ ]+ /,"",msg)
-          if(msg~/^net=-?[0-9]+: Close err:[0-9]+([[:space:]]|$)/)kind="gms_close"
-          else if(msg~/^net=-?[0-9]+: Connected[[:space:]]*$/)kind="gms_connected"
-          else if(msg~/^net=-?[0-9]+: Failed connection err:[0-9]+/)kind="gms_failed"
-          else if(msg~/^net=-?[0-9]+: Connecting using McsConnection/ && (msg~/WiFi\(/ || msg~/Cell\(/)) {
-            kind="gms_network_attempt"
-            msg=(msg~/WiFi\(/ ? "WiFi" : "Cell") " connection attempt; " (msg~/FALLBACK_ALTERNATIVE_HOSTPORT/ ? "fallback" : "primary")
-          }
-          else if(msg~/^net=-?[0-9]+: Heartbeat alarm delay: [0-9]+ ms$/)kind="gms_heartbeat_delay"
-          else if(msg~/^net=-?[0-9]+: Reconnect alarm delay: [0-9]+ ms$/)kind="gms_reconnect_delay"
-          else next
-          gsub(/[|]/," ",msg)
-          print stamp "|" kind "|" substr(msg,1,160)
-        }'
-    } | awk 'NF && !seen[$0]++' | tail -n 600 > "$tmp" && mv -f "$tmp" "$NATIVE_EVENTS"
-}
-
 auto_enabled() {
     case "${BERRY_FCM_AUTO:-}" in 0) return 1;; 1) return 0;; esac
     [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]
@@ -595,7 +452,7 @@ status_json() {
     source=unavailable; duration=-1; close_code=; tcp_hint=none; native_reason=unrecognized; decision=not_evaluated
     if [ -f "$EVIDENCE" ]; then IFS='|' read -r source duration close_code tcp_hint native_reason decision < "$EVIDENCE" || :; fi
     case "${decision:-}" in not_evaluated|not_disconnected|sample_unavailable|disabled|network_gate|cooldown|gms_stopped_unknown|requested|request_failed|waiting_duration|waiting_confirmation|confirmation_changed) :;; *) decision=not_evaluated;; esac
-    case "$native_reason" in none|permission_denied|timeout|service_unavailable|dump_failed|empty|unrecognized|gms_stopped) :;; *) native_reason=unrecognized;; esac
+    case "$native_reason" in not_used) :;; *) native_reason=not_used;; esac
     case "$duration" in -1) :;; *) is_uint "$duration" || duration=-1;; esac
     [ "$age" -ge 0 ] && [ "$age" -le 90 ] || state=stale
     # Never present stale duration as live and never extrapolate past the sample.
