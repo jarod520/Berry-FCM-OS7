@@ -757,3 +757,9 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - `run_bounded()` 新增身份检查片段通过宿主 `sh -n` 语法解析；该结果只覆盖本次修改片段，不等于全仓 Shell syntax gate 或 KSU smoke 执行。
 - 静态确认：组身份成立时才对原私有 PGID 发 TERM/KILL；组身份丢失但原 PID/starttime 仍匹配时退化为直接 child 信号；PID 身份也无法确认时拒绝信号。旧的 rc=13/124 不刷新 sample heartbeat 逻辑保持不变。
 - 完整 KSU/FCM smoke、全仓 Shell syntax gate、Android/KernelSU 实机验证仍未执行；未触发 Actions、构建、编译、打包、合并或发布。
+
+### 2026-11-22 sample heartbeat 必须由本轮真实样本时间确认
+- 复审发现：旧逻辑只排除 rc=13/124，其他返回码均刷新 sample heartbeat。但 fcm-monitor.sh 的 observe() 可在读取系统时间/uptime失败时返回 rc=12；monitor owner 身份登记失败可返回 rc=14。这些路径未必写入新 sample，却会被旧逻辑当作成功采样，掩盖 watchdog 应处理的采样空档。
+- 修正：把 heartbeat 更新移到 monitor 后的 snapshot 之后，解析持久化的 fcm_sample_time，仅当其不早于本轮 check_started_epoch 且 rc 不是 13/124 时刷新。未知状态若本轮确实更新了 sample_time，仍然刷新；只有旧样本/无样本才保留 stale 证据并记录 sample_heartbeat_not_refreshed。
+- 回归场景：测试 mock 改为持久化动态 sample epoch；新增 observe 前失败 rc=12 场景，要求 heartbeat 不刷新；保留 unknown 有效采样和 monitor 后置非零 rc=10 的有效采样场景。
+- 验证边界：需复核 smoke 固定断言与脚本语法；完整 KSU/FCM smoke、全仓 Shell gate、Android/KernelSU 实机验证仍未执行。未触发 Actions、构建、编译、打包、合并或发布。
