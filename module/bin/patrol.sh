@@ -89,7 +89,7 @@ run_bounded() {
          "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx timeout; then
         "$KSU_BUSYBOX" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
     elif command -v timeout >/dev/null 2>&1; then
-        timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
+        BERRY_FCM_ISOLATED_GROUP=1 timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
     else
         # Last-resort watchdog when no timeout applet exists. Use a private
         # session when the available applet supports it, so timeout cleanup
