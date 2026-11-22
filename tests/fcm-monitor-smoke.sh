@@ -24,6 +24,8 @@ cat > "$TMP/bin/ss" <<'MOCK'
 #!/bin/sh
 if [ "${MCS_SS_MODE:-connected}" = unknown ]; then
     echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228'
+elif [ "${MCS_SS_MODE:-connected}" = mtalk443 ]; then
+    echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:443 uid:10200 ino:204'
 elif [ "${MCS_SS_MODE:-connected}" = connecting ]; then
     echo 'SYN-SENT 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:203'
 elif [ "${MCS_SS_MODE:-connected}" = absent ]; then
@@ -35,6 +37,10 @@ MOCK
 cat > "$TMP/bin/nslookup" <<'MOCK'
 #!/bin/sh
 echo "$1" >> "$MCS_DNS_LOG"
+if [ "${MCS_DNS_SUCCESS:-0}" = 1 ]; then
+    echo 'Address: 142.250.157.188'
+    exit 0
+fi
 exit 1
 MOCK
 cat > "$TMP/bin/am" <<'MOCK'
@@ -445,3 +451,23 @@ settime 50020
 run status
 [ "$(wc -l < "$MCS_DNS_LOG" | tr -d ' ')" = 2 ]
 echo 'PASS: failed mtalk DNS lookup is cached for 10 minutes'
+
+# DNS answers are short-lived evidence. If a refresh fails, an expired mtalk
+# IP must not continue validating an unrelated GMS-owned HTTPS socket.
+export BERRY_FCM_DATA="$TMP/dns-expiry-data"
+mkdir -p "$BERRY_FCM_DATA"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+export MCS_SS_MODE=mtalk443 MCS_DNS_SUCCESS=1 MCS_DNS_LOG="$TMP/dns-expiry.log"
+: > "$MCS_DNS_LOG"
+settime 60000
+printf '%s\\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_transport=tcp443
+settime 60600
+export MCS_DNS_SUCCESS=0
+j="$(run status)"
+assert_json "$j" fcm_state=unknown
+assert_json "$j" fcm_tcp_hint=unknown
+test ! -s "$BERRY_FCM_DATA/mcs-mtalk-dns-ips.txt"
+echo 'PASS: expired mtalk DNS addresses are discarded after failed refresh'
