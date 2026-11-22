@@ -14,13 +14,19 @@ proc_state() {
     [ -r "/proc/$1/stat" ] || return 1
     tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $1}'
 }
+service_process_matches() {
+    pid="$1"
+    case "$pid" in ""|*[!0-9]*) return 1;; esac
+    [ "$pid" -gt 1 ] && kill -0 "$pid" 2>/dev/null || return 1
+    cmdline="$(tr "\000" " " < "/proc/$pid/cmdline" 2>/dev/null)"
+    case "$cmdline" in *"/berry_fcm_ksu/service.sh"*) return 0;; *) return 1;; esac
+}
 service_identity() {
     pid="$1"; stamp="$2"
     case "$pid:$stamp" in *[!0-9:]*|:*|*:) return 1;; esac
     [ "$pid" -gt 1 ] && [ "$stamp" -gt 0 ] && kill -0 "$pid" 2>/dev/null || return 1
-    cmdline="$(tr "\000" " " < "/proc/$pid/cmdline" 2>/dev/null)"
-    case "$cmdline" in *"/berry_fcm_ksu/service.sh"*) :;; *) return 1;; esac
-    [ "$(proc_start_time "$pid")" = "$stamp" ]
+    [ "$(proc_start_time "$pid")" = "$stamp" ] || return 1
+    service_process_matches "$pid"
 }
 patrol_identity_for_lock() {
     stale_patrol_pid=; stale_patrol_stamp=
@@ -64,6 +70,11 @@ if ! mkdir "$LOCK" 2>/dev/null; then
         stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
     fi
     service_identity "$old" "$stamp" && exit 0
+    if service_process_matches "$old"; then
+        printf '[%s] service_lock_identity_unverified pid=%s start=%s; refusing duplicate supervisor\n' \
+            "$(date '+%F %T')" "$old" "$stamp" >> "$DATA/guard.log"
+        exit 0
+    fi
     stop_stale_patrol || exit 0
     stale="$DATA/service.lock.stale.$old.$stamp"
     if mv "$LOCK" "$stale" 2>/dev/null; then rm -rf "$stale"; fi
