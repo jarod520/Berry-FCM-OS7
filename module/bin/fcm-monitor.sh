@@ -662,6 +662,16 @@ EOF_SOCKET
             fi
             ;;
         esac
+        # A recent native MCS Close event is secondary evidence only when
+        # socket ownership is unreadable; a later Connected event supersedes it.
+        if [ "$observed" = unknown ] && native_close_fallback_ready; then
+            observed=disconnected; source=gms_native_event_fallback
+            duration="$native_hint_age"
+            close_code=
+            new_transport=; new_remote=
+            [ "$previous_down_state" = disconnected ] ||
+                record_event native_close_confirmed "GMS 原生 Close 事件已持续 $native_hint_age 秒，且未出现后续 Connected 事件"
+        fi
     else
         # Reject implausible wall-clock-derived durations (e.g. no prior session).
         if [ "$duration" -gt "$nowm" ]; then duration=-1; fi
@@ -707,8 +717,8 @@ EOF_SOCKET
         if [ "$state" != connecting ] && [ "$state" != disconnected ]; then
             [ "$previous_down_state" != connected ] || outages=$((outages+1))
             missing_since="$nowm"; missing_epoch="$nowe"; down_observed="$nowm"
-            if [ "$source" = gms_socket_fallback ]; then
-                : # tcp_absence_confirmed already records the evidence and threshold.
+            if [ "$source" = gms_socket_fallback ] || [ "$source" = gms_native_event_fallback ]; then
+                : # The corresponding evidence event already records the source and threshold.
             elif [ "$source" = gms_socket ]; then
                 record_event connection_down 'UID0 观察到 GMS MCS TCP 正在连接，尚未建立连接'
             elif [ "$previous_down_state" = unknown ] && [ "$previous_down_observed" -gt 0 ]; then
@@ -849,7 +859,7 @@ auto_recovery() {
     required=60
     [ "$state" = disconnected ] && required=15
     observed_age=$((nowm-down_observed))
-    if [ "$duration" -ge 60 ] || [ "$observed_age" -ge "$required" ] ||
+    if [ "$duration" -ge "$required" ] || [ "$observed_age" -ge "$required" ] ||
        { [ "$previous_down_observed" -gt 0 ] &&
          [ $((nowm-previous_down_observed)) -ge "$required" ]; }; then
         confirm_recovery auto
