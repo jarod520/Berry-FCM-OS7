@@ -10,6 +10,10 @@ proc_start_time() {
     [ -r "/proc/$1/stat" ] || return 1
     tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $20}'
 }
+proc_state() {
+    [ -r "/proc/$1/stat" ] || return 1
+    tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $1}'
+}
 service_identity() {
     pid="$1"; stamp="$2"
     case "$pid" in ""|*[!0-9]*) return 1;; esac
@@ -133,10 +137,13 @@ case "$PATROL_RESTART_DELAY" in ""|*[!0-9]*) PATROL_RESTART_DELAY=5;; esac
 patrol_pid=
 patrol_stamp=
 patrol_started=0
-patrol_alive() {
+patrol_identity_alive() {
     [ -n "$patrol_pid" ] || return 1
     kill -0 "$patrol_pid" 2>/dev/null || return 1
-    [ -n "$patrol_stamp" ] && [ "$(proc_start_time "$patrol_pid")" = "$patrol_stamp" ] || return 1
+    [ -n "$patrol_stamp" ] && [ "$(proc_start_time "$patrol_pid")" = "$patrol_stamp" ]
+}
+patrol_alive() {
+    patrol_identity_alive || return 1
     tr "\000" " " 2>/dev/null < "/proc/$patrol_pid/cmdline" | grep -Fq "patrol.sh"
 }
 start_patrol() {
@@ -157,11 +164,24 @@ start_patrol() {
 }
 stop_patrol() {
     [ -n "$patrol_pid" ] || return 0
-    if patrol_alive; then
+    if patrol_identity_alive; then
         kill -TERM "$patrol_pid" 2>/dev/null || :
         n=0
-        while patrol_alive && [ "$n" -lt 4 ]; do sleep 1; n=$((n + 1)); done
-        patrol_alive && kill -KILL "$patrol_pid" 2>/dev/null || :
+        while patrol_identity_alive && [ "$(proc_state "$patrol_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 4 ]; do
+            sleep 1; n=$((n + 1))
+        done
+        if patrol_identity_alive && [ "$(proc_state "$patrol_pid" 2>/dev/null)" != Z ]; then
+            kill -KILL "$patrol_pid" 2>/dev/null || :
+            n=0
+            while patrol_identity_alive && [ "$(proc_state "$patrol_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 3 ]; do
+                sleep 1; n=$((n + 1))
+            done
+        fi
+    fi
+    if patrol_identity_alive && [ "$(proc_state "$patrol_pid" 2>/dev/null)" != Z ]; then
+        printf '[%s] patrol_stop_unconfirmed pid=%s start=%s; supervisor will not spawn a duplicate\n' \
+            "$(date '+%F %T')" "$patrol_pid" "$patrol_stamp" >> "$DATA/guard.log"
+        return 1
     fi
     wait "$patrol_pid" 2>/dev/null || :
     patrol_pid=; patrol_stamp=
@@ -184,10 +204,18 @@ mode_changed=1
 while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ]; do
     if [ "$mode_changed" = 1 ]; then mode_changed=0; sync_timer; fi
     if ! patrol_alive; then
-        if [ -n "$patrol_pid" ]; then wait "$patrol_pid" 2>/dev/null || :; patrol_pid=; patrol_stamp=; fi
+        if [ -n "$patrol_pid" ]; then
+            if patrol_identity_alive && [ "$(proc_state "$patrol_pid" 2>/dev/null)" != Z ]; then
+                stop_patrol || :
+            else
+                wait "$patrol_pid" 2>/dev/null || :
+                patrol_pid=; patrol_stamp=
+                rm -f "$LOCK/patrol"
+            fi
+        fi
         now_up="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
         case "$now_up" in ""|*[!0-9]*) now_up=0;; esac
-        if [ "$patrol_started" -eq 0 ] || [ "$now_up" -ge $((patrol_started + PATROL_RESTART_DELAY)) ]; then start_patrol || :; fi
+        if [ -z "$patrol_pid" ] && { [ "$patrol_started" -eq 0 ] || [ "$now_up" -ge $((patrol_started + PATROL_RESTART_DELAY)) ]; }; then start_patrol || :; fi
     else
         hb="$(cat "$DATA/patrol.heartbeat" 2>/dev/null)"
         now_up="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
