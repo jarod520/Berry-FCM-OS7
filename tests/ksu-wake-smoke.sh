@@ -420,10 +420,10 @@ grep -q 'service_started pid=' "$TMP/data/guard.log"
 cat > "$TMP/timeout-monitor.sh" <<'MOCK'
 #!/bin/sh
 IFS=' ' read -r monitor_pid _ < /proc/self/stat
-monitor_stamp="$(tr -d '\\n' < "/proc/$monitor_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
-monitor_pgid="$(tr -d '\\n' < "/proc/$monitor_pid/stat" | sed 's/^.*) //' | awk '{print $3}')"
-group_stamp="$(tr -d '\\n' < "/proc/$monitor_pgid/stat" | sed 's/^.*) //' | awk '{print $20}')"
-printf '%s %s %s 1 %s\\n' "$monitor_pid" "$monitor_stamp" "$monitor_pgid" "$group_stamp" > "$TEST_DIR/data/mcs-monitor.lock.owner"
+monitor_stamp="$(tr -d '\n' < "/proc/$monitor_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
+monitor_pgid="$(tr -d '\n' < "/proc/$monitor_pid/stat" | sed 's/^.*) //' | awk '{print $3}')"
+group_stamp="$(tr -d '\n' < "/proc/$monitor_pgid/stat" | sed 's/^.*) //' | awk '{print $20}')"
+printf '%s %s %s 1 %s\n' "$monitor_pid" "$monitor_stamp" "$monitor_pgid" "$group_stamp" > "$TEST_DIR/data/mcs-monitor.lock.owner"
  /bin/sleep 30 &
 echo "$!" > "$TEST_DIR/timeout-monitor-child-pid"
 wait
@@ -449,7 +449,6 @@ child_state="$(awk '{print $3}' "/proc/$timeout_monitor_child/stat" 2>/dev/null 
 [ -z "$child_state" ] || [ "$child_state" = Z ]
 test ! -e "$TMP/data/mcs-monitor.lock.owner"
 test ! -d "$TMP/data/service.lock"
-grep -q 'monitor_group_leader' "$TMP/data/guard.log" && ! grep -q 'monitor_group_leader_reused_or_moved' "$TMP/data/guard.log" || :
 echo 'PASS: service cleanup terminates timeout-owned monitor groups when monitor PID differs from PGID'
 
 # A new supervisor must clean an orphaned isolated monitor group before publishing its service lock.
