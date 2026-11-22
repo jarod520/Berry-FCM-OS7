@@ -387,6 +387,19 @@ assert_json "$j" fcm_recovery_decision=requested
 grep -q '|native_close_confirmed|' "$BERRY_FCM_DATA/mcs-monitor-events.log"
 echo 'PASS: recent native GMS Close event resolves missing current-state dump'
 
+# The manual recovery entry point must accept the same confirmed native Close
+# fallback that the background patrol accepts.
+export BERRY_FCM_DATA="$TMP/manual-close-data"
+mkdir -p "$BERRY_FCM_DATA"
+echo 1 > "$BERRY_FCM_DATA/enabled"
+: > "$MCS_AM_LOG"
+settime 31000
+run reconnect; requests 0
+settime 31030
+run reconnect; requests 1
+grep -q '|reconnect_requested|manual UID=0 GCM_RECONNECT' "$BERRY_FCM_DATA/mcs-monitor-events.log"
+echo 'PASS: manual recovery accepts confirmed native Close fallback evidence'
+
 # Recovery actions advance only after a later sample still confirms outage.
 export BERRY_FCM_DATA="$TMP/action-stages-data"
 mkdir -p "$BERRY_FCM_DATA"
