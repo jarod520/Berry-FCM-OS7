@@ -36,7 +36,7 @@ run_bounded() {
         # Last-resort watchdog when no timeout applet exists. The monitor's
         # own external probes are bounded; terminate its shell if it exceeds
         # the patrol budget instead of silently skipping every sample.
-        marker="$DATA/monitor-timeout.$"
+        marker="$DATA/monitor-timeout.$SERVICE_PID"
         rm -f "$marker"
         "$@" &
         bounded_pid=$!
