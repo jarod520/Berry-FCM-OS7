@@ -898,3 +898,13 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **回归夹具**：state-write-fail 用例先提交一个正常 connected 样本，再注入仅针对 mcs-monitor.state 的 mv 失败；要求旧 state 的 sample_mono 保持不变、新 evidence 时间前进、snapshot 标记 stale 且 decision=sample_unavailable。随后以 native poll deferred（`BERRY_FCM_TEST_MODE=0`）且 socket ownership 不可确认的条件恢复一次采样，要求新结果 source=unavailable（而非错误复用未提交 evidence 的 source=gms），并确认 state/evidence generation 再次一致。
 - **兼容性**：旧 27 列 state 和旧 6 列 evidence 的 generation 都按 0 处理；只有任一方已有 monotonic generation 时才要求严格匹配，不改变旧格式迁移路径。
 - **静态复核**：KSU smoke 固定源码断言 **141/141** 匹配（136 条正向、5 条负向）；FCM smoke 的 ROOT 路径固定断言 **2/2**、直接针对 monitor 源码的固定断言 **21/21 正向、1/1 负向** 匹配。新增测试结构与关键断言已复核。完整 `fcm-monitor-smoke.sh`、`ksu-wake-smoke.sh`、全仓 Shell 语法 gate 和 Android/KernelSU 实机测试尚未执行；未触发 Actions、构建、编译、打包或发布。
+
+
+## 2026-11-23 后台巡检与 dump 全局规则复核
+
+- 当前复核基线：分支 `fix/rc5-mcs-patrol-20261122`，复核开始时 HEAD 为 `957fb33979e4a25b36f21d9bfda540718554a733`。
+- KSU `module/bin/fcm-monitor.sh`、`module/bin/patrol.sh`、`module/service.sh` 的主巡检链路未发现 `dumpsys` 调用；KSU monitor 状态来源仍以 GMS UID socket 证据为主。巡检 supervisor 采用独立 service 进程、patrol 子进程、patrol heartbeat 与 sample heartbeat 两层监测；清理未确认时保留锁并阻止重复 worker。
+- 上游 Toybox `timeout` 源码已核实：默认通过 `setpgid(0,0)` 建立独立进程组，超时时向负 PGID 发信号；`--foreground` 才关闭该行为。因此 KSU 直接使用 Toybox timeout 的进程组假设有上游源码依据。参考：https://android.googlesource.com/platform/external/toybox/+/ee37aaec/toys/other/timeout.c。
+- **发现未完成项（不可视为合规）**：APK `app/src/main/assets/fcm-monitor.sh` 仍以 `dumpsys activity service` 解析结果作为首要 MCS 状态来源；重连前 `is_gms_stopped()` 仍读取 `dumpsys package` 并在未知时阻断重连；UID 查询失败时也仍回退 `dumpsys package`。这与“dumpsys 绝不参与连接状态/恢复/重连决策，只能作可选辅助诊断”的全局规则冲突，必须整改，不能以 APK 旧实现或此前暂缓范围作为豁免。
+- KSU `module/bin/ctl.sh` 中仍有 package dumpsys，用于 stopped/suspended/hidden 管理字段及 receiver 诊断；它不是 MCS monitor 的状态来源。后续需继续追踪这些字段是否间接控制自动巡检/重连；若仅影响应用管理 UI，应明确隔离，不能把它们接入 MCS 决策链。
+- 当前仅完成源码静态审查与上游 Toybox 源码核验；未运行 `ksu-wake-smoke.sh`、`fcm-monitor-smoke.sh`、全仓 Shell syntax gate 或 OriginOS 7/KernelSU 实机测试。未触发 Actions、编译、构建、打包、合并或发布。
