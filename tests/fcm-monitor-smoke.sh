@@ -131,8 +131,9 @@ j="$(run status)"; assert_json "$j" fcm_last_result=restored; assert_json "$j" f
 echo "PASS: suspend gap, double confirmation, UID 0 broadcast, shared backoff and native restoration"
 
 settime 11600
-printf "%s\n" "DeviceID: [fixture]" "Not connected" "disconnectTime=01:00/00:00" > "$MCS_FIXTURE"
-export MCS_STOPPED=true; run monitor; requests 3
+printf "%s\n" "No services match" > "$MCS_FIXTURE"
+export MCS_SS_MODE=unknown MCS_STOPPED=true
+run monitor; requests 3
 unset MCS_STOPPED
 echo 0 > "$BERRY_FCM_DATA/enabled"; run monitor; requests 3
 echo 1 > "$BERRY_FCM_DATA/enabled"
@@ -140,6 +141,8 @@ export MCS_UID=2000
 if run reconnect; then echo "non-root request unexpectedly accepted" >&2; exit 1; fi
 unset MCS_UID
 requests 3
+settime 11601
+printf "%s\n" "DeviceID: [fixture]" "Not connected" "disconnectTime=01:00/00:00" > "$MCS_FIXTURE"
 export MCS_AM_FAIL=1; run monitor; requests 4
 j="$(run snapshot)"; assert_json "$j" fcm_recovery_decision=request_failed
 unset MCS_AM_FAIL
