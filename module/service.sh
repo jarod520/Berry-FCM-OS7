@@ -604,8 +604,9 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ]; do
             [ "$patrol_stale" = 1 ] && [ "$sample_stale" = 1 ] && watchdog_reason=patrol_and_monitor
             printf '[%s] patrol_watchdog_stale reason=%s pid=%s heartbeat=%s sample=%s started=%s uptime=%s\n' \
                 "$(date '+%F %T')" "$watchdog_reason" "$patrol_pid" "$hb" "$sample_hb" "$patrol_started" "$now_up" >> "$DATA/guard.log"
-            if [ "$sample_stale" = 1 ]; then stop_monitor_owner || :; fi
+            # Stop patrol first so it cannot publish a monitor owner after cleanup.
             stop_patrol || :
+            if [ "$sample_stale" = 1 ]; then stop_monitor_owner || :; fi
             rm -f "$DATA/patrol.heartbeat" "$DATA/patrol.sample.heartbeat"
             patrol_started="$now_up"
             if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]; then patrol_sample_started="$now_up"; else patrol_sample_started=0; fi
