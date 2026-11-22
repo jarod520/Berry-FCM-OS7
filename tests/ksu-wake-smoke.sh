@@ -117,7 +117,6 @@ else
         wait
     fi
     if [ "${TEST_HANG_CHILD:-0}" = 1 ] && [ "$before" = 0 ]; then
-        echo "$" > "$TEST_DIR/hung-pid"
         /bin/sleep 30 &
         echo "$!" > "$TEST_DIR/hung-child-pid"
         wait
