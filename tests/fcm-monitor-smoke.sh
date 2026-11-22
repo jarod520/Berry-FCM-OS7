@@ -373,7 +373,7 @@ assert_json "$j" fcm_state=disconnected
 assert_json "$j" fcm_source=gms
 settime 13017
 run monitor
-requests 5
+requests 2
 grep -q '|reconnect_requested|auto UID=0 GCM_RECONNECT' "$BERRY_FCM_DATA/mcs-monitor-events.log"
 echo 'PASS: explicit GMS client state triggers confirmed auto recovery'
 export BERRY_FCM_DATA="$TMP/data"
@@ -394,13 +394,13 @@ echo 'PASS: exact GMS MCS TCP evidence resolves wrapper-only state'
 export MCS_SS_MODE=absent
 settime 11800
 printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService' 'Server: Not connected' > "$MCS_FIXTURE"
-run monitor; requests 5
+run monitor; requests 2
 settime 11820
 printf '%s\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
-j="$(run monitor)"; requests 5
+j="$(run monitor)"; requests 2
 assert_json "$(run snapshot)" fcm_state=unknown
 settime 11860
-j="$(run monitor)"; requests 6
+j="$(run monitor)"; requests 3
 j="$(run snapshot)"
 assert_json "$j" fcm_state=disconnected
 assert_json "$j" fcm_source=gms_socket_fallback
@@ -445,12 +445,12 @@ echo 1 > "$BERRY_FCM_DATA/enabled"
 export MCS_SS_MODE=absent
 settime 12500
 printf '%s\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
-run monitor; requests 6
+run monitor; requests 3
 assert_json "$(run snapshot)" fcm_state=unknown
 settime 12529
-run monitor; requests 6
+run monitor; requests 3
 settime 12530
-run monitor; requests 7
+run monitor; requests 4
 assert_json "$(run snapshot)" fcm_state=disconnected
 assert_json "$(run snapshot)" fcm_source=gms_socket_fallback
 grep -q '|tcp_absence_confirmed|' "$BERRY_FCM_DATA/mcs-monitor-events.log"
