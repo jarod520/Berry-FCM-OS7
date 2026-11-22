@@ -56,6 +56,7 @@ grep -Fq 'register_patrol_identity || exit 1' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'mv -f "$DATA/service.lock/patrol.tmp.$patrol_self_pid" "$DATA/service.lock/patrol"' "$ROOT/module/bin/patrol.sh"
 ! grep -Fq '\\n' "$ROOT/module/bin/patrol.sh"
 ! grep -Eq '\\\\$' "$ROOT/module/bin/patrol.sh"
+hot_enabled_line="$(grep -n 'berry_fcm_ksu/enabled' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 hot_stop_line="$(grep -n '^if is_guardian' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 [ "$hot_stop_line" -lt "$hot_enabled_line" ]
 TMP="$(mktemp -d)"
