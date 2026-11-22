@@ -17,11 +17,16 @@ is_guardian() {
 if is_guardian; then
     kill -TERM "$old" 2>/dev/null || :
     n=0
-    while is_guardian && [ "$n" -lt 6 ]; do
+    while is_guardian && [ "$n" -lt 18 ]; do
         sleep 1
         n=$((n + 1))
     done
-    if is_guardian; then kill -KILL "$old" 2>/dev/null || :; fi
+    if is_guardian; then
+        kill -KILL "$old" 2>/dev/null || :
+        n=0
+        while is_guardian && [ "$n" -lt 3 ]; do sleep 1; n=$((n + 1)); done
+    fi
+    is_guardian && { echo '旧 BerryFCM 守护进程仍未退出，取消热启动以避免重复实例' >&2; exit 1; }
 fi
 [ "$(cat /data/adb/berry_fcm_ksu/enabled 2>/dev/null)" = 1 ] || exit 0
 [ ! -e "$DIR/disable" ] || exit 0
