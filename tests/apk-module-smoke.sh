@@ -496,7 +496,7 @@ must('confirmationLock.acquire(90000L)' in svc
      and 'resetConfirmationWindow()' in svc, "finite one-shot outage confirmation")
 must('updateConfirmationWindow(parsed)' in svc
      and 'MonitorStatus.hasStateEvidence(sample.optString("fcm_source"))' in svc,
-     "native GMS or explicitly qualified socket evidence")
+     "GMS UID kernel Socket evidence")
 must(svc.count('releaseConfirmationWakeLock();') >= 3
      and svc.count('releasePersistentWakeLock();') >= 3, "lifecycle cleanup")
 must('holdForService(context)' in wd and 'handoff.acquire(90000L)' in wd
@@ -619,7 +619,7 @@ assert 'SystemClock.elapsedRealtime() + 50000L >= deadline' in episode
 assert 'queueCheck(false, "rescue_followup")' in episode
 assert episode.index('if ("requested".equals(decision)') < episode.index('.putLong("rescue_started_elapsed"')
 assert '    rescue)' in script and 'request_reconnect rescue' in script
-assert '[ "${BERRY_AUTO_GATE:-ready}" != ready ]' in script and '[ "$source" = gms ]' in script
+assert '[ "${BERRY_AUTO_GATE:-ready}" != ready ]' in script and '[ "$source" = gms_socket ]' in script and '[ "$source" = gms_socket_absence ]' in script
 assert '(normalRecovery ? "monitor" : "status")' in service
 print("PASS: single wake-gap request, shared backoff and nonblocking follow-up")
 PY_RESCUE
