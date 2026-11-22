@@ -23,6 +23,8 @@ grep -Fq 'result="$(run_bounded "$MONITOR_TIMEOUT" sh "$MODDIR/bin/fcm-monitor.s
 grep -Fq 'sleep 20 &' "$ROOT/module/bin/patrol.sh"
 grep -Fq "awk '{print \$20}'" "$ROOT/module/service.sh"
 grep -Fq 'case "$pid:$stamp" in *[!0-9:]*|:*|*:) return 1;; esac' "$ROOT/module/service.sh"
+grep -Fq 'service_process_matches "$old"' "$ROOT/module/service.sh"
+grep -Fq 'service_lock_identity_unverified' "$ROOT/module/service.sh"
 grep -Fq 'case "$stale_patrol_pid:$stale_patrol_stamp" in *[!0-9:]*|:*|*:) return 1;; esac' "$ROOT/module/service.sh"
 grep -Fq 'case "$monitor_pid:$monitor_stamp" in *[!0-9:]*|:*|*:) return 1;; esac' "$ROOT/module/service.sh"
 grep -Fq 'patrol_identity_alive()' "$ROOT/module/service.sh"
