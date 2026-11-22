@@ -338,6 +338,12 @@ while ! grep -q 'maintenance_start .*operation=guard_fix' "$TMP/data/guard.log" 
     n=$((n + 1))
 done
 grep -q 'maintenance_start .*operation=guard_fix' "$TMP/data/guard.log"
+n=0
+while [ ! -s "$TMP/fix-child-pid" ] && [ "$n" -lt 60 ]; do
+    /bin/sleep 0.1
+    n=$((n + 1))
+done
+test -s "$TMP/fix-child-pid"
 fix_child="$(cat "$TMP/fix-child-pid")"
 kill -TERM "$service_pid"
 wait "$service_pid" 2>/dev/null || :
