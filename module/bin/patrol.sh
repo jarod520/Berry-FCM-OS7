@@ -22,6 +22,17 @@ proc_group_id() {
     [ -r "/proc/$1/stat" ] || return 1
     tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $3}'
 }
+process_group_alive() {
+    awk -v pgid="$1" '
+        {
+            stat=$0
+            sub(/^.*\\) /, "", stat)
+            split(stat, fields, " ")
+            if (fields[1] != "Z" && fields[3] == pgid) found=1
+        }
+        END { exit !found }
+    ' /proc/[0-9]*/stat 2>/dev/null
+}
 proc_state() {
     [ -r "/proc/$1/stat" ] || return 1
     tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $1}'
@@ -68,7 +79,7 @@ maintenance_child_alive() {
        [ "$(proc_state "$maintenance_child_pid")" != Z ]; then
         return 0
     fi
-    "$maintenance_child_tool" kill -0 "-$maintenance_child_pgid" 2>/dev/null
+    process_group_alive "$maintenance_child_pgid"
 }
 run_bounded() {
     seconds="$1"; shift
@@ -366,10 +377,12 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     maintenance_watchdog_pid=$!
                     wait "$maintenance_child_pid"
                     fix_rc=$?
-                    if "$maintenance_group_tool" kill -0 "-$maintenance_child_pgid" 2>/dev/null; then
+                    if process_group_alive "$maintenance_child_pgid"; then
                         "$maintenance_group_tool" kill -TERM "-$maintenance_child_pgid" 2>/dev/null || :
                         sleep 1
-                        "$maintenance_group_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
+                        if process_group_alive "$maintenance_child_pgid"; then
+                            "$maintenance_group_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
+                        fi
                     fi
                     kill "$maintenance_watchdog_pid" 2>/dev/null || :
                     wait "$maintenance_watchdog_pid" 2>/dev/null || :
