@@ -163,20 +163,20 @@ echo absent > "$TMP/mode"
 settime 10300
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
-requests 4
+requests 6
 settime 10345
 j="$(run status)"
 assert_json "$j" fcm_state=disconnected
 settime 10360
 run monitor >/dev/null
-requests 5
+requests 6
 
 # An unreadable ownership/source sample is unavailable, not falsely disconnected.
 echo unknown > "$TMP/mode"
 settime 10361
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
-requests 5
+requests 6
 
 [ ! -s "$TMP/dumpsys.log" ] || fail "dumpsys was invoked by the monitor"
 echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO stall recovery, four-stage recovery, and dump independence"
