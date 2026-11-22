@@ -956,12 +956,20 @@ EOF_SOCKET
     esac
     transport="$new_transport"; remote="$new_remote"; sample_epoch="$nowe"
     update_native_timer_tracking
-    write_evidence
+    # Do not publish a fresh sample timestamp unless its matching evidence
+    # was also committed; otherwise snapshot could pair new state with stale evidence.
+    write_evidence || return $?
     save_state
 }
 
 write_evidence() {
-    printf '%s|%s|%s|%s|%s|%s\n' "$source" "$duration" "$close_code" "$tcp_hint" "$native_reason" "$decision" > "$EVIDENCE.tmp" && mv -f "$EVIDENCE.tmp" "$EVIDENCE"
+    evidence_tmp="$EVIDENCE.tmp"
+    if printf '%s|%s|%s|%s|%s|%s\n' "$source" "$duration" "$close_code" "$tcp_hint" "$native_reason" "$decision" > "$evidence_tmp" &&
+       mv -f "$evidence_tmp" "$EVIDENCE"; then
+        return 0
+    fi
+    rm -f "$evidence_tmp"
+    return 1
 }
 
 confirm_recovery() {
