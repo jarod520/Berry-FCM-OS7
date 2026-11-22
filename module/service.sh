@@ -16,17 +16,19 @@ proc_state() {
 }
 service_identity() {
     pid="$1"; stamp="$2"
-    case "$pid" in ""|*[!0-9]*) return 1;; esac
+    case "$pid:$stamp" in *[!0-9:]*|:*|*:) return 1;; esac
+    [ "$pid" -gt 1 ] && [ "$stamp" -gt 0 ] && kill -0 "$pid" 2>/dev/null || return 1
     [ "$pid" -gt 1 ] && kill -0 "$pid" 2>/dev/null || return 1
     cmdline="$(tr "\000" " " < "/proc/$pid/cmdline" 2>/dev/null)"
     case "$cmdline" in *"/berry_fcm_ksu/service.sh"*) :;; *) return 1;; esac
-    [ -z "$stamp" ] || [ "$(proc_start_time "$pid")" = "$stamp" ]
+    [ "$(proc_start_time "$pid")" = "$stamp" ]
 }
 patrol_identity_for_lock() {
     stale_patrol_pid=; stale_patrol_stamp=
     IFS=' ' read -r stale_patrol_pid stale_patrol_stamp < "$LOCK/patrol" 2>/dev/null || return 1
-    case "$stale_patrol_pid:$stale_patrol_stamp" in *[!0-9:]*|:*) return 1;; esac
-    [ "$stale_patrol_pid" -gt 1 ] && kill -0 "$stale_patrol_pid" 2>/dev/null || return 1
+    case "$stale_patrol_pid:$stale_patrol_stamp" in *[!0-9:]*|:*|*:) return 1;; esac
+    [ "$stale_patrol_pid" -gt 1 ] && [ "$stale_patrol_stamp" -gt 0 ] &&
+        kill -0 "$stale_patrol_pid" 2>/dev/null || return 1
     [ "$(proc_start_time "$stale_patrol_pid")" = "$stale_patrol_stamp" ] || return 1
     tr "\000" " " < "/proc/$stale_patrol_pid/cmdline" 2>/dev/null | grep -Fq "patrol.sh"
 }
@@ -199,8 +201,9 @@ patrol_alive() {
 monitor_owner_alive() {
     monitor_pid=; monitor_stamp=
     IFS=' ' read -r monitor_pid monitor_stamp < "$DATA/mcs-monitor.lock.owner" 2>/dev/null || return 1
-    case "$monitor_pid:$monitor_stamp" in *[!0-9:]*|:*) return 1;; esac
-    [ "$monitor_pid" -gt 1 ] && kill -0 "$monitor_pid" 2>/dev/null || return 1
+    case "$monitor_pid:$monitor_stamp" in *[!0-9:]*|:*|*:) return 1;; esac
+    [ "$monitor_pid" -gt 1 ] && [ "$monitor_stamp" -gt 0 ] &&
+        kill -0 "$monitor_pid" 2>/dev/null || return 1
     [ "$(proc_start_time "$monitor_pid")" = "$monitor_stamp" ] || return 1
     tr "\000" " " 2>/dev/null < "/proc/$monitor_pid/cmdline" | grep -Fq "fcm-monitor.sh"
 }
