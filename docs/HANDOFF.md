@@ -701,3 +701,7 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 
 - **补充边界**：当前 service PID 非法、PID 不大于 1 或读取 starttime 失败时，尚未写入锁身份字段；这些早期退出分支现在仅 `rmdir` 本次创建的空锁目录，避免留下无法归属的空 `service.lock`。
 - **验证边界**：本次为源码和断言静态检查；完整 smoke、全仓 Shell syntax gate 和设备验证尚未执行。未触发 Actions、编译、打包、合并或 Release。
+
+### 2026-11-22 KSU smoke heartbeat 注释断言空格修正
+- 107 条 KSU smoke 固定源码断言复核中，发现 heartbeat 注释断言使用 grep -Fq 且模式以 # 开头，但源码注释前有缩进空格，导致固定匹配失败。当前测试虽已同步到新注释内容，仍因缩进而无法命中。
+- 已将断言改为匹配注释正文，不依赖行首缩进；同一段的 13|124) :;; 行为断言保留。未改运行时代码。
