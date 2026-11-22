@@ -348,7 +348,7 @@ auto_enabled() {
 }
 
 retry_interval() {
-    case "$retry_streak" in 0) echo 30;; 1) echo 45;; 2) echo 60;; *) echo 90;; esac
+    case "$retry_streak" in 0|1) echo 30;; 2) echo 45;; 3) echo 60;; *) echo 90;; esac
 }
 
 # A continuous absence of a verified GMS UID-owned MCS socket is considered only
