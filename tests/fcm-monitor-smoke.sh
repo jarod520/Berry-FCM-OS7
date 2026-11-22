@@ -307,7 +307,7 @@ mkdir -p "$BERRY_FCM_DATA"
 echo 1 > "$BERRY_FCM_DATA/enabled"
 export MCS_SS_MODE=absent
 settime 14000
-printf '%s\\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
+printf '%s\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
 run monitor
 n=0
 while [ "$n" -lt 55 ]; do
@@ -321,7 +321,7 @@ assert_json "$j" fcm_source=gms_socket_fallback
 settime 15200
 run monitor
 j="$(run snapshot)"; assert_json "$j" fcm_state=unknown
- grep -q '|sample_gap|' "$BERRY_FCM_DATA/mcs-monitor-events.log"
+grep -q '|sample_gap|' "$BERRY_FCM_DATA/mcs-monitor-events.log"
 echo 'PASS: long continuous absence remains disconnected; suspend gap resets evidence'
 
 # A frozen positive native GMS connection timer is checked twice, then receives
