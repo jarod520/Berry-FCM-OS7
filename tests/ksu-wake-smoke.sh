@@ -867,7 +867,7 @@ echo 'PASS: process-tree watchdog cleans child probes without timeout or setsid'
 cat > "$TMP/bin/busybox-timeout-no-setsid" <<'MOCK'
 #!/bin/sh
 if [ "$1" = --list ]; then
-    printf '%s\\n' timeout kill
+    printf '%s\n' timeout kill
     exit 0
 fi
 if [ "$1" = timeout ]; then
