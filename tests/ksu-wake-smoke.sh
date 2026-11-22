@@ -123,7 +123,7 @@ cat > "$TMP/bin/toybox" <<'MOCK'
 #!/bin/sh
 if [ "$1" = --list ]; then
     if [ "${TEST_NO_TIMEOUT:-0}" = 1 ]; then
-        printf '%s\\n' setsid kill
+        printf '%s\n' setsid kill
     else
         echo timeout
     fi
