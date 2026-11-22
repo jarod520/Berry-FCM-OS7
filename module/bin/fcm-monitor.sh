@@ -597,7 +597,7 @@ observe() {
     # a two-sample recovery confirmation requires fresh native evidence.
     native_poll_last="$(num "$(cat "$NATIVE_POLL_TIME" 2>/dev/null)")"
     native_poll_due=0
-    if [ "$force_native_poll" = 1 ] || [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] ||
+    if [ "$force_native_poll" = force_native ] || [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] ||
        [ "$native_poll_last" -le 0 ] || [ "$nowm" -lt "$native_poll_last" ] ||
        [ $((nowm-native_poll_last)) -ge 60 ]; then
         native_poll_due=1
