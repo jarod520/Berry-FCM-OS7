@@ -963,3 +963,10 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - `tests/apk-native-fcm-smoke.sh` 增加 `mv` 故障注入，分别模拟 state rename 失败与 evidence rename 失败，检查命令必须失败且对应临时文件被清理。该用例尚未执行。
 - `tests/apk-module-smoke.sh` 已将 GuardOpsSmoke 加入可执行测试入口；`tests/apk-no-dump-smoke.sh` 同时检查 observe 持久化和提交错误传播。
 - 当前仍未运行 shell smoke、POSIX sh 语法检查、javac、Gradle 或设备测试。不得把新增回归用例描述为已通过；未触发 Actions、编译、构建、打包、合并或发布。
+
+### 2026-11-23 APK 恢复请求的退避状态提交保护
+
+- **复审发现**：APK request_reconnect() 原先在广播前调用 save_state()，但忽略其返回码。若退避锚点无法落盘，仍会发送广播；下次巡检可能因 last_try_mono 未持久化而重复触发。
+- **修正**：现在只有在广播前的退避状态成功提交后才发送恢复广播；提交失败时设置 state_save_failed、记录 reconnect_aborted 并跳过本轮广播。广播后若结果状态提交失败，保留广播前已经落盘的退避锚点，并记录 reconnect_state_commit_failed。snapshot 允许保留该决策原因。
+- **回归约束**：apk-no-dump-smoke.sh 检查 request_reconnect 的前置提交门控、失败事件和决策枚举；atomic rename 故障注入覆盖 observe 状态/evidence 文件写入失败。完整行为测试尚未执行。
+- **验证边界**：仅完成源码回读与静态断言核对；未运行任何 shell 测试、javac、Gradle 或设备测试，未触发 Actions/编译/构建/打包。
