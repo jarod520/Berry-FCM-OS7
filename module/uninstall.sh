@@ -18,10 +18,15 @@ is_guardian() {
 if is_guardian; then
     kill -TERM "$pid" 2>/dev/null || :
     n=0
-    while is_guardian && [ "$n" -lt 8 ]; do
+    while is_guardian && [ "$n" -lt 18 ]; do
         sleep 1
         n=$((n + 1))
     done
-    if is_guardian; then kill -KILL "$pid" 2>/dev/null || :; fi
+    if is_guardian; then
+        kill -KILL "$pid" 2>/dev/null || :
+        n=0
+        while is_guardian && [ "$n" -lt 3 ]; do sleep 1; n=$((n + 1)); done
+    fi
+    is_guardian && echo '警告：BerryFCM 守护进程在卸载时仍未退出' >&2
 fi
 exit 0
