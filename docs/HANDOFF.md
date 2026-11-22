@@ -834,3 +834,10 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **定向模拟**：POSIX sh 隔离模拟确认 state rename 失败会清理临时文件，7 列 evidence 与旧 state 的 sample_mono 不一致时会被标记 stale；同时验证旧 6 列 evidence 的 decision 字段仍正确读取。
 - **验证边界**：新增用例尚未运行完整 `fcm-monitor-smoke.sh`；当前只完成源码静态断言和局部 POSIX sh 语法/行为模拟。未触发 workflow、构建、编译、打包、合并或发布。
 - 最终固定源码断言复核：KSU smoke **136/136 正向、5/5 负向**；FCM smoke **21/21 正向、1/1 负向**，均无缺失或误匹配。完整 smoke 与全仓 Shell 语法 gate 仍未执行。
+
+### 2026-11-22 state 提交失败后的 evidence generation 隔离
+- **复审发现**：observe() 采用先原子替换 mcs-evidence、再原子替换 mcs-monitor.state 的双文件提交。若 evidence rename 成功而 state rename 失败，snapshot 已能通过 sample_mono 不一致将样本标记 stale；但下一轮 observe() 仍会读取不匹配 evidence 中的 old_source、old_duration、previous_native_reason 等字段，monitor 命令也会拿不匹配的 prior_decision 做事件去重。这可能让未提交样本污染下一轮状态判定。
+- **修正**：observe() 读取 evidence 后，将其 sample_mono 与已加载 state 的 sample_mono 比较；只要任一方非零且两者不一致，就清空所有上一轮 evidence 派生字段，禁止旧证据参与 socket/native 状态保留和采样判断。monitor 命令在读取 prior_decision 时也独立比较 state 第 28 列与 evidence 第 7 列；不匹配则不沿用旧 decision。
+- **回归夹具**：state-write-fail 用例先提交一个正常 connected 样本，再注入仅针对 mcs-monitor.state 的 mv 失败；要求旧 state 的 sample_mono 保持不变、新 evidence 时间前进、snapshot 标记 stale 且 decision=sample_unavailable。随后在 socket ownership 不可确认的条件下恢复一次采样，要求新结果 source=unavailable（而非错误复用未提交 evidence 的 source=gms），并确认 state/evidence generation 再次一致。
+- **兼容性**：旧 27 列 state 和旧 6 列 evidence 的 generation 都按 0 处理；只有任一方已有 monotonic generation 时才要求严格匹配，不改变旧格式迁移路径。
+- **静态复核**：KSU smoke 固定源码断言 **141/141** 匹配；FCM smoke 固定源码断言 **2/2** 匹配。新增测试结构与关键断言已复核。完整 `fcm-monitor-smoke.sh`、`ksu-wake-smoke.sh`、全仓 Shell 语法 gate 和 Android/KernelSU 实机测试尚未执行；未触发 Actions、构建、编译、打包或发布。
