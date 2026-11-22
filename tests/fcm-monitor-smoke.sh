@@ -167,7 +167,7 @@ settime 10124
 export MCS_AM_CONNECT_ON_ACTION=MCS_HEARTBEAT
 run monitor >/dev/null
 unset MCS_AM_CONNECT_ON_ACTION
-requests 14
+requests 6
 j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_last_result=restored
@@ -186,7 +186,7 @@ settime 10214
 run monitor >/dev/null
 j="$(run status)"
 assert_json "$j" fcm_state=connected
-requests 5
+requests 10
 
 # A connected socket with no TCP data received for 30 minutes is also suspected stalled.
 echo idle > "$TMP/mode"
@@ -196,20 +196,20 @@ assert_json "$j" fcm_state=disconnected
 assert_json "$j" fcm_tcp_hint=stalled
 settime 10230
 run monitor >/dev/null
-requests 6
+requests 14
 echo connected > "$TMP/mode"
 settime 10231
 run monitor >/dev/null
 j="$(run status)"
 assert_json "$j" fcm_state=connected
-requests 6
+requests 14
 
 # Continuous, successfully-readable absence is timed; one absent sample is not enough.
 echo absent > "$TMP/mode"
 settime 10257
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
-requests 6
+requests 14
 settime 10302
 j="$(run status)"
 assert_json "$j" fcm_state=disconnected
@@ -222,7 +222,7 @@ echo unknown > "$TMP/mode"
 settime 10318
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
-requests 7
+requests 18
 
 # When ss cannot expose UID, the root-readable /proc TCP tables are the fallback.
 mkdir -p "$TMP/proc"
@@ -240,7 +240,7 @@ j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=gms_socket
 assert_json "$j" fcm_tcp_hint=established
-requests 7
+requests 18
 
 [ ! -s "$TMP/dumpsys.log" ] || fail "dumpsys was invoked by the monitor"
 echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO retransmission and 30-minute receive-idle recovery, same-cycle four-trigger escalation, and dump independence"
