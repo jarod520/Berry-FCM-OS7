@@ -14,6 +14,9 @@ grep -Fq 'socket="$(scan_sockets)"' "$APK"
 # A fresh observation must be committed before status/snapshot reloads the state file.
 grep -Fq 'save_state || return $?' "$APK"
 grep -Fq 'write_evidence || return $?' "$APK"
+grep -Fq 'sample_mono' "$APK"
+grep -Fq 'sample_gap_age' "$APK"
+grep -Fq 'age=$((nowm-sample_mono))' "$APK"
 save_block="$(sed -n '/^save_state() {/,/^}/p' "$APK")"
 evidence_block="$(sed -n '/^write_evidence() {/,/^}/p' "$APK")"
 printf '%s\\n' "$save_block" | grep -Fq 'tmp="$STATE.$"'
