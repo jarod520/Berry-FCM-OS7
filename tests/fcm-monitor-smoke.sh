@@ -209,7 +209,7 @@ run status
 [ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 3 ]
 : > "$MCS_AM_LOG"
 settime 70140
-printf "%s\\n" "DeviceID: [fixture]" "Not connected" "disconnectTime=00:20/00:00" > "$MCS_FIXTURE"
+printf "%s\n" "DeviceID: [fixture]" "Not connected" "disconnectTime=00:20/00:00" > "$MCS_FIXTURE"
 run monitor
 [ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 5 ]
 requests 1
