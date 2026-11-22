@@ -344,7 +344,8 @@ EOF_SOCKET
         ;;
     esac
     transport="$new_transport"; remote="$new_remote"; sample_epoch="$nowe"
-    write_evidence
+    save_state || return $?
+    write_evidence || return $?
 }
 
 write_evidence() {
