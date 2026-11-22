@@ -153,6 +153,7 @@ case "$PATROL_RESTART_DELAY" in ""|*[!0-9]*) PATROL_RESTART_DELAY=5;; esac
 patrol_pid=
 patrol_stamp=
 patrol_started=0
+patrol_sample_started=0
 patrol_identity_alive() {
     [ -n "$patrol_pid" ] || return 1
     kill -0 "$patrol_pid" 2>/dev/null || return 1
@@ -163,7 +164,7 @@ patrol_alive() {
     tr "\000" " " 2>/dev/null < "/proc/$patrol_pid/cmdline" | grep -Fq "patrol.sh"
 }
 start_patrol() {
-    rm -f "$DATA/patrol.heartbeat"
+    rm -f "$DATA/patrol.heartbeat" "$DATA/patrol.sample.heartbeat"
     sh "$MODDIR/bin/patrol.sh" </dev/null >> "$DATA/patrol.log" 2>&1 &
     patrol_pid=$!
     patrol_stamp=
@@ -176,6 +177,7 @@ start_patrol() {
     if [ -z "$patrol_stamp" ]; then kill "$patrol_pid" 2>/dev/null || :; wait "$patrol_pid" 2>/dev/null || :; patrol_pid=; return 1; fi
     patrol_started="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
     case "$patrol_started" in ""|*[!0-9]*) patrol_started=0;; esac
+    if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]; then patrol_sample_started="$patrol_started"; else patrol_sample_started=0; fi
     printf "%s %s\n" "$patrol_pid" "$patrol_stamp" > "$LOCK/patrol"
     printf '[%s] patrol_supervisor_start pid=%s start=%s\n' "$(date '+%F %T')" "$patrol_pid" "$patrol_stamp" >> "$DATA/guard.log"
 }
@@ -210,6 +212,13 @@ refresh_mode() {
     mode_changed=1
     stop_wait
     [ -z "$patrol_pid" ] || kill -USR1 "$patrol_pid" 2>/dev/null || :
+    if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]; then
+        patrol_sample_started="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
+        case "$patrol_sample_started" in ""|*[!0-9]*) patrol_sample_started=0;; esac
+        rm -f "$DATA/patrol.sample.heartbeat"
+    else
+        patrol_sample_started=0
+    fi
 }
 on_timer() { [ -z "$patrol_pid" ] || kill -USR2 "$patrol_pid" 2>/dev/null || :; }
 trap service_cleanup EXIT
@@ -244,11 +253,27 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ]; do
         elif [ "$hb" -eq 0 ] && [ "$patrol_started" -gt 0 ] && [ "$now_up" -ge "$patrol_started" ] && [ $((now_up - patrol_started)) -gt 90 ]; then
             patrol_stale=1
         fi
-        if [ "$patrol_stale" = 1 ]; then
-            printf '[%s] patrol_watchdog_stale pid=%s heartbeat=%s started=%s uptime=%s\n' "$(date '+%F %T')" "$patrol_pid" "$hb" "$patrol_started" "$now_up" >> "$DATA/guard.log"
+        sample_hb="$(cat "$DATA/patrol.sample.heartbeat" 2>/dev/null)"
+        case "$sample_hb" in ""|*[!0-9]*) sample_hb=0;; esac
+        sample_stale=0
+        if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]; then
+            if [ "$sample_hb" -gt 0 ] && [ "$now_up" -ge "$sample_hb" ] && [ $((now_up - sample_hb)) -gt 90 ]; then
+                sample_stale=1
+            elif [ "$sample_hb" -eq 0 ] && [ "$patrol_sample_started" -gt 0 ] &&
+                 [ "$now_up" -ge "$patrol_sample_started" ] && [ $((now_up - patrol_sample_started)) -gt 90 ]; then
+                sample_stale=1
+            fi
+        fi
+        if [ "$patrol_stale" = 1 ] || [ "$sample_stale" = 1 ]; then
+            watchdog_reason=patrol_heartbeat
+            [ "$sample_stale" = 1 ] && watchdog_reason=monitor_sample
+            [ "$patrol_stale" = 1 ] && [ "$sample_stale" = 1 ] && watchdog_reason=patrol_and_monitor
+            printf '[%s] patrol_watchdog_stale reason=%s pid=%s heartbeat=%s sample=%s started=%s uptime=%s\n' \
+                "$(date '+%F %T')" "$watchdog_reason" "$patrol_pid" "$hb" "$sample_hb" "$patrol_started" "$now_up" >> "$DATA/guard.log"
             stop_patrol || :
-            rm -f "$DATA/patrol.heartbeat"
+            rm -f "$DATA/patrol.heartbeat" "$DATA/patrol.sample.heartbeat"
             patrol_started="$now_up"
+            if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]; then patrol_sample_started="$now_up"; else patrol_sample_started=0; fi
         fi
     fi
     sleep 5 &
