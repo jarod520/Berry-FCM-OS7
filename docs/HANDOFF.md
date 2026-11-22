@@ -724,3 +724,9 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **修正**：service 与 patrol worker 均增加 maintenance child group identity 检查：每次发送负 PGID 信号前，必须确认原 child PID、starttime、PGID 仍一致，且命令行仍指向 ctl.sh（或该 PID 仍为可识别的 zombie）。无法确认时拒绝组信号并写日志。patrol 清理在组仍存活时保留 child owner 记录；maintenance_cleanup 只有在 child 清理确认成功后才删除 maintenance.lock。worker 等待主 child 退出后统一调用同一清理函数，避免清理逻辑分叉。
 - **覆盖范围**：普通退出清理、45 秒 watchdog、child owner 记录发布失败、service 重启回收四条路径。
 - **验证边界**：本次代码和 KSU smoke 断言更新后需做局部 Shell 语法及断言检查；完整 KSU/FCM smoke、全仓 Shell gate 和 Android/KernelSU 实机验证仍未执行。未触发 Actions、编译、打包、合并或 Release。
+
+### 2026-11-22 service watchdog 清理失败时保留重试证据
+- **复审发现**：patrol/sample heartbeat 超时后，service 原先忽略 stop_patrol() 和 stop_monitor_owner() 的失败返回，仍然删除两份 heartbeat 并重置 watchdog 起算时间。若 patrol 未真正停止，它可能在 monitor owner 清理后再次启动 monitor；若 monitor owner 未停止，清除 stale heartbeat 会推迟下一轮回收。
+- **修正**：watchdog 先要求 stop_patrol 成功；只有 patrol 已确认停止且 sample_stale 时才清理 monitor owner。任一步失败均保留原 heartbeat 和起算证据，记录具体失败原因，等待下一轮 supervisor 重试。避免失败清理被当作成功完成。
+- **回归约束**：KSU smoke 更新清理顺序断言，并增加两种失败原因、保留 heartbeat 日志及不再忽略 stop_patrol 返回码的源码断言。
+- **验证边界**：源码结构断言待复核；完整 KSU/FCM smoke、全仓 Shell syntax gate 和 Android/KernelSU 实机验证仍未执行。未触发 Actions、编译、打包、合并或 Release。
