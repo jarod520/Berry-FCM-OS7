@@ -602,3 +602,10 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **巡检 worker 回收**：patrol 每轮检查已结束的 maintenance worker，并调用 `wait` 回收，避免正常结束的后台 worker 长期残留 zombie PID。
 - **当前验证边界**：静态核对了 KSU smoke 中的源码断言：正向断言均能在源码中找到对应实现；负向断言用于防止双重转义、残留 shell PID 展开和 service PID 写入回归；检查了新增回归用例没有重复主体。容器中分别模拟了 `/proc/self/stat` PID 读取、setsid 进程组身份与组内子进程清理。**完整 `fcm-monitor-smoke.sh`、`ksu-wake-smoke.sh`、所有 Shell 文件的 `sh -n`、目标 Android/KernelSU/GMS 实机测试尚未执行**；上述模拟不能替代 Android 实机验证。
 - **构建约束**：本轮未触发 workflow、编译、打包或 Release；PR #1 仍保持 open / not merged。待代码与静态审查全部结束后，再由用户手动触发完整构建。
+
+
+### 2026-11-22 退出竞态复审补充
+- 发现 service 原先先清理 monitor owner、再停止 patrol 的竞态：monitor 正在启动但尚未发布 owner 文件时，第一次清理可能看不到它；之后 patrol 退出可能遗留 monitor。
+- 已将 `service_cleanup()` 顺序调整为：停止 timer → 停止 patrol → 清理 monitor owner → 清理 maintenance owner。patrol 停止后不再产生新的 monitor 检查，再读取 owner 锁清理在停止窗口内发布的 monitor 身份。
+- KSU smoke 增加静态顺序断言，要求 `stop_patrol` 必须位于 `stop_monitor_owner` 之前。
+- 此项目前完成源码和断言静态核对；尚未执行完整 KSU smoke，因此退出竞态的动态回归仍待完整测试验证。
