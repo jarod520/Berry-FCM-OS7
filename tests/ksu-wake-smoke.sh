@@ -96,6 +96,12 @@ grep -Fq 'trap maintenance_cleanup EXIT' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'proc_group_id()' "$ROOT/module/bin/patrol.sh"
 grep -Fq '"$TOYBOX_BIN" setsid sh "$MODDIR/bin/ctl.sh" fix' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'maintenance_child_pgid="$(proc_group_id "$maintenance_child_pid")"' "$ROOT/module/bin/patrol.sh"
+maintenance_stop_block="$(sed -n '/^                    maintenance_stop_child() {/,/^                    }$/p' "$ROOT/module/bin/patrol.sh")"
+maintenance_term_line="$(printf '%s\n' "$maintenance_stop_block" | grep -nF 'kill -TERM "-$maintenance_child_pgid"' | cut -d: -f1)"
+maintenance_kill_guard_line="$(printf '%s\n' "$maintenance_stop_block" | grep -nF 'if process_group_alive "$maintenance_child_pgid"; then' | cut -d: -f1)"
+maintenance_kill_line="$(printf '%s\n' "$maintenance_stop_block" | grep -nF 'kill -KILL "-$maintenance_child_pgid"' | cut -d: -f1)"
+[ -n "$maintenance_term_line" ] && [ -n "$maintenance_kill_guard_line" ] && [ -n "$maintenance_kill_line" ]
+[ "$maintenance_term_line" -lt "$maintenance_kill_guard_line" ] && [ "$maintenance_kill_guard_line" -lt "$maintenance_kill_line" ]
 grep -Fq 'maintenance_group_tool" kill -KILL' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'maintenance_skipped reason=no_setsid_or_kill_applet' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'proc_group_id()' "$ROOT/module/service.sh"
