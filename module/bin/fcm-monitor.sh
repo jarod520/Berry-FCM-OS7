@@ -40,16 +40,19 @@ proc_start_time() {
     tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $20}'
 }
 write_lock_owner() {
-    lock_owner_stamp="$(proc_start_time "$")"
+    lock_owner_pid=
+    IFS=' ' read -r lock_owner_pid _ < /proc/self/stat 2>/dev/null || return 1
+    case "$lock_owner_pid" in ''|*[!0-9]*) return 1;; esac
+    lock_owner_stamp="$(proc_start_time "$lock_owner_pid")"
     [ -n "$lock_owner_stamp" ] || return 1
-    printf "%s %s\n" "$" "$lock_owner_stamp" > "$LOCK_OWNER.tmp.$" &&
-        mv -f "$LOCK_OWNER.tmp.$" "$LOCK_OWNER"
+    printf "%s %s\n" "$lock_owner_pid" "$lock_owner_stamp" > "$LOCK_OWNER.tmp.$lock_owner_pid" &&
+        mv -f "$LOCK_OWNER.tmp.$lock_owner_pid" "$LOCK_OWNER"
 }
 clear_lock_owner() {
-    [ -n "$lock_owner_stamp" ] || return 0
+    [ -n "$lock_owner_pid" ] && [ -n "$lock_owner_stamp" ] || return 0
     owner_pid=; owner_stamp=
     IFS=' ' read -r owner_pid owner_stamp < "$LOCK_OWNER" 2>/dev/null || :
-    if [ "$owner_pid" = "$" ] && [ "$owner_stamp" = "$lock_owner_stamp" ]; then
+    if [ "$owner_pid" = "$lock_owner_pid" ] && [ "$owner_stamp" = "$lock_owner_stamp" ]; then
         rm -f "$LOCK_OWNER"
     fi
 }
@@ -1050,8 +1053,11 @@ case "$command" in
                 if mv "$lock_dir" "$stale_lock" 2>/dev/null; then rm -rf "$stale_lock"; fi
                 mkdir "$lock_dir" 2>/dev/null || { echo "后台正在检查 GMS，请稍后重试" >&2; exit 13; }
             fi
-            echo $ > "$lock_dir/pid"
-            proc_start_time "$" > "$lock_dir/starttime"
+            lock_dir_pid=
+            IFS=' ' read -r lock_dir_pid _ < /proc/self/stat 2>/dev/null || exit 11
+            case "$lock_dir_pid" in ''|*[!0-9]*) exit 11;; esac
+            echo "$lock_dir_pid" > "$lock_dir/pid"
+            proc_start_time "$lock_dir_pid" > "$lock_dir/starttime"
             write_lock_owner || :
             trap 'clear_lock_owner; rm -f "$lock_dir/pid" "$lock_dir/starttime"; rmdir "$lock_dir" 2>/dev/null || :' EXIT
             trap 'exit 130' HUP INT TERM
