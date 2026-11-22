@@ -84,7 +84,7 @@ maintenance_child_alive() {
 run_bounded() {
     seconds="$1"; shift
     if [ -x "$TOYBOX_BIN" ] && "$TOYBOX_BIN" --list 2>/dev/null | grep -qx timeout; then
-        "$TOYBOX_BIN" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
+        BERRY_FCM_ISOLATED_GROUP=1 "$TOYBOX_BIN" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
     elif [ -x "$KSU_BUSYBOX" ] &&
          "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx timeout; then
         "$KSU_BUSYBOX" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
@@ -101,12 +101,12 @@ run_bounded() {
            "$TOYBOX_BIN" --list 2>/dev/null | grep -qx setsid &&
            "$TOYBOX_BIN" --list 2>/dev/null | grep -qx kill; then
             group_tool="$TOYBOX_BIN"
-            "$TOYBOX_BIN" setsid "$@" &
+            BERRY_FCM_ISOLATED_GROUP=1 "$TOYBOX_BIN" setsid "$@" &
         elif [ -x "$KSU_BUSYBOX" ] &&
              "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx setsid &&
              "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx kill; then
             group_tool="$KSU_BUSYBOX"
-            "$KSU_BUSYBOX" setsid "$@" &
+            BERRY_FCM_ISOLATED_GROUP=1 "$KSU_BUSYBOX" setsid "$@" &
         else
             "$@" &
         fi
