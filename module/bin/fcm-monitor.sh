@@ -355,20 +355,6 @@ retry_interval() {
 # A continuous absence of a verified GMS UID-owned MCS socket is considered only
 # after 45 seconds. A fresh MCS socket is positive transport evidence; one absence
 # sample alone never creates an outage. Sampling gaps reset the continuity anchor.
-socket_fallback_ready() {
-    [ "$tcp_hint" = absent ] || return 1
-    socket_down_age=0
-    if is_uint "${1:-}" && [ "$1" -ge 60 ]; then
-        socket_down_age="$1"
-        return 0
-    fi
-    socket_down_anchor="$(num "${outage_hint_mono:-0}")"
-    socket_down_now="$(num "$(monotime)")"
-    [ "$socket_down_anchor" -gt 0 ] && [ "$socket_down_now" -ge "$socket_down_anchor" ] || return 1
-    socket_down_age=$((socket_down_now-socket_down_anchor))
-    [ "$socket_down_age" -ge 45 ]
-}
-
 request_reconnect() {
     reason="$1"; nowm="$(num "$(monotime)")"; nowe="$(num "$(now_epoch)")"
     case "$state" in connecting|disconnected) :;; *) decision=not_disconnected; return 0;; esac
@@ -590,7 +576,7 @@ auto_recovery() {
         if [ "$observed_age" -ge "$required" ]; then confirm_recovery auto; else decision=waiting_duration; fi
         ;;
       unknown)
-        if [ "$tcp_hint" = absent ] && socket_fallback_ready -1; then confirm_recovery auto; else decision=sample_unavailable; fi
+        decision=sample_unavailable
         ;;
       *) decision=not_disconnected;;
     esac
@@ -690,8 +676,7 @@ case "${1:-status}" in
         ;;
     reconnect)
         observe || exit $?
-        if { { [ "$source" = gms_socket ] || [ "$source" = gms_socket_absence ] || [ "$source" = gms_socket_stalled ]; } && { [ "$state" = connecting ] || [ "$state" = disconnected ]; }; } ||
-           { [ "$state" = unknown ] && [ "$tcp_hint" = absent ] && socket_fallback_ready -1; }; then
+        if { { [ "$source" = gms_socket ] || [ "$source" = gms_socket_absence ] || [ "$source" = gms_socket_stalled ]; } && { [ "$state" = connecting ] || [ "$state" = disconnected ]; }; }; then
             confirm_recovery manual || exit $?
         else
             decision=not_disconnected
