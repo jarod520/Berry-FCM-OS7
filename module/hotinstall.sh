@@ -17,7 +17,7 @@ is_guardian() {
 if is_guardian; then
     kill -TERM "$old" 2>/dev/null || :
     n=0
-    while is_guardian && [ "$n" -lt 18 ]; do
+    while is_guardian && [ "$n" -lt 24 ]; do
         sleep 1
         n=$((n + 1))
     done
