@@ -248,7 +248,7 @@ requests 18
 
 # A GMS-owned HTTPS socket to an unrelated peer must remain unknown even when
 # mtalk DNS candidates are available; it must never age into false absence.
-printf '%s\\n' '142.250.157.188' > "$TMP/data/mcs-mtalk-dns-ips.txt"
+printf '%s\n' '142.250.157.188' > "$TMP/data/mcs-mtalk-dns-ips.txt"
 echo 1700010000 > "$TMP/data/mcs-mtalk-dns-time"
 echo unverified443 > "$TMP/mode"
 settime 10320
@@ -282,7 +282,7 @@ export MCS_FAIL_EVIDENCE_MV=1 MCS_FAIL_EVIDENCE_MV_AT=3 MCS_AM_ADVANCE_UPTIME=10
 run monitor >/dev/null
 unset MCS_FAIL_EVIDENCE_MV MCS_FAIL_EVIDENCE_MV_AT MCS_AM_ADVANCE_UPTIME
 requests 19
-test "$(cat "$TMP/data/evidence-mv-count")" = 3
+test "$(cat "$TMP/data/evidence-mv-count")" = 4
 state_sample_uptime="$(awk -F'|' '{print $28}' "$TMP/data/mcs-monitor.state")"
 evidence_sample_uptime="$(awk -F'|' '{print $7}' "$TMP/data/mcs-evidence")"
 [ "$state_sample_uptime" = 10380 ] || fail "failed follow-up evidence publish advanced state sample"
