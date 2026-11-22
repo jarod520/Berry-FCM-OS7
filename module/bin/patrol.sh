@@ -234,9 +234,15 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     maintenance_child_pid=
                     maintenance_stop_child() {
                         [ -z "$maintenance_child_pid" ] || {
+                            child_file_pid=; child_file_stamp=
+                            IFS=' ' read -r child_file_pid child_file_stamp < "$MAINTENANCE_LOCK/child" 2>/dev/null || :
                             kill -TERM "$maintenance_child_pid" 2>/dev/null || :
                             wait "$maintenance_child_pid" 2>/dev/null || :
-                            maintenance_child_pid=
+                            if [ "$child_file_pid" = "$maintenance_child_pid" ] &&
+                               [ "$child_file_stamp" = "$maintenance_child_stamp" ]; then
+                                rm -f "$MAINTENANCE_LOCK/child"
+                            fi
+                            maintenance_child_pid=; maintenance_child_stamp=
                         }
                     }
                     maintenance_cleanup() {
@@ -270,9 +276,20 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                         exit 125
                     ) >> "$DATA/guard.log" 2>&1 &
                     maintenance_child_pid=$!
+                    maintenance_child_stamp="$(proc_start_time "$maintenance_child_pid")"
+                    if [ -n "$maintenance_child_stamp" ]; then
+                        printf '%s %s\n' "$maintenance_child_pid" "$maintenance_child_stamp" > "$MAINTENANCE_LOCK/child.tmp.$maintenance_owner_pid" &&
+                            mv -f "$MAINTENANCE_LOCK/child.tmp.$maintenance_owner_pid" "$MAINTENANCE_LOCK/child"
+                    fi
                     wait "$maintenance_child_pid"
                     fix_rc=$?
-                    maintenance_child_pid=
+                    child_file_pid=; child_file_stamp=
+                    IFS=' ' read -r child_file_pid child_file_stamp < "$MAINTENANCE_LOCK/child" 2>/dev/null || :
+                    if [ "$child_file_pid" = "$maintenance_child_pid" ] &&
+                       [ "$child_file_stamp" = "$maintenance_child_stamp" ]; then
+                        rm -f "$MAINTENANCE_LOCK/child"
+                    fi
+                    maintenance_child_pid=; maintenance_child_stamp=
                     fix_finished_epoch="$(date +%s 2>/dev/null)"
                     case "$fix_finished_epoch" in ''|*[!0-9]*) fix_finished_epoch=0;; esac
                     fix_elapsed=unknown
