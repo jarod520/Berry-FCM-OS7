@@ -63,7 +63,7 @@ grep -Fq 'monitor_rc" -ne 10' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'monitor_rc" -ne 11' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'monitor_rc" -ne 12' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'monitor_rc" -ne 14' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'previous_sample_epoch=%s' "$ROOT/module/bin/patrol.sh"
+grep -Fq 'check_started_uptime=%s' "$ROOT/module/bin/patrol.sh"
 ! grep -Fq '13|124) :;;' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'sample_stale=1' "$ROOT/module/service.sh"
 grep -Fq 'reason=monitor_sample' "$ROOT/module/service.sh"
@@ -249,6 +249,9 @@ else
     case "$previous_sample_epoch" in ""|*[!0-9]*) previous_sample_epoch=0;; esac
     if [ "$sample_epoch" -le "$previous_sample_epoch" ]; then
         sample_epoch=$((previous_sample_epoch + 1))
+    fi
+    if [ -n "${TEST_SAMPLE_EPOCH_OVERRIDE:-}" ]; then
+        sample_epoch="$TEST_SAMPLE_EPOCH_OVERRIDE"
     fi
     printf '%s\n' "$sample_epoch" > "$TEST_DIR/sample-epoch"
     sample_uptime="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
@@ -453,8 +456,27 @@ grep -q "sample_heartbeat_not_refreshed rc=42 .*sample_uptime=$old_sample_uptime
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: unchanged sample uptime cannot refresh patrol heartbeat'
 
-# A pre-observe owner-registration failure must not reuse an old sample whose
-# wall-clock second happens to equal the start of this patrol check.
+# A fresh monotonic sample remains fresh even when wall-clock time moves back.
+touch "$TMP/module/module.prop"
+echo 1 > "$TMP/data/enabled"
+echo passive > "$TMP/data/wake-mode"
+: > "$TMP/samples"
+: > "$TMP/data/guard.log"
+echo 1900000000 > "$TMP/sample-epoch"
+sample_uptime_now="$(awk '{print int($1)}' /proc/uptime)"
+old_sample_uptime=$((sample_uptime_now - 1))
+[ "$old_sample_uptime" -ge 0 ] || old_sample_uptime=0
+echo "$old_sample_uptime" > "$TMP/sample-uptime"
+export TEST_SAMPLE_EPOCH_OVERRIDE=1600000000
+timeout 8 sh "$TMP/module/service.sh"
+unset TEST_SAMPLE_EPOCH_OVERRIDE
+test -s "$TMP/data/patrol.sample.heartbeat"
+grep -q 'fcm_check_end rc=0 .*sample_epoch=1600000000' "$TMP/data/guard.log"
+test ! -d "$TMP/data/service.lock"
+echo 'PASS: wall-clock rollback does not block patrol sample heartbeat'
+
+# A pre-observe owner-registration failure must not reuse an unchanged
+# monotonic sample even when its timestamp is otherwise recent.
 touch "$TMP/module/module.prop"
 echo 1 > "$TMP/data/enabled"
 echo passive > "$TMP/data/wake-mode"
@@ -471,8 +493,8 @@ grep -q 'sample_heartbeat_not_refreshed rc=14 .*previous_sample_uptime=' "$TMP/d
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: pre-observe owner failure cannot refresh heartbeat from a same-second old sample'
 
-# A newly written timestamp is still not sufficient when snapshot marks it
-# stale (for example, because wall-clock age cannot be validated).
+# A newly written sample is still not sufficient when snapshot marks its
+# persisted state stale.
 touch "$TMP/module/module.prop"
 echo 1 > "$TMP/data/enabled"
 echo passive > "$TMP/data/wake-mode"
