@@ -460,7 +460,7 @@ echo 1 > "$BERRY_FCM_DATA/enabled"
 export MCS_SS_MODE=mtalk443 MCS_DNS_SUCCESS=1 MCS_DNS_LOG="$TMP/dns-expiry.log"
 : > "$MCS_DNS_LOG"
 settime 60000
-printf '%s\\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
+printf '%s\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
 j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_transport=tcp443
