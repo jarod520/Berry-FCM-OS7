@@ -1152,27 +1152,41 @@ esac
 }
 
 with_flock() {
-    # Android mksh closes descriptors allocated by exec before launching
-    # an external command. Attach the descriptor to this function call.
-    lock_error="$("$@" -xn 9 2>&1)"
-    rc=$?
-    if [ "$rc" -ne 0 ]; then
-        if [ -z "$lock_error" ] && [ "$rc" -eq 1 ]; then
+    # Keep the descriptor lock held by flock for the entire monitor command.
+    # The child writes its real command status to a private result file and
+    # exits zero so flock's status remains reserved for lock/launcher errors.
+    lock_result="$DATA/mcs-monitor.lock.result.$"
+    rm -f "$lock_result" "$lock_result.tmp."*
+    "$@" -xn 9 sh "$0" "$command" --locked "$lock_result"
+    flock_rc=$?
+    if [ ! -s "$lock_result" ]; then
+        rm -f "$lock_result" "$lock_result.tmp."*
+        if [ "$flock_rc" -eq 1 ]; then
             echo "后台正在检查 GMS，请稍后重试" >&2
             return 13
         fi
-        printf "无法取得 GMS 检查锁：%s\n" "${lock_error:-退出码 $rc}" >&2
+        printf "无法取得 GMS 检查锁：flock 退出码 %s\n" "$flock_rc" >&2
         return 14
     fi
-    if write_lock_owner; then trap 'clear_lock_owner' EXIT; fi
-    run_monitor_command "$command"
-    rc=$?
-    clear_lock_owner
-    trap - EXIT
-    return "$rc"
+    monitor_rc="$(cat "$lock_result" 2>/dev/null)"
+    rm -f "$lock_result"
+    is_uint "$monitor_rc" || return 14
+    return "$monitor_rc"
 }
 
 command="${1:-status}"
+if [ "${2:-}" = --locked ]; then
+    lock_result="${3:-}"
+    case "$lock_result" in "$DATA"/mcs-monitor.lock.result.*) :;; *) exit 14;; esac
+    if write_lock_owner; then trap 'clear_lock_owner' EXIT; fi
+    run_monitor_command "$command"
+    monitor_rc=$?
+    clear_lock_owner
+    trap - EXIT
+    printf '%s\n' "$monitor_rc" > "$lock_result.tmp.$" &&
+        mv -f "$lock_result.tmp.$" "$lock_result" || exit 14
+    exit 0
+fi
 case "$command" in
     status|monitor|reconnect|reset-history)
         busybox="${BERRY_KSU_BUSYBOX:-/data/adb/ksu/bin/busybox}"
