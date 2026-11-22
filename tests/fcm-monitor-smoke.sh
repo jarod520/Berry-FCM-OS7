@@ -238,7 +238,7 @@ assert_json "$j" fcm_state=connected
 grep -q 'sample_retry|first=no_current_state retry_rc=0 state=connected' "$BERRY_FCM_DATA/mcs-monitor-events.log"
 unset MCS_NEXT_FIXTURE
 printf '%s\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
-settime 13020
+settime 70160
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
 [ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 3 ]
