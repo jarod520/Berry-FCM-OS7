@@ -562,7 +562,8 @@ confirm_recovery() {
         record_event recovery_confirmed "两次内核 TCP_INFO 采样确认 MCS socket 存在未确认数据并持续重传，进入分阶段恢复"
         request_reconnect "$1"
     elif [ "$tcp_hint" = absent ] && [ "$state" = disconnected ] &&
-       { [ "$first_tcp_hint" = absent ] || [ "$first_state" = disconnected ] || [ "$first_state" = unknown ]; }; then
+       { [ "$first_tcp_hint" = absent ] ||
+         { [ "$first_state" = disconnected ] && [ "$first_tcp_hint" = stalled ]; }; }; then
         record_event recovery_confirmed "两次独立内核 Socket 采样确认 MCS TCP 连续缺失，进入分阶段恢复"
         request_reconnect "$1"
     elif [ "$state" = connecting ] && [ "$first_state" = connecting ]; then
