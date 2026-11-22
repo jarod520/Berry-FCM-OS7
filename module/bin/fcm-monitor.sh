@@ -674,19 +674,23 @@ EOF_RETRY
     if [ "$observed" = unknown ]; then
         [ "$native_reason" != none ] || native_reason=unrecognized
         if [ "$native_reason" = service_unavailable ] && [ "$(is_gms_stopped)" = 1 ]; then native_reason=gms_stopped; fi
-        # Root-visible GMS UID MCS sockets resolve the state when dumpsys has
-        # only ActivityManager wrapper lines. This is limited to exact MCS
-        # ports or known mtalk IPs, never arbitrary GMS HTTPS traffic.
+        # Root-visible GMS UID MCS sockets resolve the state when native state
+        # is unavailable or this cycle intentionally skips dumpsys. Only exact
+        # MCS ports or known mtalk IPs count, never arbitrary GMS HTTPS traffic.
         IFS='|' read -r socket_state socket_transport socket_remote socket_key socket_reason <<EOF_SOCKET
 $socket
 EOF_SOCKET
         tcp_hint="$socket_state"
         case "$tcp_hint" in connected) tcp_hint=established;; connecting|absent|unknown) :;; *) tcp_hint=unknown;; esac
         source=unavailable; duration=-1; close_code=
-        if [ "$previous_down_state" != unknown ] ||
-           [ "$previous_native_reason" != "$native_reason" ]; then
-            record_event sample_unknown "reason=$native_reason parser=${parse_detail:-none} tcp=$tcp_hint prior_down=$previous_down_observed dump_rc=$dump_rc retry_rc=$retry_rc"
-        fi
+        case "$tcp_hint" in
+          unknown|absent)
+            if [ "$previous_down_state" != unknown ] ||
+               [ "$previous_native_reason" != "$native_reason" ]; then
+                record_event sample_unknown "reason=$native_reason parser=${parse_detail:-none} tcp=$tcp_hint prior_down=$previous_down_observed dump_rc=$dump_rc retry_rc=$retry_rc"
+            fi
+            ;;
+        esac
         if [ "$native_poll_due" = 1 ]; then
             dump_shape="parser=${parse_detail:-none} rc=$dump_rc $(printf '%s' "$dump" | dump_state_shape)"
             dump_shape="$(printf '%s' "$dump_shape" | cut -c1-220)"
@@ -702,7 +706,7 @@ EOF_SOCKET
             new_transport="$socket_transport"; new_remote="$socket_remote"
             previous_down_observed=0; outage_hint_mono=0
             [ "$previous_down_state" = connected ] ||
-                record_event socket_connected 'dumpsys 本次无状态字段；UID0 已观察到 GMS MCS TCP 建立'
+                record_event socket_connected '本轮原生状态字段未提供；UID0 已观察到 GMS MCS TCP 建立'
             ;;
           connecting)
             observed=connecting; source=gms_socket
@@ -716,7 +720,7 @@ EOF_SOCKET
             fi
             previous_down_observed="$outage_hint_mono"
             [ "$previous_down_state" = connecting ] ||
-                record_event socket_connecting 'dumpsys 本次无状态字段；UID0 已观察到 GMS MCS TCP 正在连接'
+                record_event socket_connecting '本轮原生状态字段未提供；UID0 已观察到 GMS MCS TCP 正在连接'
             ;;
           absent)
             if [ "$outage_hint_mono" -le 0 ] || [ "$socket_now" -lt "$outage_hint_mono" ]; then
