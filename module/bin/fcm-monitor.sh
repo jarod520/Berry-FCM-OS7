@@ -957,7 +957,7 @@ confirm_recovery() {
     first_state="$state"; first_source="$source"; first_tcp_hint="$tcp_hint"; first_duration="$duration"
     [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 2
     if [ "$first_source" = gms ]; then observe force_native; else observe; fi
-    if [ "$native_reason" = gms_stopped ]; then
+    if [ "$native_reason" = gms_stopped ] && [ "$state" != connected ]; then
         decision=gms_stopped_unknown
         record_event reconnect_skipped 'GMS 套件处于 stopped 状态；不把预期无 Socket 当作断联，也不发送重连'
         return 0
@@ -1151,7 +1151,7 @@ case "${1:-status}" in
            { [ "$state" = unknown ] && socket_fallback_ready "$duration"; }; then
             confirm_recovery manual || exit $?
         else
-            if [ "$native_reason" = gms_stopped ]; then
+            if [ "$native_reason" = gms_stopped ] && [ "$state" != connected ]; then
                 decision=gms_stopped_unknown
                 record_event reconnect_skipped "GMS 套件处于 stopped 状态，未发送手动重连"
             else
