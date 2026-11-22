@@ -681,3 +681,9 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - 同轮复审发现 run_bounded() 的无 timeout fallback 也存在 TERM 后固定等待、随后无条件 KILL 的相同问题。现在进程组隔离路径在宽限期后再次调用 process_group_alive()；非隔离路径再次检查直接 PID 的 kill -0，目标已退出就不再发送 KILL。
 - KSU smoke 增加两条源码约束，防止进程组与直接 PID 两条 fallback 路径恢复为无条件 KILL。此前 maintenance_stop_child() 的 TERM/二次检查/KILL 顺序断言继续保留。
 - 本次只修正清理信号条件，不改变超时阈值、退出码或巡检调度；完整 smoke、全仓语法 gate 和 Android 实机仍待执行，未触发构建或 Actions。
+
+### 2026-11-22 采样心跳与 monitor 结果解耦
+- **复审发现**：patrol 仅在 `fcm-monitor.sh monitor` 返回 0 时更新 `patrol.sample.heartbeat`。monitor 因并发锁占用（例如返回 13）或其他可恢复错误而快速返回时，巡检循环仍在正常运行，但 service 会把采样心跳过期误判为 patrol 卡死，随后重启整个 patrol。
+- **修正**：采样心跳现在表示“有界 monitor 调用已返回”，不再表示“GMS 状态读取成功”。无论 monitor 返回码如何，只要 `run_bounded()` 返回，就更新该心跳；若 monitor 真正卡住，`run_bounded()` 尚未返回，心跳仍不会刷新，service watchdog 仍可检测到停滞。实际样本是否成功仍由 `fcm_check_end rc`、monitor 状态与 `fcm_sample_time` 表达。
+- **回归用例**：KSU smoke 的 monitor mock 新增可配置非零返回码；新增 rc=13 场景，要求仍写入巡检心跳、保留错误返回日志，且不得触发 `monitor_sample` watchdog 重启。
+- **验证边界**：完成源码与 smoke 夹具更新；待做局部 POSIX shell 语法检查和静态断言核对。完整 KSU/FCM smoke、全仓语法 gate、Android/KernelSU 实机尚未执行；不触发构建或 Actions。
