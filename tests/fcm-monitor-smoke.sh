@@ -152,6 +152,23 @@ settime 11600
 printf "%s\n" "No services match" > "$MCS_FIXTURE"
 export MCS_SS_MODE=unknown MCS_STOPPED=true
 run monitor; requests 3
+# A stopped GMS package is expected to have no MCS socket; absence must not
+# be promoted to a network outage or trigger an automatic reconnect.
+settime 11601
+export MCS_SS_MODE=absent
+run monitor; requests 3
+j="$(run snapshot)"
+assert_json "$j" fcm_state=unknown
+assert_json "$j" fcm_tcp_hint=absent
+assert_json "$j" fcm_native_reason=gms_stopped
+assert_json "$j" fcm_recovery_decision=gms_stopped_unknown
+# Manual recovery also rechecks the stopped condition after a deferred native poll.
+unset BERRY_FCM_TEST_MODE
+settime 11641
+run reconnect; requests 3
+j="$(run snapshot)"
+assert_json "$j" fcm_recovery_decision=gms_stopped_unknown
+export BERRY_FCM_TEST_MODE=1 MCS_SS_MODE=unknown
 unset MCS_STOPPED
 echo 0 > "$BERRY_FCM_DATA/enabled"; run monitor; requests 3
 echo 1 > "$BERRY_FCM_DATA/enabled"
@@ -159,7 +176,7 @@ export MCS_UID=2000
 if run reconnect; then echo "non-root request unexpectedly accepted" >&2; exit 1; fi
 unset MCS_UID
 requests 3
-settime 11601
+settime 11642
 printf "%s\n" "DeviceID: [fixture]" "Not connected" "disconnectTime=01:00/00:00" > "$MCS_FIXTURE"
 export MCS_AM_FAIL=1; run monitor; requests 4
 j="$(run snapshot)"; assert_json "$j" fcm_recovery_decision=request_failed
