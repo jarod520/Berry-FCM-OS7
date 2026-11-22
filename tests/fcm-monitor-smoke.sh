@@ -192,11 +192,11 @@ echo 1 > "$BERRY_FCM_DATA/enabled"
 : > "$MCS_DUMPSYS_LOG"
 unset BERRY_FCM_TEST_MODE
 settime 70000
-printf "%s\\n" "DeviceID: [fixture]" "connected=mtalk.google.com/142.250.157.188,port=5228" "connectTime=00:10/00:00" > "$MCS_FIXTURE"
+printf "%s\n" "DeviceID: [fixture]" "connected=mtalk.google.com/142.250.157.188,port=5228" "connectTime=00:10/00:00" > "$MCS_FIXTURE"
 run monitor
 [ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 1 ]
 settime 70020
-printf "%s\\n" "DeviceID: [fixture]" "Not connected" > "$MCS_FIXTURE"
+printf "%s\n" "DeviceID: [fixture]" "Not connected" > "$MCS_FIXTURE"
 run monitor
 assert_json "$(run snapshot)" fcm_state=connected
 [ "$(wc -l < "$MCS_DUMPSYS_LOG" | tr -d " ")" = 1 ]
@@ -211,7 +211,7 @@ echo 'PASS: native GMS dumps are rate-limited while socket samples remain contin
 export MCS_NEXT_FIXTURE="$TMP/next-state-dump" MCS_DUMPSYS_LOG="$TMP/dumpsys.log"
 : > "$MCS_DUMPSYS_LOG"
 printf '%s\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
-printf '%s\\n' 'SERVICE com.google.android.gms/.gcm.GcmService' 'Server: Connected' > "$MCS_NEXT_FIXTURE"
+printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService' 'Server: Connected' > "$MCS_NEXT_FIXTURE"
 j="$(run status)"
 assert_json "$j" fcm_state=connected
 grep -q 'sample_retry|first=no_current_state retry_rc=0 state=connected' "$BERRY_FCM_DATA/mcs-monitor-events.log"
