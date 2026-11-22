@@ -22,7 +22,7 @@ target_list() {
 installed() {
     cmd package path --user 0 "$1" 2>/dev/null | grep -q '^package:' && return 0
     pm path --user 0 "$1" 2>/dev/null | grep -q '^package:' && return 0
-    dumpsys -t 3 package "$1" 2>/dev/null | grep -q 'Package \['
+    return 1
 }
 # 1=stopped, 0=not stopped, -1=no reliable data
 stopped() {
@@ -64,13 +64,10 @@ refresh_guard() {
 # Extended checks inspired by fcmfix-coloros17. Pure Android public shell commands;
 # vendor-specific ColorOS hooks are NOT present or implied.
 gms_uid() {
-    # Android 17 varies the `list packages -U` output, so try package dump as fallback.
-    uid="$(cmd package list packages -U "$GMS" 2>/dev/null |         awk -v pkg="$GMS" '$1=="package:"pkg && $2~/^uid:[0-9]+/ {sub(/^uid:/,"",$2); split($2,ids,","); if (ids[1]~/^[0-9]+$/) {print ids[1]; exit}}')"
+    # Use cmd/pm package UID APIs only. A failed lookup remains unavailable.
+    uid="$(cmd package list packages -U "$GMS" 2>/dev/null | awk -v pkg="$GMS" '$1=="package:"pkg && $2~/^uid:[0-9]+/ {sub(/^uid:/,"",$2); split($2,ids,","); if (ids[1]~/^[0-9]+$/) {print ids[1]; exit}}')"
     if [ -z "$uid" ]; then
-        uid="$(pm list packages -U "$GMS" 2>/dev/null |             awk -v pkg="$GMS" '$1=="package:"pkg && $2~/^uid:[0-9]+/ {sub(/^uid:/,"",$2); split($2,ids,","); if (ids[1]~/^[0-9]+$/) {print ids[1]; exit}}')"
-    fi
-    if [ -z "$uid" ]; then
-        uid="$(dumpsys package "$GMS" 2>/dev/null | sed -n 's/^[[:space:]]*userId=\([0-9][0-9]*\).*/\1/p' | head -n 1)"
+        uid="$(pm list packages -U "$GMS" 2>/dev/null | awk -v pkg="$GMS" '$1=="package:"pkg && $2~/^uid:[0-9]+/ {sub(/^uid:/,"",$2); split($2,ids,","); if (ids[1]~/^[0-9]+$/) {print ids[1]; exit}}')"
     fi
     case "$uid" in ''|*[!0-9]*) return 1;; *) printf '%s\n' "$uid" ;; esac
 }
