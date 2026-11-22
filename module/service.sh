@@ -247,6 +247,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ]; do
         if [ "$patrol_stale" = 1 ]; then
             printf '[%s] patrol_watchdog_stale pid=%s heartbeat=%s started=%s uptime=%s\n' "$(date '+%F %T')" "$patrol_pid" "$hb" "$patrol_started" "$now_up" >> "$DATA/guard.log"
             stop_patrol || :
+            rm -f "$DATA/patrol.heartbeat"
             patrol_started="$now_up"
         fi
     fi
