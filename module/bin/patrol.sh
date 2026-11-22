@@ -294,6 +294,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
         sample="$(run_bounded 5 sh "$MODDIR/bin/fcm-monitor.sh" snapshot 2>/dev/null)"
 
         summary="$(printf '%s\n' "$sample" | sed -n 's/.*"fcm_state":"\([a-z_]*\)".*"fcm_sample_time":\([0-9]*\).*"fcm_recovery_decision":"\([a-z_]*\)".*/state=\1 sample_epoch=\2 recovery=\3/p')"
+        observed_sample_state="$(printf '%s\n' "$summary" | sed -n 's/.*state=\([a-z_]*\).*/\1/p')"
         observed_sample_epoch="$(printf '%s\n' "$summary" | sed -n 's/.*sample_epoch=\([0-9][0-9]*\).*/\1/p')"
         case "$observed_sample_epoch" in ""|*[!0-9]*) observed_sample_epoch=0;; esac
         # These codes fail before observe() can commit a sample. For all
@@ -303,6 +304,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
            [ "$monitor_rc" -ne 12 ] && [ "$monitor_rc" -ne 13 ] &&
            [ "$monitor_rc" -ne 14 ] && [ "$monitor_rc" -ne 124 ] &&
            [ "$check_started_epoch" -gt 0 ] &&
+           [ -n "$observed_sample_state" ] && [ "$observed_sample_state" != stale ] &&
            [ "$observed_sample_epoch" -gt "$previous_sample_epoch" ] &&
            [ "$observed_sample_epoch" -ge "$check_started_epoch" ]; then
             sample_now="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
