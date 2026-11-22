@@ -163,6 +163,35 @@ patrol_alive() {
     patrol_identity_alive || return 1
     tr "\000" " " 2>/dev/null < "/proc/$patrol_pid/cmdline" | grep -Fq "patrol.sh"
 }
+monitor_owner_alive() {
+    monitor_pid=; monitor_stamp=
+    IFS=' ' read -r monitor_pid monitor_stamp < "$DATA/mcs-monitor.lock.owner" 2>/dev/null || return 1
+    case "$monitor_pid:$monitor_stamp" in *[!0-9:]*|:*) return 1;; esac
+    [ "$monitor_pid" -gt 1 ] && kill -0 "$monitor_pid" 2>/dev/null || return 1
+    [ "$(proc_start_time "$monitor_pid")" = "$monitor_stamp" ] || return 1
+    tr "\000" " " 2>/dev/null < "/proc/$monitor_pid/cmdline" | grep -Fq "fcm-monitor.sh"
+}
+stop_monitor_owner() {
+    monitor_owner_alive || { rm -f "$DATA/mcs-monitor.lock.owner"; return 0; }
+    kill -TERM "$monitor_pid" 2>/dev/null || :
+    n=0
+    while monitor_owner_alive && [ "$(proc_state "$monitor_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 3 ]; do
+        sleep 1; n=$((n + 1))
+    done
+    if monitor_owner_alive && [ "$(proc_state "$monitor_pid" 2>/dev/null)" != Z ]; then
+        kill -KILL "$monitor_pid" 2>/dev/null || :
+        n=0
+        while monitor_owner_alive && [ "$(proc_state "$monitor_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 3 ]; do
+            sleep 1; n=$((n + 1))
+        done
+    fi
+    if monitor_owner_alive && [ "$(proc_state "$monitor_pid" 2>/dev/null)" != Z ]; then
+        printf '[%s] monitor_owner_stop_unconfirmed pid=%s start=%s\n' \
+            "$(date '+%F %T')" "$monitor_pid" "$monitor_stamp" >> "$DATA/guard.log"
+        return 1
+    fi
+    rm -f "$DATA/mcs-monitor.lock.owner"
+}
 start_patrol() {
     rm -f "$DATA/patrol.heartbeat" "$DATA/patrol.sample.heartbeat"
     sh "$MODDIR/bin/patrol.sh" </dev/null >> "$DATA/patrol.log" 2>&1 &
@@ -270,6 +299,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ]; do
             [ "$patrol_stale" = 1 ] && [ "$sample_stale" = 1 ] && watchdog_reason=patrol_and_monitor
             printf '[%s] patrol_watchdog_stale reason=%s pid=%s heartbeat=%s sample=%s started=%s uptime=%s\n' \
                 "$(date '+%F %T')" "$watchdog_reason" "$patrol_pid" "$hb" "$sample_hb" "$patrol_started" "$now_up" >> "$DATA/guard.log"
+            if [ "$sample_stale" = 1 ]; then stop_monitor_owner || :; fi
             stop_patrol || :
             rm -f "$DATA/patrol.heartbeat" "$DATA/patrol.sample.heartbeat"
             patrol_started="$now_up"
