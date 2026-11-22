@@ -676,3 +676,8 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **修正**：TERM 前先确认进程组仍有存活成员；等待 1 秒后再次检查，只有进程组仍存活才发送 KILL。保持现有 TERM→宽限→KILL 清理策略，不改维护超时和任务行为。
 - **回归约束**：KSU smoke 从 maintenance_stop_child() 函数体提取代码，检查 TERM、二次存活检查、KILL 的顺序，防止恢复成无条件 KILL。
 - **验证边界**：完成源码替换与测试断言静态检查；完整 ksu-wake-smoke.sh、fcm-monitor-smoke.sh、全仓 Shell syntax gate 和 Android/KernelSU 实机仍未执行。未触发 Actions、编译、打包、合并或 Release。
+
+### 2026-11-22 monitor watchdog 二次 KILL 存活检查
+- 同轮复审发现 run_bounded() 的无 timeout fallback 也存在 TERM 后固定等待、随后无条件 KILL 的相同问题。现在进程组隔离路径在宽限期后再次调用 process_group_alive()；非隔离路径再次检查直接 PID 的 kill -0，目标已退出就不再发送 KILL。
+- KSU smoke 增加两条源码约束，防止进程组与直接 PID 两条 fallback 路径恢复为无条件 KILL。此前 maintenance_stop_child() 的 TERM/二次检查/KILL 顺序断言继续保留。
+- 本次只修正清理信号条件，不改变超时阈值、退出码或巡检调度；完整 smoke、全仓语法 gate 和 Android 实机仍待执行，未触发构建或 Actions。
