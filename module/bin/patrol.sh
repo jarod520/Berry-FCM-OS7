@@ -83,11 +83,15 @@ maintenance_child_alive() {
 }
 run_bounded() {
     seconds="$1"; shift
-    if [ -x "$TOYBOX_BIN" ] && "$TOYBOX_BIN" --list 2>/dev/null | grep -qx timeout; then
+    if [ -x "$TOYBOX_BIN" ] &&
+       "$TOYBOX_BIN" --list 2>/dev/null | grep -qx timeout &&
+       "$TOYBOX_BIN" timeout -k 1 1 sh -c ':' >/dev/null 2>&1; then
+        # Verify -k support; an applet may exist in a reduced/older build.
         # Toybox timeout creates its own process group by default.
         BERRY_FCM_ISOLATED_GROUP=1 "$TOYBOX_BIN" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
     elif [ -x "$KSU_BUSYBOX" ] &&
-         "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx timeout; then
+         "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx timeout &&
+         "$KSU_BUSYBOX" timeout -k 1 1 sh -c ':' >/dev/null 2>&1; then
         # BusyBox timeout signals only its direct command and does not create
         # a process group. Isolate it first; never mark its inherited group safe.
         if [ -x "$TOYBOX_BIN" ] &&
@@ -99,7 +103,8 @@ run_bounded() {
         else
             BERRY_FCM_ISOLATED_GROUP=0 "$KSU_BUSYBOX" timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
         fi
-    elif command -v timeout >/dev/null 2>&1; then
+    elif command -v timeout >/dev/null 2>&1 &&
+         timeout -k 1 1 sh -c ':' >/dev/null 2>&1; then
         # PATH timeout may be Toybox, BusyBox or coreutils. Use setsid to
         # guarantee a private group independent of the implementation.
         if [ -x "$TOYBOX_BIN" ] &&
