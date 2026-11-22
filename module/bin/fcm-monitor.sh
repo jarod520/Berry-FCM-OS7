@@ -692,10 +692,9 @@ EOF_SOCKET
             fi
             ;;
         esac
-        # Preserve a recent native down state between native polls when
-        # Socket ownership is absent or unreadable. A later fresh native sample
-        # remains authoritative; the 30-second socket fallback may still promote
-        # a continuous absence to its own explicit evidence source.
+        # Preserve the last valid state between native polls when Socket
+        # ownership is absent or unreadable. A fresh native sample remains
+        # authoritative; continuous absence may still promote a known down state.
         if [ "$native_poll_due" = 0 ] &&
            { [ "$previous_down_state" = connected ] || [ "$previous_down_state" = connecting ] || [ "$previous_down_state" = disconnected ]; } &&
            { [ "$tcp_hint" = absent ] || [ "$tcp_hint" = unknown ]; }; then
