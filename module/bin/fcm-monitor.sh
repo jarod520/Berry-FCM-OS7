@@ -388,6 +388,7 @@ request_reconnect() {
 
 observe() {
     load_state
+    decision=not_evaluated
     nowm="$(num "$(monotime)")"; nowe="$(num "$(now_epoch)")"
     [ "$nowm" -gt 0 ] && [ "$nowe" -gt 0 ] || return 12
     sample_gap_age=-1
@@ -413,7 +414,9 @@ $socket
 EOF_SOCKET
     observed=unknown; source=unavailable; new_transport=; new_remote=
     duration=-1; close_code=; native_reason=not_used; parse_detail="$socket_reason"
-    tcp_hint="$socket_state"; socket_now="$nowm"
+    tcp_hint="$socket_state"
+    [ "$tcp_hint" = connected ] && tcp_hint=established
+    socket_now="$nowm"
     case "$socket_state" in
       connected)
         observed=connected; source=gms_socket
@@ -575,8 +578,11 @@ status_json() {
     [ "$age" -ge 0 ] && [ "$age" -le 90 ] || state=stale
     # Never present stale duration as live and never extrapolate past the sample.
     connected=0; missing=0
-    [ "$state" = connected ] && [ "$duration" -ge 0 ] && connected="$duration"
-    { [ "$state" = connecting ] || [ "$state" = disconnected ]; } && [ "$duration" -ge 0 ] && missing="$duration"
+    [ "$state" = connected ] && [ "$conn_since_mono" -gt 0 ] && [ "$nowm" -ge "$conn_since_mono" ] && connected=$((nowm-conn_since_mono-age))
+    [ "$connected" -ge 0 ] 2>/dev/null || connected=0
+    [ "$connected" -gt 0 ] && conn_since=$((nowe-connected))
+    { [ "$state" = connecting ] || [ "$state" = disconnected ]; } && [ "$down_observed" -gt 0 ] && [ "$nowm" -ge "$down_observed" ] && missing=$((nowm-down_observed-age))
+    [ "$missing" -ge 0 ] 2>/dev/null || missing=0
     closes=0; successes=0
     if [ -f "$NATIVE_EVENTS" ]; then
         closes="$(awk -F'|' '$2=="gms_close"{n++} END{print n+0}' "$NATIVE_EVENTS")"
@@ -632,12 +638,7 @@ case "${1:-status}" in
             if [ "$decision" != "$prior_decision" ]; then
                 record_event recovery_decision "decision=$decision state=$state source=$source tcp=$tcp_hint evidence=${parse_detail:-none} retry_streak=$retry_streak"
             fi;;
-          connected)
-            case "$decision" in timer_stalled_*)
-                if [ "$decision" != "$prior_decision" ]; then
-                    record_event recovery_decision "decision=$decision state=$state source=$source tcp=$tcp_hint evidence=${parse_detail:-none} retry_streak=$retry_streak"
-                fi;;
-            esac;;
+          connected) :;;
         esac
         ;;
     reconnect)
@@ -654,7 +655,7 @@ case "${1:-status}" in
           requested) echo "已请求 GMS 恢复，等待下一次连接采样确认";;
           request_failed) echo "Root 重连广播未确认，请查看恢复事件";;
           cooldown) echo "仍在重连冷却期";;
-
+          confirmation_recovered) echo "二次内核采样已观察到 MCS TCP，取消本轮恢复";;
           *) echo "GMS 已连接或状态不可确认，未发送重连";;
         esac
         ;;
