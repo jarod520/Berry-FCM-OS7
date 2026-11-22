@@ -27,7 +27,7 @@ jobs:
         run: |
           for script in module/*.sh module/bin/*.sh; do sh -n "$script"; done
           sh tests/fcm-monitor-smoke.sh
-          sh tests/ksu-wake-smoke.sh
+          sh -x tests/ksu-wake-smoke.sh
       - name: Validate embedded WebUI JavaScript
         run: |
           python3 - <<'PY'
