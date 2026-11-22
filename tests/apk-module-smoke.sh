@@ -669,3 +669,9 @@ assert body[0].attrib[a+"src"] == "@drawable/ic_bf_heartbeat"
 assert body[1].attrib[a+"id"] == "@+id/berry_status_text"
 print("PASS: outlined vector assets, minute-only notification and preserved app icon with inline heartbeat")
 PY_VISUAL
+
+# Guard command generation is pure Java; execute its batching and dump-isolation contract.
+guard_classes="$(mktemp -d)"
+javac -d "$guard_classes" "$src/GuardOps.java" "$root/tests/GuardOpsSmoke.java"
+java -cp "$guard_classes" top.zesun.berryfcm.GuardOpsSmoke
+rm -rf "$guard_classes"
