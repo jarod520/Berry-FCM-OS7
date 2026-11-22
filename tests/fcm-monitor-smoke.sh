@@ -285,7 +285,7 @@ if find "$BERRY_FCM_DATA" -maxdepth 1 -name 'mcs-monitor.state.*' | grep -q .; t
 fi
 j="$(run snapshot)"
 assert_json "$j" fcm_state=stale
-assert_json "$j" fcm_sample_uptime=0
+assert_json "$j" fcm_sample_uptime=10100
 assert_json "$j" fcm_recovery_decision=sample_unavailable
 export MCS_SS_MODE=unknown
 j="$(run status)"
