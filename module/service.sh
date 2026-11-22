@@ -399,7 +399,7 @@ stop_monitor_owner() {
                         return 1
                     }
                 if [ "$(proc_state "$monitor_pid" 2>/dev/null)" != Z ] &&
-                   ! tr -d '\\000' < "/proc/$monitor_pid/cmdline" 2>/dev/null | grep -Fq 'fcm-monitor.sh'; then
+                   ! tr -d '\000' < "/proc/$monitor_pid/cmdline" 2>/dev/null | grep -Fq 'fcm-monitor.sh'; then
                     printf '[%s] monitor_owner_cmdline_mismatch pid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
                     return 1
                 fi
