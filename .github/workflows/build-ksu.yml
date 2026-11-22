@@ -26,7 +26,7 @@ jobs:
       - name: Validate shell scripts and FCM lifecycle monitor
         run: |
           for script in module/*.sh module/bin/*.sh; do sh -n "$script"; done
-          sh tests/fcm-monitor-smoke.sh
+          sh -x tests/fcm-monitor-smoke.sh
           sh tests/ksu-wake-smoke.sh
       - name: Validate embedded WebUI JavaScript
         run: |
