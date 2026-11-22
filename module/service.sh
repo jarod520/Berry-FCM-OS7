@@ -16,6 +16,17 @@ proc_group_id() {
     [ -r "/proc/$1/stat" ] || return 1
     tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $3}'
 }
+process_group_alive() {
+    awk -v pgid="$1" '
+        {
+            stat=$0
+            sub(/^.*\\) /, "", stat)
+            split(stat, fields, " ")
+            if (fields[1] != "Z" && fields[3] == pgid) found=1
+        }
+        END { exit !found }
+    ' /proc/[0-9]*/stat 2>/dev/null
+}
 proc_state() {
     [ -r "/proc/$1/stat" ] || return 1
     tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $1}'
@@ -92,7 +103,7 @@ maintenance_child_identity() {
 }
 maintenance_child_group_alive() {
     [ -n "$maintenance_child_tool" ] && [ -n "$maintenance_child_pgid" ] &&
-        "$maintenance_child_tool" kill -0 "-$maintenance_child_pgid" 2>/dev/null
+        process_group_alive "$maintenance_child_pgid"
 }
 stop_maintenance_child() {
     [ -s "$MAINTENANCE_LOCK/child" ] || return 0
