@@ -542,8 +542,28 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                         exit 125
                     fi
                     maintenance_child_pid=$!
+                    # The background child is a copy of this shell until the applet has run
+                    # setsid(); wait briefly for PID == PGID instead of sampling the race.
+                    maintenance_wait=0
+                    while [ "$maintenance_wait" -lt 30 ]; do
+                        [ "$(proc_group_id "$maintenance_child_pid")" = "$maintenance_child_pid" ] && break
+                        kill -0 "$maintenance_child_pid" 2>/dev/null || break
+                        sleep 0.1 2>/dev/null || sleep 1
+                        maintenance_wait=$((maintenance_wait+1))
+                    done
                     maintenance_child_stamp="$(proc_start_time "$maintenance_child_pid")"
                     maintenance_child_pgid="$(proc_group_id "$maintenance_child_pid")"
+                    if [ -z "$maintenance_child_stamp" ] && ! kill -0 "$maintenance_child_pid" 2>/dev/null &&
+                       ! process_group_alive "$maintenance_child_pid"; then
+                        # The maintenance child already finished (and left no group members)
+                        # before identity sampling; nothing remains to track or signal.
+                        wait "$maintenance_child_pid" 2>/dev/null
+                        fix_rc=$?
+                        printf '[%s] maintenance_end pid=%s operation=guard_fix rc=%s elapsed_s=0\n' \
+                            "$(date '+%F %T')" "$service_pid" "$fix_rc" >> "$DATA/guard.log"
+                        maintenance_child_pid=; maintenance_child_stamp=; maintenance_child_pgid=
+                        exit "$fix_rc"
+                    fi
                     if [ -z "$maintenance_child_stamp" ] ||
                        [ "$maintenance_child_pgid" != "$maintenance_child_pid" ]; then
                         kill -TERM "$maintenance_child_pid" 2>/dev/null || :

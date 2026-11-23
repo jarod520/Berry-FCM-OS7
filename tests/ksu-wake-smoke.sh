@@ -200,6 +200,15 @@ grep -Fq 'mv -f "$DATA/service.lock/patrol.tmp.$patrol_self_pid" "$DATA/service.
 hot_enabled_line="$(grep -n 'berry_fcm_ksu/enabled' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 hot_stop_line="$(grep -n '^if is_guardian' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 [ "$hot_stop_line" -lt "$hot_enabled_line" ]
+wait_group_leader() {
+    # A backgrounded setsid applet is a copy of the shell until it has called setsid().
+    wgl_n=0
+    while [ "$wgl_n" -lt 50 ]; do
+        [ "$(tr -d '\n' < "/proc/$1/stat" 2>/dev/null | sed 's/^.*) //' | awk '{print $3}')" = "$1" ] && return 0
+        /bin/sleep 0.1; wgl_n=$((wgl_n + 1))
+    done
+    return 0
+}
 TMP="$(mktemp -d)"
 trap 'rc=$?; if [ "$rc" -ne 0 ]; then
     echo "KSU wake smoke failed; guard.log follows:" >&2
@@ -225,6 +234,9 @@ MOCK
 cat > "$TMP/bin/sleep" <<'MOCK'
 #!/bin/sh
 echo "$1" >> "$TEST_DIR/sleeps"
+# The 45 s maintenance watchdog must stay real unless a test blocks the fix on purpose;
+# otherwise it fires after 0.15 s and kills a healthy maintenance child.
+if [ "$1" = 45 ] && [ "${TEST_BLOCK_FIX:-0}" != 1 ]; then exec /bin/sleep 45; fi
 if [ "${TEST_NO_TIMEOUT:-0}" = 1 ]; then
     case "$1" in 1|2|3) /bin/sleep "$1";; *) /bin/sleep 0.15;; esac
 else
@@ -262,8 +274,9 @@ exit 1
 MOCK
 cat > "$TMP/module/bin/fcm-monitor.sh" <<'MOCK'
 if [ "$1" = snapshot ]; then
-    if [ "${TEST_SNAPSHOT_FAIL_FIRST:-0}" = 1 ] && [ ! -e "$TEST_DIR/snapshot-failed" ]; then
-        touch "$TEST_DIR/snapshot-failed"
+    # Fail every snapshot taken before the first monitor run, so a concurrent
+    # maintenance snapshot cannot consume the injected pre-check failure.
+    if [ "${TEST_SNAPSHOT_FAIL_FIRST:-0}" = 1 ] && [ "$(wc -l < "$TEST_DIR/samples")" -eq 0 ]; then
         exit 1
     fi
     sample_epoch="$(cat "$TEST_DIR/sample-epoch" 2>/dev/null || echo 0)"
@@ -336,7 +349,10 @@ except OSError:
  os.setsid()
 os.execvp(sys.argv[1], sys.argv[1:])' "$@"
         ;;
-    kill) shift; exec /bin/kill "$@";;
+    # procps kill needs "--" before a negative PGID; toybox/busybox accept "-SIG -PGID".
+    kill) shift
+        case "$1" in -*) kill_signal="$1"; shift; exec /bin/kill "$kill_signal" -- "$@";; esac
+        exec /bin/kill "$@";;
     timeout) shift;;
     *) exit 2;;
 esac
@@ -501,7 +517,7 @@ export TEST_MONITOR_NO_SAMPLE_RC=42
 timeout 8 sh "$TMP/module/service.sh"
 unset TEST_MONITOR_NO_SAMPLE_RC
 test ! -s "$TMP/data/patrol.sample.heartbeat"
-grep -q "sample_heartbeat_not_refreshed rc=42 .*sample_uptime=$old_sample_uptime previous_sample_uptime=$old_sample_uptime check_started_uptime=" "$TMP/data/guard.log"
+grep -q "sample_heartbeat_not_refreshed rc=42 .*sample_uptime=$old_sample_uptime previous_sample_uptime=$old_sample_uptime previous_snapshot_valid=[01] check_started_uptime=" "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: unchanged sample uptime cannot refresh patrol heartbeat'
 
@@ -520,7 +536,7 @@ export TEST_SNAPSHOT_FAIL_FIRST=1 TEST_MONITOR_NO_SAMPLE_RC=42
 timeout 8 sh "$TMP/module/service.sh"
 unset TEST_SNAPSHOT_FAIL_FIRST TEST_MONITOR_NO_SAMPLE_RC
 test ! -s "$TMP/data/patrol.sample.heartbeat"
-grep -q "sample_heartbeat_not_refreshed rc=42 .*sample_uptime=$old_sample_uptime previous_sample_uptime=$old_sample_uptime previous_snapshot_valid=0" "$TMP/data/guard.log"
+grep -q "sample_heartbeat_not_refreshed rc=42 .*sample_uptime=$old_sample_uptime previous_sample_uptime=0 previous_snapshot_valid=0" "$TMP/data/guard.log"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: unreadable pre-check snapshot cannot refresh heartbeat from old sample'
 
@@ -605,6 +621,7 @@ MOCK
 chmod +x "$TMP/orphan-patrol.sh"
 "$TMP/orphan-patrol.sh" &
 orphan_pid=$!
+wait_group_leader "$orphan_pid"
 orphan_stamp="$(tr -d '\n' < "/proc/$orphan_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
 mkdir -p "$TMP/data/service.lock"
 echo 999999 > "$TMP/data/service.lock/pid"
@@ -622,13 +639,15 @@ test ! -d "$TMP/data/service.lock"
 echo 'PASS: stale service lock cannot spawn a duplicate patrol'
 
 # A stale maintenance owner must not hide a still-running tracked child.
-cat > "$TMP/orphan-maintenance-child.sh" <<'MOCK'
-#!/bin/sh
-exec /bin/sleep 30
+# The identity guard requires the tracked leader's cmdline to be the module's ctl.sh.
+mkdir -p "$TMP/orphan/bin"
+cat > "$TMP/orphan/bin/ctl.sh" <<'MOCK'
+/bin/sleep 30 &
+wait
 MOCK
-chmod +x "$TMP/orphan-maintenance-child.sh"
-"$TMP/bin/toybox" setsid "$TMP/orphan-maintenance-child.sh" &
+"$TMP/bin/toybox" setsid sh "$TMP/orphan/bin/ctl.sh" &
 orphan_child_pid=$!
+wait_group_leader "$orphan_child_pid"
 orphan_child_stamp="$(tr -d '\n' < "/proc/$orphan_child_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
 mkdir -p "$TMP/data/service.lock" "$TMP/data/maintenance.lock"
 echo 999999 > "$TMP/data/service.lock/pid"
@@ -642,7 +661,8 @@ touch "$TMP/module/module.prop"
 timeout 8 sh "$TMP/module/service.sh"
 wait "$orphan_child_pid" 2>/dev/null || :
 ! kill -0 "$orphan_child_pid" 2>/dev/null
-grep -q 'service_started pid=' "$TMP/data/guard.log"
+grep -q 'patrol_started pid=' "$TMP/data/guard.log"
+/bin/sleep 0.5 # let service.sh install its signal traps after starting patrol
 test ! -d "$TMP/data/maintenance.lock"
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: stale maintenance owner cleanup also terminates its tracked child'
@@ -652,14 +672,16 @@ echo passive > "$TMP/data/wake-mode"
 echo 0 > "$TMP/data/enabled"
 touch "$TMP/module/module.prop"
 : > "$TMP/data/guard.log"
+: > "$TMP/samples" # the sleep mock stops the service once enough samples exist
 sh "$TMP/module/service.sh" &
 service_pid=$!
 n=0
-while ! grep -q 'service_started pid=' "$TMP/data/guard.log" 2>/dev/null && [ "$n" -lt 60 ]; do
+while ! grep -q 'patrol_started pid=' "$TMP/data/guard.log" 2>/dev/null && [ "$n" -lt 60 ]; do
     /bin/sleep 0.1
     n=$((n + 1))
 done
-grep -q 'service_started pid=' "$TMP/data/guard.log"
+grep -q 'patrol_started pid=' "$TMP/data/guard.log"
+/bin/sleep 0.5 # let service.sh install its signal traps after starting patrol
 cat > "$TMP/fcm-monitor.sh" <<'MOCK'
 #!/bin/sh
 /bin/sleep 30 &
@@ -669,6 +691,7 @@ MOCK
 chmod +x "$TMP/fcm-monitor.sh"
 "$TMP/bin/toybox" setsid sh "$TMP/fcm-monitor.sh" &
 monitor_pid=$!
+wait_group_leader "$monitor_pid"
 monitor_stamp="$(tr -d '\n' < "/proc/$monitor_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
 monitor_pgid="$(tr -d '\n' < "/proc/$monitor_pid/stat" | sed 's/^.*) //' | awk '{print $3}')"
 [ "$monitor_pid" = "$monitor_pgid" ]
@@ -695,14 +718,16 @@ echo passive > "$TMP/data/wake-mode"
 echo 0 > "$TMP/data/enabled"
 touch "$TMP/module/module.prop"
 : > "$TMP/data/guard.log"
+: > "$TMP/samples" # the sleep mock stops the service once enough samples exist
 sh "$TMP/module/service.sh" &
 service_pid=$!
 n=0
-while ! grep -q 'service_started pid=' "$TMP/data/guard.log" 2>/dev/null && [ "$n" -lt 60 ]; do
+while ! grep -q 'patrol_started pid=' "$TMP/data/guard.log" 2>/dev/null && [ "$n" -lt 60 ]; do
     /bin/sleep 0.1
     n=$((n + 1))
 done
-grep -q 'service_started pid=' "$TMP/data/guard.log"
+grep -q 'patrol_started pid=' "$TMP/data/guard.log"
+/bin/sleep 0.5 # let service.sh install its signal traps after starting patrol
 cat > "$TMP/test-fcm-monitor.sh" <<'MOCK'
 #!/bin/sh
 IFS=' ' read -r monitor_pid _ < /proc/self/stat
@@ -776,6 +801,7 @@ echo "$!" > "$TEST_DIR/busybox-monitor-child-pid"
 wait
 MOCK
 chmod +x "$TMP/module/bin/fcm-monitor.sh"
+: > "$TMP/samples" # the sleep mock stops the service once enough samples exist
 TEST_NO_TIMEOUT=1 BERRY_KSU_BUSYBOX="$TMP/bin/busybox" sh "$TMP/module/service.sh" &
 service_pid=$!
 n=0
@@ -810,6 +836,7 @@ MOCK
 chmod +x "$TMP/fcm-monitor.sh"
 "$TMP/bin/toybox" setsid sh "$TMP/fcm-monitor.sh" &
 startup_monitor_pid=$!
+wait_group_leader "$startup_monitor_pid"
 startup_monitor_stamp="$(tr -d '\n' < "/proc/$startup_monitor_pid/stat" | sed 's/^.*) //' | awk '{print $20}')"
 startup_monitor_pgid="$(tr -d '\n' < "/proc/$startup_monitor_pid/stat" | sed 's/^.*) //' | awk '{print $3}')"
 [ "$startup_monitor_pid" = "$startup_monitor_pgid" ]
@@ -821,14 +848,16 @@ done
 test -s "$TMP/startup-monitor-child-pid"
 startup_monitor_child="$(cat "$TMP/startup-monitor-child-pid")"
 printf '%s %s\n' "$startup_monitor_pid" "$startup_monitor_stamp" > "$TMP/data/mcs-monitor.lock.owner"
+: > "$TMP/samples" # the sleep mock stops the service once enough samples exist
 sh "$TMP/module/service.sh" &
 service_pid=$!
 n=0
-while ! grep -q 'service_started pid=' "$TMP/data/guard.log" 2>/dev/null && [ "$n" -lt 60 ]; do
+while ! grep -q 'patrol_started pid=' "$TMP/data/guard.log" 2>/dev/null && [ "$n" -lt 60 ]; do
     /bin/sleep 0.1
     n=$((n + 1))
 done
-grep -q 'service_started pid=' "$TMP/data/guard.log"
+grep -q 'patrol_started pid=' "$TMP/data/guard.log"
+/bin/sleep 0.5 # let service.sh install its signal traps after starting patrol
 locked_service_pid="$(cat "$TMP/data/service.lock/pid")"
 [ "$locked_service_pid" = "$service_pid" ]
 locked_service_stamp="$(cat "$TMP/data/service.lock/starttime")"
@@ -846,10 +875,11 @@ echo 'PASS: startup cleans legacy monitor group before patrol start'
 # If timeout is missing from Toybox, KernelSU BusyBox and PATH, the watchdog
 # fallback must still execute and bound the monitor rather than skip sampling.
 mkdir -p "$TMP/no-timeout-bin"
-for bin in awk cat date grep head id mkdir mv rm rmdir sed sh sleep tail touch tr wc; do
+for bin in awk cat date grep head id kill mkdir mv python3 rm rmdir sed sh sleep tail touch tr wc; do
     ln -sf "$(command -v "$bin")" "$TMP/no-timeout-bin/$bin"
 done
 ln -sf "$TMP/bin/id" "$TMP/no-timeout-bin/id"
+[ ! -x /bin/rm ] || ln -sf /bin/rm "$TMP/no-timeout-bin/rm"
 ln -sf "$TMP/bin/getprop" "$TMP/no-timeout-bin/getprop"
 ln -sf "$TMP/bin/sleep" "$TMP/no-timeout-bin/sleep"
 touch "$TMP/module/module.prop"
@@ -962,6 +992,7 @@ echo passive > "$TMP/data/wake-mode"
 : > "$TMP/samples"
 : > "$TMP/data/guard.log"
 export TEST_BLOCK_FIX=1
+: > "$TMP/samples" # the sleep mock stops the service once enough samples exist
 sh "$TMP/module/service.sh" &
 service_pid=$!
 n=0
@@ -996,6 +1027,7 @@ echo passive > "$TMP/data/wake-mode"
 : > "$TMP/samples"
 : > "$TMP/data/guard.log"
 rm -f "$TMP/data/mcs-monitor.lock.owner"
+: > "$TMP/samples" # the sleep mock stops the service once enough samples exist
 sh "$TMP/module/service.sh" &
 service_pid=$!
 n=0
