@@ -19,8 +19,8 @@ final class RootShell implements PrivilegeShell {
             process = new ProcessBuilder("su", "-c",
                     "if [ \"$(id -u)\" != 0 ]; then echo 'Root UID verification failed'; exit 13; fi; (" + command + ")")
                     .redirectErrorStream(true).redirectOutput(output).start();
-            if (!process.waitFor(45, TimeUnit.SECONDS))
-                throw new IOException("Root Shell 命令 45 秒超时");
+            if (!process.waitFor(75, TimeUnit.SECONDS))
+                throw new IOException("Root Shell 命令 75 秒超时");
             if (output.length() > 200000) throw new IOException("Root Shell 输出超限");
             String text = new String(Files.readAllBytes(output.toPath()), StandardCharsets.UTF_8);
             if (process.exitValue() != 0)

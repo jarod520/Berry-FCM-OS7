@@ -862,7 +862,8 @@ public final class FcmMonitorService extends Service {
             String decision = outcome.optString("fcm_recovery_decision");
             logRuntime(this, "rescue_finished", "decision=" + decision
                     + "; connected_observed=" + connectionObserved(outcome));
-            if ("requested".equals(decision) || "request_failed".equals(decision)) {
+            if ("requested".equals(decision) || "request_failed".equals(decision)
+                    || "recovery_exhausted".equals(decision)) {
                 stored.edit().putLong("rescue_started_elapsed", now).apply();
                 monitorWorker.schedule(() -> {
                     if (rescueAllowed(prefs, key)) queueCheck(false, "rescue_followup");

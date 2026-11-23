@@ -184,6 +184,8 @@ normalize_ip() {
 gms_uid() {
     uid="$("$CMD_BIN" package list packages -U "$GMS" 2>/dev/null | awk -v p="$GMS" '$1=="package:"p && $2~/^uid:[0-9]+/ {sub(/^uid:/,"",$2); split($2,a,","); if(a[1]~/^[0-9]+$/){print a[1];exit}}')"
     [ -n "$uid" ] || uid="$("$PM_BIN" list packages -U "$GMS" 2>/dev/null | awk -v p="$GMS" '$1=="package:"p && $2~/^uid:[0-9]+/ {sub(/^uid:/,"",$2); split($2,a,","); if(a[1]~/^[0-9]+$/){print a[1];exit}}')"
+    # Root can read the app data owner directly when package manager lookups fail.
+    [ -n "$uid" ] || uid="$(stat -c %u "/data/data/$GMS" 2>/dev/null)"
     is_uint "$uid" || return 1
     printf '%s\n' "$uid"
 }

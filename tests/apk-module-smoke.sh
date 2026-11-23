@@ -177,8 +177,8 @@ need 'persistentWakeLock.release()' "$src/FcmMonitorService.java"
 need 'resumeIfNeeded' "$src/MainActivity.java"
 need 'sampleAgeSeconds' "$src/MonitorActivity.java"
 need 'android.permission.WAKE_LOCK' "$manifest"
-need 'job.get(45, TimeUnit.SECONDS)' "$src/AdbConnectionManager.java"
-need 'process.waitFor(45, TimeUnit.SECONDS)' "$src/RootShell.java"
+need 'job.get(75, TimeUnit.SECONDS)' "$src/AdbConnectionManager.java"
+need 'process.waitFor(75, TimeUnit.SECONDS)' "$src/RootShell.java"
 need 'PrivilegeAccess.probe' "$src/AuthActivity.java"
 need 'prefs.activateMode' "$src/AuthActivity.java"
 need 'connectionKey' "$src/AppPrefs.java"
@@ -359,7 +359,7 @@ assert "synchronized String executeOnce" in static_adb
 assert "@Override public String execute(String command)" in shizuku
 assert "@Override public synchronized String execute" not in shizuku
 assert "Binder.getCallingUid() != ownerUid" in shizuku
-assert "process.waitFor(45, TimeUnit.SECONDS)" in shizuku
+assert "process.waitFor(75, TimeUnit.SECONDS)" in shizuku
 assert "requestHeartbeat()" in guard and "shell.execute(GuardOps.heartbeatCommand())" in guard
 assert 'if (result.contains("|restored"))' not in guard
 print("PASS: parallel privileged commands with serialized lifecycle, static ADB, UID checks and bounded shell execution")
