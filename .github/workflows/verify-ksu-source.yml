@@ -30,6 +30,6 @@ jobs:
       - name: KSU monitor recovery smoke
         run: sh tests/fcm-monitor-smoke.sh
       - name: KSU patrol and supervisor lifecycle smoke
-        run: sh tests/ksu-wake-smoke.sh
+        run: sh -x tests/ksu-wake-smoke.sh
       - name: Whitespace and patch integrity
         run: git diff --check HEAD^ HEAD
