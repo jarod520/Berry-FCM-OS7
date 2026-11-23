@@ -81,58 +81,6 @@ maintenance_child_alive() {
     fi
     process_group_alive "$maintenance_child_pgid"
 }
-bounded_process_identity_alive() {
-    [ -n "$bounded_pid" ] && [ -n "$bounded_stamp" ] &&
-        kill -0 "$bounded_pid" 2>/dev/null &&
-        [ "$(proc_start_time "$bounded_pid")" = "$bounded_stamp" ] &&
-        [ "$(proc_state "$bounded_pid" 2>/dev/null)" != Z ]
-}
-bounded_group_identity_alive() {
-    bounded_process_identity_alive &&
-        [ "$bounded_pgid" = "$bounded_pid" ] &&
-        [ "$(proc_group_id "$bounded_pid")" = "$bounded_pgid" ]
-}
-# When neither timeout nor setsid exists, snapshot only the monitor's own
-# descendants by PID/starttime. Revalidate each PID before signaling to avoid
-# killing a reused PID or an unrelated process.
-bounded_descendants_snapshot() {
-    root="$1"; output="$2"
-    awk -v root="$root" '
-      FNR==1 {
-        # /proc/PID/stat: take the parent directory name without fragile
-        # slash-escaped awk regexes (some Android awk builds reject them).
-        path_count=split(FILENAME,path_parts,"/")
-        pid=path_parts[path_count-1]
-        stat=$0; sub(/^.*[)] /,"",stat); split(stat,f," ")
-        state[pid]=f[1]; parent[pid]=f[2]; stamp[pid]=f[20]
-      }
-      END {
-        queue[1]=root; seen[root]=1; count=1
-        for (i=1;i<=count;i++) {
-          p=queue[i]
-          for (child in parent) {
-            if (parent[child]==p && !seen[child] && state[child]!="Z") {
-              seen[child]=1; queue[++count]=child
-            }
-          }
-        }
-        for (i=count;i>=2;i--) {
-          child=queue[i]
-          if (child~/^[0-9]+$/ && stamp[child]~/^[0-9]+$/) print child,stamp[child]
-        }
-      }
-    ' /proc/[0-9]*/stat > "$output"
-}
-signal_bounded_descendants() {
-    signal="$1"; list="$2"
-    [ -r "$list" ] || return 0
-    while IFS=' ' read -r child_pid child_stamp; do
-        case "$child_pid:$child_stamp" in *[!0-9:]*|:*|*:) continue;; esac
-        [ "$child_pid" -gt 1 ] || continue
-        [ "$(proc_start_time "$child_pid" 2>/dev/null)" = "$child_stamp" ] || continue
-        kill "-$signal" "$child_pid" 2>/dev/null || :
-    done < "$list"
-}
 has_setsid() {
     # A private session is useful only when service.sh can later signal its group.
     if [ -x "$TOYBOX_BIN" ] &&
@@ -179,94 +127,17 @@ run_bounded() {
             BERRY_FCM_ISOLATED_GROUP=1 "$KSU_BUSYBOX" setsid timeout -k "$MONITOR_KILL_GRACE" "$seconds" "$@"
         fi
     else
-        # Last-resort watchdog when no safe timeout+setsid pair exists. Use a private
-        # session when the available applet supports it, so timeout cleanup
-        # also reaches child probes instead of leaving orphan processes.
-        marker="$DATA/monitor-timeout.$SERVICE_PID"
-        rm -f "$marker"
-        group_tool=
-        if [ -x "$TOYBOX_BIN" ] &&
-           "$TOYBOX_BIN" --list 2>/dev/null | grep -qx setsid &&
-           "$TOYBOX_BIN" --list 2>/dev/null | grep -qx kill; then
-            group_tool="$TOYBOX_BIN"
-            BERRY_FCM_ISOLATED_GROUP=1 "$TOYBOX_BIN" setsid "$@" &
-        elif [ -x "$KSU_BUSYBOX" ] &&
-             "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx setsid &&
-             "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx kill; then
-            group_tool="$KSU_BUSYBOX"
-            BERRY_FCM_ISOLATED_GROUP=1 "$KSU_BUSYBOX" setsid "$@" &
-        else
-            BERRY_FCM_ISOLATED_GROUP=0 "$@" &
-        fi
+        # No usable timeout applet: bound the direct child with a plain watchdog.
+        BERRY_FCM_ISOLATED_GROUP=0 "$@" &
         bounded_pid=$!
-        bounded_stamp="$(proc_start_time "$bounded_pid")"
-        bounded_pgid="$(proc_group_id "$bounded_pid")"
-        if [ -n "$group_tool" ] && [ "$bounded_pgid" != "$bounded_pid" ]; then
-            # setsid did not establish the expected private group; signal only
-            # the verified direct child, never its inherited process group.
-            group_tool=
-        fi
-        (
-            sleep "$seconds" &
-            watchdog_sleep_pid=$!
-            trap 'kill "$watchdog_sleep_pid" 2>/dev/null || :' EXIT HUP INT TERM
-            wait "$watchdog_sleep_pid" || exit 0
-            if bounded_process_identity_alive; then
-                : > "$marker"
-                descendants_file="$DATA/monitor-descendants.$bounded_pid"
-                if [ -n "$group_tool" ]; then
-                    if bounded_group_identity_alive; then
-                        "$group_tool" kill -TERM "-$bounded_pid" 2>/dev/null || :
-                    else
-                        if bounded_process_identity_alive; then
-                            echo 'bounded_watchdog_group_identity_unverified_before_term; falling back to direct child signal' >> "$DATA/guard.log"
-                            kill -TERM "$bounded_pid" 2>/dev/null || :
-                        else
-                            echo 'bounded_watchdog_group_identity_unverified_before_term; refusing signal' >> "$DATA/guard.log"
-                            exit 0
-                        fi
-                    fi
-                else
-                    bounded_descendants_snapshot "$bounded_pid" "$descendants_file"
-                    signal_bounded_descendants TERM "$descendants_file"
-                    kill -TERM "$bounded_pid" 2>/dev/null || :
-                fi
-                sleep "$MONITOR_KILL_GRACE"
-                if [ -n "$group_tool" ]; then
-                    if process_group_alive "$bounded_pgid"; then
-                        if bounded_group_identity_alive; then
-                            "$group_tool" kill -KILL "-$bounded_pgid" 2>/dev/null || :
-                        elif bounded_process_identity_alive; then
-                            echo 'bounded_watchdog_group_identity_unverified_before_kill; falling back to direct child signal' >> "$DATA/guard.log"
-                            kill -KILL "$bounded_pid" 2>/dev/null || :
-                        else
-                            echo 'bounded_watchdog_group_identity_unverified_before_kill; refusing signal' >> "$DATA/guard.log"
-                        fi
-                    fi
-                else
-                    signal_bounded_descendants KILL "$descendants_file"
-                    if bounded_process_identity_alive; then
-                        kill -KILL "$bounded_pid" 2>/dev/null || :
-                    elif kill -0 "$bounded_pid" 2>/dev/null &&
-                         [ "$(proc_state "$bounded_pid" 2>/dev/null)" != Z ]; then
-                        # PID still exists but its start time no longer matches:
-                        # it was reused by an unrelated process, so do not signal it.
-                        echo 'bounded_watchdog_process_identity_unverified_before_kill; refusing signal' >> "$DATA/guard.log"
-                    fi
-                    rm -f "$descendants_file"
-                fi
-            fi
-        ) >/dev/null 2>&1 &
+        ( sleep "$seconds"; kill -TERM "$bounded_pid" 2>/dev/null
+          sleep "$MONITOR_KILL_GRACE"; kill -KILL "$bounded_pid" 2>/dev/null ) >/dev/null 2>&1 &
         watchdog_pid=$!
         wait "$bounded_pid"
         bounded_rc=$?
         kill "$watchdog_pid" 2>/dev/null || :
         wait "$watchdog_pid" 2>/dev/null || :
-        if [ -f "$marker" ]; then
-            rm -f "$marker"
-            return 124
-        fi
-        rm -f "$marker"
+        [ "$bounded_rc" -lt 128 ] || bounded_rc=124
         return "$bounded_rc"
     fi
 }

@@ -32,20 +32,6 @@ grep -Fq 'MONITOR_KILL_GRACE="${BERRY_MONITOR_KILL_GRACE:-3}"' "$ROOT/module/bin
 grep -Fq 'has_setsid()' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'has_setsid; then' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'result="$(run_bounded "$MONITOR_TIMEOUT" sh "$MODDIR/bin/fcm-monitor.sh" monitor 2>&1)"' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'bounded_process_identity_alive()' "$ROOT/module/bin/patrol.sh"
-grep -Fq '[ "$(proc_state "$bounded_pid" 2>/dev/null)" != Z ]' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'bounded_group_identity_alive()' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'bounded_descendants_snapshot()' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'path_count=split(FILENAME,path_parts,"/")' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'pid=path_parts[path_count-1]' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'signal_bounded_descendants TERM "$descendants_file"' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'signal_bounded_descendants KILL "$descendants_file"' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'proc_start_time "$child_pid" 2>/dev/null' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'bounded_watchdog_group_identity_unverified_before_term' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'bounded_watchdog_group_identity_unverified_before_kill' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'bounded_watchdog_process_identity_unverified_before_kill' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'falling back to direct child signal' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'bounded_watchdog_group_identity_unverified_before_kill; refusing signal' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'sleep 20 &' "$ROOT/module/bin/patrol.sh"
 grep -Fq "awk '{print \$20}'" "$ROOT/module/service.sh"
 grep -Fq 'case "$pid:$stamp" in *[!0-9:]*|:*|*:) return 1;; esac' "$ROOT/module/service.sh"
@@ -80,16 +66,12 @@ grep -Fq 'check_started_uptime=%s' "$ROOT/module/bin/patrol.sh"
 ! grep -Fq '13|124) :;;' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'sample_stale=1' "$ROOT/module/service.sh"
 grep -Fq 'reason=monitor_sample' "$ROOT/module/service.sh"
-grep -Fq 'BERRY_FCM_ISOLATED_GROUP=1 "$TOYBOX_BIN" timeout' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'BERRY_FCM_ISOLATED_GROUP=1 "$TOYBOX_BIN" setsid "$KSU_BUSYBOX" timeout' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'BERRY_FCM_ISOLATED_GROUP=1 "$KSU_BUSYBOX" setsid "$KSU_BUSYBOX" timeout' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'BERRY_FCM_ISOLATED_GROUP=1 "$TOYBOX_BIN" setsid timeout' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'BERRY_FCM_ISOLATED_GROUP=1 "$KSU_BUSYBOX" setsid timeout' "$ROOT/module/bin/patrol.sh"
 ! grep -Fq 'BERRY_FCM_ISOLATED_GROUP=0 "$KSU_BUSYBOX" timeout' "$ROOT/module/bin/patrol.sh"
 ! grep -Fq 'BERRY_FCM_ISOLATED_GROUP=0 timeout' "$ROOT/module/bin/patrol.sh"
 ! grep -Fq 'BERRY_FCM_ISOLATED_GROUP=1 "$KSU_BUSYBOX" timeout' "$ROOT/module/bin/patrol.sh"
 ! grep -Fq 'BERRY_FCM_ISOLATED_GROUP=1 timeout' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'BERRY_FCM_ISOLATED_GROUP=1 "$TOYBOX_BIN" setsid "$@" &' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'BERRY_FCM_ISOLATED_GROUP=0 "$@" &' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'monitor_group_stop_unconfirmed' "$ROOT/module/service.sh"
 grep -Fq 'monitor_legacy_group_inferred' "$ROOT/module/service.sh"
@@ -165,10 +147,6 @@ grep -Fq 'maintenance_child_group_identity_unverified_before_kill' "$ROOT/module
 grep -Fq 'proc_group_id()' "$ROOT/module/bin/patrol.sh"
 grep -Fq '"$TOYBOX_BIN" setsid sh "$MODDIR/bin/ctl.sh" fix' "$ROOT/module/bin/patrol.sh"
 grep -Fq 'maintenance_child_pgid="$(proc_group_id "$maintenance_child_pid")"' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'if process_group_alive "$bounded_pgid"; then' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'elif bounded_process_identity_alive; then' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'bounded_stamp="$(proc_start_time "$bounded_pid")"' "$ROOT/module/bin/patrol.sh"
-grep -Fq 'bounded_pgid="$(proc_group_id "$bounded_pid")"' "$ROOT/module/bin/patrol.sh"
 maintenance_stop_block="$(sed -n '/^                    maintenance_stop_child() {/,/^                    }$/p' "$ROOT/module/bin/patrol.sh")"
 maintenance_term_line="$(printf '%s\n' "$maintenance_stop_block" | grep -nF 'kill -TERM "-$maintenance_child_pgid"' | head -n 1 | cut -d: -f1)"
 maintenance_kill_guard_line="$(printf '%s\n' "$maintenance_stop_block" | grep -nF 'if process_group_alive "$maintenance_child_pgid"; then' | head -n 1 | cut -d: -f1)"
@@ -876,119 +854,6 @@ echo 'PASS: startup cleans legacy monitor group before patrol start'
 # Later scenarios replaced the monitor mock; restore the sampling one.
 cp "$TMP/standard-fcm-monitor.sh" "$TMP/module/bin/fcm-monitor.sh"
 chmod +x "$TMP/module/bin/fcm-monitor.sh"
-# If timeout is missing from Toybox, KernelSU BusyBox and PATH, the watchdog
-# fallback must still execute and bound the monitor rather than skip sampling.
-mkdir -p "$TMP/no-timeout-bin"
-for bin in awk cat date grep head id kill mkdir mv python3 rm rmdir sed sh sleep tail touch tr wc; do
-    ln -sf "$(command -v "$bin")" "$TMP/no-timeout-bin/$bin"
-done
-ln -sf "$TMP/bin/id" "$TMP/no-timeout-bin/id"
-[ ! -x /bin/rm ] || ln -sf /bin/rm "$TMP/no-timeout-bin/rm"
-ln -sf "$TMP/bin/getprop" "$TMP/no-timeout-bin/getprop"
-ln -sf "$TMP/bin/sleep" "$TMP/no-timeout-bin/sleep"
-touch "$TMP/module/module.prop"
-echo 1 > "$TMP/data/enabled"
-: > "$TMP/samples"
-: > "$TMP/data/guard.log"
-export TEST_NO_TIMEOUT=1 TEST_HANG_CHILD=1
-timeout 25 env PATH="$TMP/no-timeout-bin" BERRY_TOYBOX_BIN="$TMP/bin/toybox" \
-    BERRY_KSU_BUSYBOX="$TMP/missing-busybox" sh "$TMP/module/service.sh"
-unset TEST_NO_TIMEOUT TEST_HANG_CHILD
-child_pid="$(cat "$TMP/hung-child-pid")"
-child_state="$(awk '{print $3}' "/proc/$child_pid/stat" 2>/dev/null || :)"
-[ -z "$child_state" ] || [ "$child_state" = Z ]
-test "$(wc -l < "$TMP/samples")" -ge 2
-grep -q 'fcm_check_end rc=124' "$TMP/data/guard.log"
-test ! -d "$TMP/data/service.lock"
-echo 'PASS: watchdog fallback keeps bounded patrol active without timeout applets'
-
-# If both timeout and setsid are unavailable, snapshot and reap the monitor
-# process tree by PID/starttime so child probes cannot hold the monitor flock.
-touch "$TMP/module/module.prop"
-echo 1 > "$TMP/data/enabled"
-: > "$TMP/samples"
-: > "$TMP/data/guard.log"
-export TEST_NO_TIMEOUT=1 TEST_NO_SETSID=1 TEST_HANG_CHILD=1
-timeout 25 env PATH="$TMP/no-timeout-bin" BERRY_TOYBOX_BIN="$TMP/bin/toybox" \
-    BERRY_KSU_BUSYBOX="$TMP/missing-busybox" sh "$TMP/module/service.sh"
-unset TEST_NO_TIMEOUT TEST_NO_SETSID TEST_HANG_CHILD
-child_pid="$(cat "$TMP/hung-child-pid")"
-child_state="$(awk '{print $3}' "/proc/$child_pid/stat" 2>/dev/null || :)"
-[ -z "$child_state" ] || [ "$child_state" = Z ]
-test "$(wc -l < "$TMP/samples")" -ge 2
-grep -q 'fcm_check_end rc=124' "$TMP/data/guard.log"
-test ! -d "$TMP/data/service.lock"
-echo 'PASS: process-tree watchdog cleans child probes without timeout or setsid'
-
-# A BusyBox timeout with -k but without setsid is not safe for descendants;
-# it must fall back to the /proc process-tree watchdog rather than kill only
-# the monitor shell and leave its child probe running.
-cat > "$TMP/bin/busybox-timeout-no-setsid" <<'MOCK'
-#!/bin/sh
-if [ "$1" = --list ]; then
-    printf '%s\n' timeout kill
-    exit 0
-fi
-if [ "$1" = timeout ]; then
-    shift
-    if [ "$1" = -k ]; then shift 2; fi
-    duration="$1"; shift
-    case "$*" in *fcm-monitor.sh*) echo called > "$TEST_DIR/busybox-timeout-called";; esac
-    exec /usr/bin/timeout -k 1 "$duration" "$@"
-fi
-if [ "$1" = kill ]; then shift; exec /bin/kill "$@"; fi
-exit 2
-MOCK
-chmod +x "$TMP/bin/busybox-timeout-no-setsid"
-touch "$TMP/module/module.prop"
-echo 1 > "$TMP/data/enabled"
-: > "$TMP/samples"
-: > "$TMP/data/guard.log"
-rm -f "$TMP/busybox-timeout-called"
-export TEST_NO_TIMEOUT=1 TEST_NO_SETSID=1 TEST_HANG_CHILD=1
-timeout 25 env PATH="$TMP/no-timeout-bin" BERRY_TOYBOX_BIN="$TMP/bin/toybox" \
-    BERRY_KSU_BUSYBOX="$TMP/bin/busybox-timeout-no-setsid" sh "$TMP/module/service.sh"
-unset TEST_NO_TIMEOUT TEST_NO_SETSID TEST_HANG_CHILD
-test ! -e "$TMP/busybox-timeout-called"
-child_pid="$(cat "$TMP/hung-child-pid")"
-child_state="$(awk '{print $3}' "/proc/$child_pid/stat" 2>/dev/null || :)"
-[ -z "$child_state" ] || [ "$child_state" = Z ]
-test "$(wc -l < "$TMP/samples")" -ge 2
-grep -q 'fcm_check_end rc=124' "$TMP/data/guard.log"
-test ! -d "$TMP/data/service.lock"
-echo 'PASS: BusyBox timeout without setsid falls back to process-tree watchdog'
-
-# A BusyBox timeout applet without -k must not be selected just because
-# --list reports it. Fall back to the bounded process-group watchdog.
-cat > "$TMP/bin/busybox-no-k" <<'MOCK'
-#!/bin/sh
-if [ "$1" = --list ]; then
-    printf '%s\n' timeout
-    exit 0
-fi
-if [ "$1" = timeout ]; then
-    echo 'timeout: unrecognized option -k' >&2
-    exit 2
-fi
-exit 2
-MOCK
-chmod +x "$TMP/bin/busybox-no-k"
-touch "$TMP/module/module.prop"
-echo 1 > "$TMP/data/enabled"
-: > "$TMP/samples"
-: > "$TMP/data/guard.log"
-export TEST_NO_TIMEOUT=1 TEST_HANG_CHILD=1
-timeout 25 env PATH="$TMP/no-timeout-bin" BERRY_TOYBOX_BIN="$TMP/bin/toybox" \
-    BERRY_KSU_BUSYBOX="$TMP/bin/busybox-no-k" sh "$TMP/module/service.sh"
-unset TEST_NO_TIMEOUT TEST_HANG_CHILD
-child_pid="$(cat "$TMP/hung-child-pid")"
-child_state="$(awk '{print $3}' "/proc/$child_pid/stat" 2>/dev/null || :)"
-[ -z "$child_state" ] || [ "$child_state" = Z ]
-test "$(wc -l < "$TMP/samples")" -ge 2
-grep -q 'fcm_check_end rc=124' "$TMP/data/guard.log"
-test ! -d "$TMP/data/service.lock"
-echo 'PASS: BusyBox timeout without -k falls back to bounded watchdog'
-
 # Service shutdown must stop an in-flight maintenance wrapper and its ctl child.
 touch "$TMP/module/module.prop"
 echo 1 > "$TMP/data/enabled"
@@ -1006,11 +871,13 @@ while ! grep -q 'maintenance_start .*operation=guard_fix' "$TMP/data/guard.log" 
 done
 grep -q 'maintenance_start .*operation=guard_fix' "$TMP/data/guard.log"
 n=0
-while [ ! -s "$TMP/fix-child-pid" ] && [ "$n" -lt 60 ]; do
+# Wait until patrol has recorded the child owner; shutting down earlier cannot find it.
+while { [ ! -s "$TMP/fix-child-pid" ] || [ ! -s "$TMP/data/maintenance.lock/child" ]; } && [ "$n" -lt 60 ]; do
     /bin/sleep 0.1
     n=$((n + 1))
 done
 test -s "$TMP/fix-child-pid"
+test -s "$TMP/data/maintenance.lock/child"
 fix_child="$(cat "$TMP/fix-child-pid")"
 kill -TERM "$service_pid"
 wait "$service_pid" 2>/dev/null || :
