@@ -14,7 +14,8 @@ final class MonitorStatus {
     }
     private MonitorStatus() {}
     static boolean hasStateEvidence(String source) {
-        return "gms_socket".equals(source) || "gms_socket_absence".equals(source);
+        return "gms_socket".equals(source) || "gms_socket_absence".equals(source)
+                || "gms_socket_stalled".equals(source);
     }
     static String label(State state, String source) {
         if (state == State.CONNECTED && "gms_socket".equals(source))
@@ -22,7 +23,9 @@ final class MonitorStatus {
         if (state == State.CONNECTING && "gms_socket".equals(source))
             return "GMS MCS TCP 正在连接（尚未建立）";
         if (state == State.DISCONNECTED && "gms_socket_absence".equals(source))
-            return "GMS MCS TCP 持续缺失（Root 观察）";
+            return "GMS MCS TCP 持续缺失（内核 Socket 观察）";
+        if (state == State.DISCONNECTED && "gms_socket_stalled".equals(source))
+            return "GMS MCS TCP 已卡死（持续重传/长时间无数据）";
         return state.label;
     }
     static State resolve(boolean authorized, boolean enabled, boolean running,

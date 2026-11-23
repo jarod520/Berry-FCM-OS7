@@ -19,6 +19,8 @@ public final class MonitorStatusSmoke {
         expect(MonitorStatus.State.UNKNOWN,true,true,true,10,false,true,"unknown");
         if (!MonitorStatus.hasStateEvidence("gms_socket")
                 || !MonitorStatus.hasStateEvidence("gms_socket_absence")
+                || !MonitorStatus.hasStateEvidence("gms_socket_stalled")
+                || !MonitorStatus.hasStateEvidence("gms_socket_stalled")
                 || MonitorStatus.hasStateEvidence("gms_socket_absence_pending")
                 || MonitorStatus.hasStateEvidence("gms")
                 || MonitorStatus.hasStateEvidence("unavailable"))

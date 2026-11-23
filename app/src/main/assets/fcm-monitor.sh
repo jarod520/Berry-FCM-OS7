@@ -244,8 +244,8 @@ retry_interval() {
 # Never force-stops/restarts GMS and never alters DNS/VPN/proxy/routing.
 recovery_actions() {
     case "$(id -u 2>/dev/null)" in
-      0) echo "GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT GCM_SERVICE_START";;
-      2000) echo "MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT GCM_RECONNECT GCM_SERVICE_START";;
+      0) echo "GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT GTALK_RECONNECT GMS_INITIALIZE GCM_SERVICE_START";;
+      2000) echo "MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT GTALK_RECONNECT GMS_INITIALIZE GCM_RECONNECT GCM_SERVICE_START";;
       *) return 1;;
     esac
 }
@@ -255,6 +255,11 @@ recovery_actions() {
 prepare_gms_for_recovery() {
     "$AM_BIN" set-inactive --user 0 "$GMS" false >/dev/null 2>&1 || :
     "$AM_BIN" set-standby-bucket --user 0 "$GMS" active >/dev/null 2>&1 || :
+    # Shell-UID-safe hardening used by common push-fix tools: Doze whitelist and
+    # background-run appops, so heartbeats and the MCS socket are not deferred.
+    "$CMD_BIN" deviceidle whitelist "+$GMS" >/dev/null 2>&1 || :
+    "$CMD_BIN" appops set "$GMS" RUN_IN_BACKGROUND allow >/dev/null 2>&1 || :
+    "$CMD_BIN" appops set "$GMS" RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1 || :
 }
 
 # Send one trigger; returns 0 when the system accepted it.
@@ -265,6 +270,8 @@ send_recovery_action() {
       MCS_HEARTBEAT) trigger_action=com.google.android.intent.action.MCS_HEARTBEAT;;
       ACTION_HEARTBEAT_NOW) trigger_action=com.google.android.gms.gcm.ACTION_HEARTBEAT_NOW;;
       GTALK_HEARTBEAT) trigger_action=com.google.android.intent.action.GTALK_HEARTBEAT;;
+      GTALK_RECONNECT) trigger_action=com.google.android.intent.action.GTALK_RECONNECT;;
+      GMS_INITIALIZE) trigger_action=com.google.android.gms.INITIALIZE;;
       GCM_SERVICE_START) trigger_action=;;
       *) return 1;;
     esac

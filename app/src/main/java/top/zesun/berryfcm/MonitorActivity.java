@@ -197,8 +197,9 @@ public final class MonitorActivity extends Ui {
                 || !lastError.isEmpty() ? "以下是历史证据，不代表当前连接。\n" : "")
                 + "原始状态：" + state
                 + "\n状态来源：" + ("gms_socket".equals(stateSource) ? "GMS UID 的精确 MCS TCP 正向证据"
-                    : "gms_socket_absence".equals(stateSource) ? "Root 连续 MCS TCP 缺失证据"
-                    : "gms_socket_absence_pending".equals(stateSource) ? "Root 正在累计 MCS TCP 缺失时间"
+                    : "gms_socket_absence".equals(stateSource) ? "内核 Socket 连续 MCS TCP 缺失证据"
+                    : "gms_socket_absence_pending".equals(stateSource) ? "正在累计 MCS TCP 缺失时间"
+                    : "gms_socket_stalled".equals(stateSource) ? "TCP_INFO：MCS 连接卡死（重传/长时间无数据）"
                     : nativeReason)
                 + "\nTCP 辅助检查：" + tcpHint(j.optString("fcm_tcp_hint", "none"))
                 + "\n服务器：" + j.optString("fcm_transport", "无")
@@ -254,6 +255,9 @@ public final class MonitorActivity extends Ui {
             case "request_failed": return "重连请求失败，见恢复记录";
             case "confirmation_changed": return "第二次检查状态变化，暂不干预";
             case "cooldown": return "请求冷却约 " + retryIn + " 秒";
+            case "recovery_exhausted": return "已依次尝试全部触发手段，内核复采仍未恢复；按退避等待下一轮";
+            case "keepalive_nudged": return "内核证据不可用；已发送保活心跳（不判断联）";
+            case "confirmation_recovered": return "第二次内核 Socket 检查已恢复，取消重连";
             case "waiting_confirmation": return "等待第二次内核 Socket 检查";
             case "waiting_duration":
                 long seconds = j.optLong("fcm_observed_down_seconds", -1);

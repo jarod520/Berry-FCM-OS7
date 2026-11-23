@@ -171,6 +171,9 @@ run monitor
 # Staged recovery: first trigger is GCM_RECONNECT; kernel stays disconnected so later triggers follow.
 test "$(grep -c '^broadcast' "$MCS_AM_LOG")" -ge 2
 test "$(grep '^broadcast' "$MCS_AM_LOG" | head -n 1)" = 'broadcast --user 0 -a com.google.android.intent.action.GCM_RECONNECT -p com.google.android.gms'
+grep -q 'broadcast --user 0 -a com.google.android.gms.INITIALIZE -p com.google.android.gms' "$MCS_AM_LOG"
+grep -q 'broadcast --user 0 -a com.google.android.intent.action.GTALK_RECONNECT -p com.google.android.gms' "$MCS_AM_LOG"
+grep -q 'set-standby-bucket --user 0 com.google.android.gms active' "$MCS_AM_LOG"
 j="$(run snapshot)"
 assert_json "$j" fcm_last_result=requested
 assert_json "$j" fcm_recovery_decision=recovery_exhausted

@@ -127,9 +127,11 @@ public final class MainActivity extends Ui {
                         snapshot.optLong("fcm_observed_up_seconds", -1));
                 description += "\n依据 GMS UID 的 MCS TCP 正向证据；不代表消息送达。";
             } else if ("gms_socket_absence".equals(stateSource)) {
-                description += "\n依据 Root 连续缺失 MCS TCP 并经二次采样确认。";
+                description += "\n依据内核 Socket 连续缺失 MCS TCP 并经二次采样确认。";
                 long down = snapshot.optLong("fcm_observed_down_seconds", -1);
                 if (down >= 0) description += "\n已观察未连接：" + MonitorStatus.duration(down);
+            } else if ("gms_socket_stalled".equals(stateSource)) {
+                description += "\n依据 TCP_INFO：MCS 连接存在但持续重传或长时间无数据。";
             } else if ("gms_socket".equals(stateSource)) {
                 description += "\n依据 GMS UID 的 MCS TCP 正向证据；连接尚未建立或正在重连。";
             }

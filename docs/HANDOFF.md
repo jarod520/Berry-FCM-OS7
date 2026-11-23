@@ -978,3 +978,14 @@ Removed the full `cmd appops get top.zesun.berryfcm` dump incorrectly labeled as
 - **回归夹具**：APK smoke 增加 24 列状态检查、wall-clock 大幅前跳/回拨但 monotonic 样本不变时 age 仍为 0 且不产生 sample_gap，以及 wall-clock 不变但 monotonic 前进 100 秒时必须产生 sample_gap。还保留旧 23 列状态迁移路径。
 - **并发临时文件**：state/evidence 临时文件名改为带 PID 的唯一名称，避免并发检查相互覆盖；失败清理和 mv 故障注入检查同步保留。
 - **验证边界**：上述测试均已写入 smoke，但尚未执行；仍不能宣称 shell smoke、语法检查或构建通过。没有触发 Actions、编译、构建、打包、合并或发布。
+
+
+## APK 恢复策略（2026-11-23 更新）
+
+- 判断与重连决策仅来自 GMS UID 的内核 Socket（`ss -tinpe` → `ss -tnpe`）；dumpsys 不参与任何决策，APK 脚本不含 dumpsys。
+- 新增 `gms_socket_stalled`（unacked>0 且 retrans>=3，或 lastrcv>=30 分钟）。
+- 非 Root（ADB shell UID 2000）：仅当快照中至少可见一条 GMS UID 的 socket（所有权证明）才把“无 MCS 连接”判为断联，否则为 unknown，不触发重连。
+- 分阶段触发（每阶段后内核复采，连上即停）：Root 先 GCM_RECONNECT；UID 2000 先 MCS_HEARTBEAT / ACTION_HEARTBEAT_NOW / GTALK_HEARTBEAT / GTALK_RECONNECT / GMS_INITIALIZE，GCM_RECONNECT（OriginOS 7 未导出）与 `am startservice GcmService` 靠后。
+- 准备动作：`am set-inactive`、`set-standby-bucket active`、`cmd deviceidle whitelist +gms`、`cmd appops set RUN_(ANY_)IN_BACKGROUND allow`。
+- 证据不可用 ≥300 秒：每 900 秒至多发送 3 个心跳广播（keepalive_nudged），不标记断联。
+- 真机未验证：所有权证明、GCM_SERVICE_START、GMS_INITIALIZE、GTALK_RECONNECT、standby/deviceidle/appops 命令的实际效果。
