@@ -27,6 +27,7 @@ cat > "$TMP/bin/ss" <<'MOCK'
 case "${MCS_SS_MODE:-absent}" in
   connected) echo 'ESTAB 0 0 10.0.0.2:45000 142.250.157.188:5228 uid:10200 ino:101';;
   connecting) echo 'SYN-SENT 0 1 10.0.0.2:45000 142.250.157.188:5228 uid:10200 ino:102';;
+  gms_other) echo 'ESTAB 0 0 10.0.0.2:45000 1.1.1.1:8080 uid:10200 ino:105';;
   untrusted443) echo 'ESTAB 0 0 10.0.0.2:45000 1.1.1.1:443 uid:10200 ino:103';;
   no_uid) echo 'ESTAB 0 0 10.0.0.2:45000 1.1.1.1:443';;
   *) echo 'ESTAB 0 0 10.0.0.2:45000 1.1.1.1:443 uid:1000 ino:104';;
@@ -93,7 +94,7 @@ j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=gms_socket
 assert_json "$j" fcm_tcp_hint=established
-awk -F'|' 'NF == 24 {ok=1} END {exit !ok}' "$TMP/data/mcs-monitor.state"
+awk -F'|' 'NF == 26 {ok=1} END {exit !ok}' "$TMP/data/mcs-monitor.state"
 
 # Wall-clock changes must not age or reset fresh monotonic socket samples.
 settime 10010
@@ -167,11 +168,12 @@ assert_json "$j" fcm_state=disconnected
 assert_json "$j" fcm_source=gms_socket_absence
 settime 11075
 run monitor
-requests 1
-test "$(cat "$MCS_AM_LOG")" = 'broadcast --user 0 -a com.google.android.intent.action.GCM_RECONNECT -p com.google.android.gms'
+# Staged recovery: first trigger is GCM_RECONNECT; kernel stays disconnected so later triggers follow.
+test "$(grep -c '^broadcast' "$MCS_AM_LOG")" -ge 2
+test "$(grep '^broadcast' "$MCS_AM_LOG" | head -n 1)" = 'broadcast --user 0 -a com.google.android.intent.action.GCM_RECONNECT -p com.google.android.gms'
 j="$(run snapshot)"
 assert_json "$j" fcm_last_result=requested
-assert_json "$j" fcm_recovery_decision=requested
+assert_json "$j" fcm_recovery_decision=recovery_exhausted
 
 # UID 2000 cannot classify an incomplete socket table as disconnected.
 rm -f "$TMP/data/mcs-monitor.state" "$TMP/data/mcs-evidence"
@@ -184,6 +186,19 @@ run monitor
 requests 0
 j="$(run snapshot)"
 assert_json "$j" fcm_state=unknown
+
+# UID 2000 with an ownership proof (a visible GMS-UID row, but no MCS) may classify absence.
+rm -f "$TMP/data/mcs-monitor.state" "$TMP/data/mcs-evidence"
+: > "$MCS_AM_LOG"
+export MCS_SENDER_UID=2000 MCS_SS_MODE=gms_other
+settime 12500
+run monitor
+settime 12560
+run monitor
+j="$(run snapshot)"
+assert_json "$j" fcm_state=disconnected
+assert_json "$j" fcm_source=gms_socket_absence
+export MCS_SS_MODE=absent
 
 # UID lookup failure and failed broadcasts do not invoke dump or fabricate recovery.
 rm -f "$TMP/data/mcs-monitor.state" "$TMP/data/mcs-evidence"

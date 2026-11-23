@@ -40,9 +40,10 @@ load_state() {
     transport=; remote=; sample_epoch=0; sample_mono=0; last_try_reason=none
     reconnects=0; last_down=0
     down_observed=0; retry_streak=0; outage_hint_mono=0
+    unknown_since_mono=0; last_nudge_mono=0
     prev_b=
     if [ -f "$STATE" ]; then
-        IFS='|' read -r prev_b state conn_key conn_since conn_since_mono last_seen missing_since missing_epoch last_try_mono last_try_epoch attempts last_result last_restore outages transport remote sample_epoch last_try_reason reconnects last_down down_observed retry_streak outage_hint_mono sample_mono < "$STATE" || :
+        IFS='|' read -r prev_b state conn_key conn_since conn_since_mono last_seen missing_since missing_epoch last_try_mono last_try_epoch attempts last_result last_restore outages transport remote sample_epoch last_try_reason reconnects last_down down_observed retry_streak outage_hint_mono sample_mono unknown_since_mono last_nudge_mono < "$STATE" || :
     fi
     conn_since="$(num "$conn_since")"; conn_since_mono="$(num "$conn_since_mono")"; last_seen="$(num "$last_seen")"
     missing_since="$(num "$missing_since")"; missing_epoch="$(num "$missing_epoch")"
@@ -52,12 +53,14 @@ load_state() {
     reconnects="$(num "$reconnects")"; last_down="$(num "$last_down")"
     down_observed="$(num "${down_observed:-0}")"; retry_streak="$(num "${retry_streak:-0}")"
     outage_hint_mono="$(num "${outage_hint_mono:-0}")"; sample_mono="$(num "${sample_mono:-0}")"
+    unknown_since_mono="$(num "${unknown_since_mono:-0}")"; last_nudge_mono="$(num "${last_nudge_mono:-0}")"
     case "$state" in connected|connecting|disconnected|unknown|never_seen) : ;; *) state=unknown;; esac
     case "$last_result" in none|requested|failed|restored) : ;; *) last_result=none;; esac
     case "$last_try_reason" in none|auto|manual|rescue) : ;; *) last_try_reason=none;; esac
     if [ -n "$prev_b" ] && [ "$prev_b" != "$b" ]; then
         state=never_seen; conn_key=; conn_since=0; conn_since_mono=0; missing_since=0; missing_epoch=0
         last_try_mono=0; transport=; remote=; sample_epoch=0; sample_mono=0; down_observed=0; retry_streak=0; outage_hint_mono=0
+        unknown_since_mono=0; last_nudge_mono=0
         : > "$LEARNED_IPS"
         record_event reboot '设备重启：清除上一启动周期的连接计时，保留历史事件'
     fi
@@ -65,10 +68,10 @@ load_state() {
 
 save_state() {
     tmp="$STATE.$$"
-    if ! printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+    if ! printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
       "$b" "$state" "$conn_key" "$conn_since" "$conn_since_mono" "$last_seen" "$missing_since" "$missing_epoch" \
       "$last_try_mono" "$last_try_epoch" "$attempts" "$last_result" "$last_restore" "$outages" \
-      "$transport" "$remote" "$sample_epoch" "$last_try_reason" "$reconnects" "$last_down" "$down_observed" "$retry_streak" "$outage_hint_mono" "$sample_mono" > "$tmp"; then
+      "$transport" "$remote" "$sample_epoch" "$last_try_reason" "$reconnects" "$last_down" "$down_observed" "$retry_streak" "$outage_hint_mono" "$sample_mono" "$unknown_since_mono" "$last_nudge_mono" > "$tmp"; then
         rm -f "$tmp"
         return 1
     fi
@@ -129,7 +132,11 @@ gms_uid() {
 scan_sockets() {
     uid="$(gms_uid 2>/dev/null)" || { printf 'unknown||||gms_uid_unavailable\n'; return; }
     command -v "$SS_BIN" >/dev/null 2>&1 || { printf 'unknown||||ss_unavailable\n'; return; }
-    raw="$("$SS_BIN" -tnpe 2>/dev/null)" || { printf 'unknown||||ss_failed\n'; return; }
+    # -i adds TCP_INFO (unacked/retrans/lastrcv) where the ss build supports it.
+    raw="$("$SS_BIN" -tinpe 2>/dev/null)" || raw=
+    if [ -z "$raw" ] || ! printf '%s\n' "$raw" | grep -Eq 'uid:[0-9]+'; then
+        raw="$("$SS_BIN" -tnpe 2>/dev/null)" || { printf 'unknown||||ss_failed\n'; return; }
+    fi
 
     # Some ADB shells receive redacted ss output with no UID ownership.
     # Never classify that as absence of GMS/FCM: ownership is unobservable.
@@ -150,29 +157,71 @@ scan_sockets() {
     ips="$(cat "$DNS_IPS" "$LEARNED_IPS" 2>/dev/null | awk 'NF && !seen[$0]++ {printf "%s%s",sep,$0;sep="|"}')"
     ip_count="$(printf '%s' "$ips" | awk -F'|' '{print NF}')"
     [ -n "$ips" ] || ip_count=0
-    printf '%s\n' "$raw" | awk -v u="$uid" -v ips="|$ips|" -v ip_count="$ip_count" '
+    # Without Root the shell may see only part of the table. Absence of an MCS
+    # socket is meaningful only when this snapshot proves ownership is visible,
+    # i.e. at least one socket owned by the GMS UID is listed.
+    gms_visible=0
+    printf '%s\n' "$raw" | grep -Eq "uid:${uid}([^0-9]|\$)" && gms_visible=1
+    # A socket is stalled when it has unacked data with >=3 retransmissions, or
+    # no data was received for 30 minutes (TCP_INFO). Missing fields never fake it.
+    result="$(printf '%s\n' "$raw" | awk -v u="$uid" -v ips="|$ips|" -v ip_count="$ip_count" '
       function normip(v){sub(/:[0-9]+$/, "", v);gsub(/^\[|\]$/, "", v);sub(/^::ffff:/, "", v);return tolower(v)}
       function known(v){return index(ips,"|" normip(v) "|")>0}
+      function field_number(name, text, value) {
+        if (match(text, name ":[0-9]+")) {
+          value=substr(text,RSTART+length(name)+1,RLENGTH-length(name)-1)
+          return value+0
+        }
+        return -1
+      }
+      function emit(   established, relevant, stalled) {
+        if (!current || owner!=u+0) return
+        established=(socket_state=="ESTAB" || socket_state=="ESTABLISHED")
+        relevant=(port==5228 || port==5229 || port==5230 || (port==443 && known(peer)))
+        if (established && relevant) {
+          stalled=((unacked>0 && retrans>=3) || last_recv_ms>=1800000)
+          if (stalled) {
+            if (rank<2) {rank=2;kind="stalled";transport="tcp" port;remote=ip ":" port;bestkey=key}
+          } else if (rank<4) {
+            rank=4;kind="connected";transport=(port==443?"tcp443":"tcp" port);remote=ip ":" port;bestkey=key
+          }
+        } else if (!established && relevant && (socket_state=="SYN-SENT" || socket_state=="SYN_SENT")) {
+          if (rank<3) {rank=3;kind="connecting";transport="tcp" port;remote=ip ":" port;bestkey=key}
+        } else if (established && port==443 && !known(peer)) {
+          untrusted=1
+        }
+      }
       ($1=="ESTAB" || $1=="ESTABLISHED" || $1=="SYN-SENT" || $1=="SYN_SENT") {
-        if (!match($0,/uid:[0-9]+/)) next
-        owner=substr($0,RSTART+4,RLENGTH-4)+0; if(owner!=u+0) next
-        peer=$5; port=peer; sub(/^.*:/,"",port); ip=normip(peer); local=$4
+        emit()
+        current=1; socket_state=$1
+        owner=-1; if(match($0,/uid:[0-9]+/)) owner=substr($0,RSTART+4,RLENGTH-4)+0
+        peer=$5; port=peer; sub(/^.*:/,"",port); port=port+0
+        ip=normip(peer); local=$4
         inode=""; if(match($0,/ino:[0-9]+/)) inode=substr($0,RSTART+4,RLENGTH-4)
         key=local ">" peer "#" inode
-        established=($1=="ESTAB" || $1=="ESTABLISHED")
-        if(established && (port==5228 || port==5229 || port==5230)){
-          if(rank<3){rank=3;kind="connected";transport="tcp" port;remote=ip ":" port;bestkey=key}
-        } else if(established && port==443 && known(peer)){
-          if(rank<2){rank=2;kind="connected";transport="tcp443";remote=ip ":443";bestkey=key}
-        } else if(!established && ((port==5228 || port==5229 || port==5230) || (port==443 && known(peer)))){
-          if(rank<1){rank=1;kind="connecting";transport="tcp" port;remote=ip ":" port;bestkey=key}
-        } else if(established && port==443 && ip_count==0){untrusted=1}
+        unacked=field_number("unacked",$0); retrans=field_number("retrans",$0); last_recv_ms=field_number("lastrcv",$0)
+      }
+      current && $1!~/^(ESTAB|ESTABLISHED|SYN-SENT|SYN_SENT)$/ {
+        value=field_number("unacked",$0); if (value>=0) unacked=value
+        value=field_number("retrans",$0); if (value>=0) retrans=value
+        value=field_number("lastrcv",$0); if (value>=0) last_recv_ms=value
       }
       END {
-        if(rank>0) printf "%s|%s|%s|%s|\n",kind,transport,remote,bestkey
+        emit()
+        if(rank==4) printf "connected|%s|%s|%s|\n",transport,remote,bestkey
+        else if(rank==3) printf "connecting|%s|%s|%s|\n",transport,remote,bestkey
+        else if(rank==2) printf "stalled|%s|%s|%s|tcp_info_unacked_retrans\n",transport,remote,bestkey
         else if(untrusted) print "unknown||||unverified_443_no_mtalk_dns"
         else print "absent||||no_fcm_socket_observed"
-      }'
+      }')"
+    case "$result" in
+      absent\|*)
+        if [ "$(id -u 2>/dev/null)" != 0 ] && [ "$gms_visible" != 1 ]; then
+            printf 'unknown||||ss_gms_socket_not_visible\n'
+            return
+        fi;;
+    esac
+    printf '%s\n' "$result"
 }
 
 # Current state and recovery decisions come exclusively from GMS-UID kernel Socket evidence.
@@ -186,9 +235,61 @@ retry_interval() {
     case "$retry_streak" in 0) echo 30;; 1) echo 60;; 2) echo 120;; *) echo 180;; esac
 }
 
+# Recovery triggers. Each stage is independent: a rejected command falls through to
+# the next one at once; an accepted one is followed by a kernel-socket re-sample and
+# "connected" ends the sequence. Verified-on-device triggers come first for the shell.
+#   MCS_HEARTBEAT / ACTION_HEARTBEAT_NOW / GTALK_HEARTBEAT  heartbeat broadcasts
+#   GCM_RECONNECT       reconnect broadcast (not exported on OriginOS 7; tried as a last resort)
+#   GCM_SERVICE_START   best-effort explicit start of GMS's own GcmService (unverified)
+# Never force-stops/restarts GMS and never alters DNS/VPN/proxy/routing.
+recovery_actions() {
+    case "$(id -u 2>/dev/null)" in
+      0) echo "GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT GCM_SERVICE_START";;
+      2000) echo "MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT GCM_RECONNECT GCM_SERVICE_START";;
+      *) return 1;;
+    esac
+}
+
+# Idempotent preparation: lift GMS out of app standby so broadcasts and its network
+# are not deferred. Failures are ignored.
+prepare_gms_for_recovery() {
+    "$AM_BIN" set-inactive --user 0 "$GMS" false >/dev/null 2>&1 || :
+    "$AM_BIN" set-standby-bucket --user 0 "$GMS" active >/dev/null 2>&1 || :
+}
+
+# Send one trigger; returns 0 when the system accepted it.
+send_recovery_action() {
+    trigger_label="$1"
+    case "$trigger_label" in
+      GCM_RECONNECT) trigger_action=com.google.android.intent.action.GCM_RECONNECT;;
+      MCS_HEARTBEAT) trigger_action=com.google.android.intent.action.MCS_HEARTBEAT;;
+      ACTION_HEARTBEAT_NOW) trigger_action=com.google.android.gms.gcm.ACTION_HEARTBEAT_NOW;;
+      GTALK_HEARTBEAT) trigger_action=com.google.android.intent.action.GTALK_HEARTBEAT;;
+      GCM_SERVICE_START) trigger_action=;;
+      *) return 1;;
+    esac
+    if [ "$trigger_label" = GCM_SERVICE_START ]; then
+        trigger_reply="$("$AM_BIN" startservice --user 0 -n "$GMS/.gcm.GcmService" 2>&1)"
+        trigger_rc=$?
+        [ "$trigger_rc" -eq 0 ] && printf '%s\n' "$trigger_reply" | grep -q 'Starting service' &&
+            ! printf '%s\n' "$trigger_reply" | grep -qiE 'Error|Exception|not allowed|Permission|not found'
+        return $?
+    fi
+    trigger_reply="$("$AM_BIN" broadcast --user 0 -a "$trigger_action" -p "$GMS" 2>&1)"
+    trigger_rc=$?
+    [ "$trigger_rc" -eq 0 ] && printf '%s\n' "$trigger_reply" | grep -q 'Broadcast completed:' &&
+        ! printf '%s\n' "$trigger_reply" | grep -qiE 'Permission Denial|SecurityException|not allowed|Error:|result=-[0-9]'
+}
+
 request_reconnect() {
     reason="$1"; nowm="$(num "$(monotime)")"; nowe="$(num "$(now_epoch)")"
-    case "$state" in connecting|disconnected) :;; *) decision=not_disconnected; return 0;; esac
+    # An explicit user request may run while kernel evidence is unavailable;
+    # automatic recovery never acts on unknown evidence.
+    case "$state" in
+      connecting|disconnected) :;;
+      unknown) [ "$reason" = manual ] || { decision=not_disconnected; return 0; };;
+      *) decision=not_disconnected; return 0;;
+    esac
     interval="$(retry_interval)"
     [ "$reason" = manual ] && interval=60
     if [ "$last_try_mono" -gt 0 ] && [ "$nowm" -ge "$last_try_mono" ] && [ $((nowm-last_try_mono)) -lt "$interval" ]; then
@@ -198,6 +299,9 @@ request_reconnect() {
         fi
         return 0
     fi
+    sender_uid="$(id -u 2>/dev/null || echo unknown)"
+    actions="$(recovery_actions)" || {
+        decision=request_failed; record_event reconnect_failed "执行身份 UID=$sender_uid 不是已验证的 Root/ADB Shell"; save_state; return 0; }
     last_try_mono="$nowm"; last_try_epoch="$nowe"; attempts=$((attempts+1))
     retry_streak=$((retry_streak+1)); last_try_reason="$reason"; last_result=failed
     if ! save_state; then
@@ -206,35 +310,82 @@ request_reconnect() {
         record_event reconnect_aborted "恢复请求前无法持久化退避状态；为避免重复广播，本轮不发送"
         return 0
     fi
-    # OriginOS 7 real-device evidence: GCM_RECONNECT is NOT exported.
-    # UID 2000 can deliver MCS_HEARTBEAT and ACTION_HEARTBEAT_NOW to GMS.
-    # Delivery is not proof of reconnection; only observe() can report restored.
-    sender_uid="$(id -u 2>/dev/null || echo unknown)"
-    case "$sender_uid" in
-      0) action=com.google.android.intent.action.GCM_RECONNECT;;
-      2000)
-        if [ $((retry_streak % 2)) -eq 1 ]; then
-            action=com.google.android.intent.action.MCS_HEARTBEAT
+    prepare_gms_for_recovery
+    sequence_requested=0; sequence_index=0; confirmation_unavailable=0; recovered=0
+    for action_label in $actions; do
+        sequence_index=$((sequence_index+1))
+        if send_recovery_action "$action_label"; then
+            sequence_requested=1; last_result=requested
+            record_event reconnect_requested "$reason UID=$sender_uid $action_label 已被系统接受（第 $attempts 次，阶段 $sequence_index）；命令返回不代表投递或恢复，等待内核复采"
+            if ! save_state; then
+                decision=state_save_failed
+                record_event reconnect_state_commit_failed "广播已提交但恢复结果状态写入失败；保留请求前已提交的退避锚点"
+                return 0
+            fi
+            [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 2
+            if observe; then
+                case "$state" in
+                  connected)
+                    recovered=1
+                    record_event recovery_sequence_recovered "恢复序列第 $sequence_index 阶段后内核复采观察到 MCS TCP 建立；停止后续触发"
+                    break
+                    ;;
+                  connecting|disconnected)
+                    record_event recovery_sequence_still_down "恢复序列第 $sequence_index 阶段后仍为 $state；继续下一种触发"
+                    ;;
+                  *)
+                    confirmation_unavailable=1
+                    record_event recovery_sequence_unverified "恢复序列第 $sequence_index 阶段后内核证据不可用；不推断断联，继续下一种触发"
+                    ;;
+                esac
+            else
+                # observe() may have changed globals before its commit failed:
+                # reload the last committed state so no failed sample leaks.
+                load_state
+                confirmation_unavailable=1
+                record_event recovery_confirmation_unavailable "恢复命令 $action_label 后内核复采失败；已恢复最后一次提交的样本，继续下一种触发"
+            fi
         else
-            action=com.google.android.gms.gcm.ACTION_HEARTBEAT_NOW
-        fi;;
-      *) decision=request_failed; record_event reconnect_failed "执行身份 UID=$sender_uid 不是已验证的 Root/ADB Shell"; save_state; return 0;;
-    esac
-    reply="$("$AM_BIN" broadcast --user 0 -a "$action" -p "$GMS" 2>&1)"
-    rc=$?
-    if [ "$rc" -eq 0 ] && printf '%s\n' "$reply" | grep -q 'Broadcast completed:' &&
-        ! printf '%s\n' "$reply" | grep -qiE 'Permission Denial|SecurityException|not allowed|Error:|result=-[0-9]'; then
-        last_result=requested; decision=requested
-        completion="$(printf '%s\n' "$reply" | grep 'Broadcast completed:' | tail -n 1)"
-        record_event reconnect_requested "$reason UID=$sender_uid ${action##*.} exit=$rc $completion；命令返回不代表投递或恢复（第 $attempts 次）"
+            record_event reconnect_failed "$reason UID=$sender_uid $action_label exit=$trigger_rc：$(printf '%s' "$trigger_reply" | head -n 1 | cut -c1-80)；未被系统接受，立即尝试下一种触发"
+        fi
+    done
+    if [ "$recovered" = 1 ]; then
+        decision=confirmation_recovered
+    elif [ "$sequence_requested" = 1 ]; then
+        decision=recovery_exhausted
+        record_event reconnect_sequence_exhausted "全部触发已执行但内核仍未确认恢复${confirmation_unavailable:+（至少一次复采不可用）}；按退避间隔再次巡检"
     else
-        last_result=failed; decision=request_failed
-        record_event reconnect_failed "$reason UID=$sender_uid ${action##*.} exit=$rc：$reply"
+        decision=request_failed
+        record_event reconnect_sequence_failed "全部触发均未被系统接受；按退避间隔再次巡检"
     fi
     if ! save_state; then
         decision=state_save_failed
         record_event reconnect_state_commit_failed "广播已提交但恢复结果状态写入失败；保留请求前已提交的退避锚点"
     fi
+}
+
+# Evidence-unavailable keepalive (the open-source heartbeat-fixer approach). It never
+# marks the connection down and never claims recovery: while the kernel socket table
+# stays unreadable for 5 minutes it sends the three heartbeat broadcasts at most once
+# every 15 minutes. Reconnect broadcasts and service starts stay reserved for confirmed
+# outages.
+keepalive_nudge() {
+    nowm="$(num "$(monotime)")"
+    if [ "$unknown_since_mono" -le 0 ] || [ "$nowm" -lt "$unknown_since_mono" ] || [ $((nowm-unknown_since_mono)) -lt 300 ]; then
+        decision=sample_unavailable; return 0
+    fi
+    if [ "$last_nudge_mono" -gt 0 ] && [ "$nowm" -ge "$last_nudge_mono" ] && [ $((nowm-last_nudge_mono)) -lt 900 ]; then
+        decision=sample_unavailable; return 0
+    fi
+    case "$(id -u 2>/dev/null)" in 0|2000) :;; *) decision=sample_unavailable; return 0;; esac
+    nudge_accepted=0
+    for nudge_label in MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT; do
+        if send_recovery_action "$nudge_label"; then nudge_accepted=$((nudge_accepted+1)); fi
+    done
+    last_nudge_mono="$nowm"
+    decision=keepalive_nudged
+    record_event keepalive_nudge "内核 Socket 证据连续 $((nowm-unknown_since_mono)) 秒不可用；未判定断联，仅发送心跳保活（被系统接受 ${nudge_accepted}/3）"
+    save_state || { decision=state_save_failed; record_event keepalive_state_commit_failed "保活心跳已发送但状态写入失败"; }
 }
 
 observe() {
@@ -245,8 +396,7 @@ observe() {
     legacy_source=
     if [ -f "$EVIDENCE" ]; then IFS='|' read -r legacy_source _ < "$EVIDENCE" || :; fi
     case "$legacy_source" in
-      gms_socket|gms_socket_absence|gms_socket_absence_pending) :;;
-      *)
+      gms|gms_socket_fallback)
         if [ "$state" != unknown ] || [ "$outage_hint_mono" -gt 0 ] || [ "$down_observed" -gt 0 ]; then
             record_event legacy_dump_state_discarded "旧版状态来源不是内核 MCS Socket；清除旧连接/断联计时，重新建立内核证据"
         fi
@@ -254,6 +404,7 @@ observe() {
         missing_since=0; missing_epoch=0; down_observed=0; outage_hint_mono=0
         last_try_mono=0; retry_streak=0
         ;;
+      *) :;;
     esac
     previous_down_state="$state"; previous_missing_epoch="$missing_epoch"
     previous_down_observed="$(num "${outage_hint_mono:-0}")"
@@ -273,6 +424,7 @@ observe() {
         if [ "$sample_gap" -eq 1 ]; then
             record_event sample_gap "距离上次有效内核 Socket 采样约 $sample_gap_age 秒；重置连续性计时并重新采样"
             state=unknown; missing_since=0; missing_epoch=0; conn_since=0; down_observed=0
+            unknown_since_mono=0
         fi
     fi
     outage_hint_mono="$previous_down_observed"
@@ -303,25 +455,30 @@ EOF_SOCKET
         fi
         previous_down_observed="$outage_hint_mono"
         ;;
+      stalled)
+        observed=disconnected; source=gms_socket_stalled; tcp_hint=stalled
+        new_transport="$socket_transport"; new_remote="$socket_remote"
+        if [ "$previous_down_state" != disconnected ] || [ "$outage_hint_mono" -le 0 ]; then
+            outage_hint_mono="$socket_now"
+            record_event tcp_stalled "内核 TCP_INFO 显示 MCS socket 有未确认数据且连续重传，或超过 30 分钟未收到数据"
+        fi
+        previous_down_observed="$outage_hint_mono"
+        ;;
       absent)
-        if [ "$(id -u 2>/dev/null)" = 0 ]; then
-            source=gms_socket_absence_pending
-            if [ "$outage_hint_mono" -le 0 ] || [ "$socket_now" -lt "$outage_hint_mono" ] ||
-               [ $((socket_now-outage_hint_mono)) -gt 900 ]; then
-                outage_hint_mono="$socket_now"
-                record_event tcp_absence_started "Root 已读取 GMS UID Socket 表但未发现 MCS TCP；开始连续缺失计时"
-            fi
-            socket_down_age=$((socket_now-outage_hint_mono))
-            previous_down_observed="$outage_hint_mono"; tcp_hint=absent
-            if [ "$socket_down_age" -ge 60 ] && [ "$socket_down_age" -le 900 ]; then
-                observed=disconnected; source=gms_socket_absence
-                [ "$previous_down_state" = disconnected ] ||
-                    record_event tcp_absence_confirmed "GMS MCS TCP 连续缺失 $socket_down_age 秒，达到断联证据阈值"
-            fi
-        else
-            tcp_hint=unknown
-            source=unavailable
-            record_event socket_absence_untrusted "当前权限不能证明 GMS Socket 表完整；不把缺失样本判为断联"
+        # scan_sockets reports "absent" only when ownership is provable: Root
+        # read the full table, or a GMS-UID-owned socket is visible to the shell.
+        source=gms_socket_absence_pending
+        if [ "$outage_hint_mono" -le 0 ] || [ "$socket_now" -lt "$outage_hint_mono" ] ||
+           [ $((socket_now-outage_hint_mono)) -gt 900 ]; then
+            outage_hint_mono="$socket_now"
+            record_event tcp_absence_started "已读取到 GMS UID 的内核 Socket 但未发现 MCS TCP；开始连续缺失计时"
+        fi
+        socket_down_age=$((socket_now-outage_hint_mono))
+        previous_down_observed="$outage_hint_mono"; tcp_hint=absent
+        if [ "$socket_down_age" -ge 60 ] && [ "$socket_down_age" -le 900 ]; then
+            observed=disconnected; source=gms_socket_absence
+            [ "$previous_down_state" = disconnected ] ||
+                record_event tcp_absence_confirmed "GMS MCS TCP 连续缺失 $socket_down_age 秒，达到断联证据阈值"
         fi
         ;;
       *)
@@ -350,6 +507,7 @@ EOF_SOCKET
            [ $((nowm-sample_mono)) -gt 45 ]; then conn_since_mono="$nowm"; fi
         conn_key="$current_key"; state=connected; last_seen="$nowe"; missing_since=0; missing_epoch=0
         down_observed=0; outage_hint_mono=0; last_try_mono=0; retry_streak=0; conn_since=0
+        unknown_since_mono=0
         ;;
       connecting|disconnected)
         if [ "$state" != connecting ] && [ "$state" != disconnected ]; then
@@ -359,10 +517,12 @@ EOF_SOCKET
         [ "$down_observed" -gt 0 ] && [ "$down_observed" -le "$nowm" ] || down_observed="$nowm"
         [ "$outage_hint_mono" -gt 0 ] || outage_hint_mono="$nowm"
         state="$observed"; last_down="$nowe"; conn_key=; conn_since=0; conn_since_mono=0
+        unknown_since_mono=0
         ;;
       *)
         state=unknown; conn_key=; missing_since=0; missing_epoch=0; conn_since=0; conn_since_mono=0
         down_observed=0
+        [ "$unknown_since_mono" -gt 0 ] && [ "$unknown_since_mono" -le "$nowm" ] || unknown_since_mono="$nowm"
         [ "$outage_hint_mono" -le 0 ] || missing_epoch="$previous_missing_epoch"
         new_transport=; new_remote=
         ;;
@@ -387,7 +547,13 @@ write_evidence() {
 auto_recovery() {
     decision=not_disconnected
     auto_enabled || { decision=disabled; return 0; }
-    case "$state" in connecting|disconnected) :;; *) return 0;; esac
+    case "$state" in
+      connecting|disconnected) :;;
+      unknown)
+        [ "${BERRY_AUTO_GATE:-ready}" = ready ] || { decision=network_gate; return 0; }
+        keepalive_nudge; return 0;;
+      *) return 0;;
+    esac
     nowm="$(num "$(monotime)")"
     interval="$(retry_interval)"
     if [ "$last_try_mono" -gt 0 ] && [ "$nowm" -ge "$last_try_mono" ] && [ $((nowm-last_try_mono)) -lt "$interval" ]; then
@@ -405,7 +571,7 @@ auto_recovery() {
         decision=confirmation_recovered
         record_event recovery_confirmation_recovered "二次内核 Socket 采样已观察到 MCS TCP 建立；取消恢复"
     elif { [ "$state" = connecting ] || [ "$state" = disconnected ]; } && [ "$state" = "$first_state" ]; then
-        record_event recovery_confirmed "两次内核 Socket 采样均确认 $state，进入恢复请求"
+        record_event recovery_confirmed "两次内核 Socket 采样均确认 $state，进入分阶段恢复"
         request_reconnect auto
     else
         decision=confirmation_changed
@@ -423,13 +589,13 @@ status_json() {
     source=unavailable; duration=-1; close_code=; tcp_hint=none; native_reason=not_used; decision=not_evaluated
     if [ -f "$EVIDENCE" ]; then IFS='|' read -r source duration close_code tcp_hint native_reason decision < "$EVIDENCE" || :; fi
     case "$source" in
-      gms_socket|gms_socket_absence|gms_socket_absence_pending) :;;
+      gms_socket|gms_socket_absence|gms_socket_absence_pending|gms_socket_stalled) :;;
       *) state=unknown; source=unavailable; duration=-1; close_code=; tcp_hint=unknown; native_reason=not_used; decision=sample_unavailable;;
     esac
-    case "${decision:-}" in not_evaluated|not_disconnected|sample_unavailable|disabled|network_gate|cooldown|requested|request_failed|waiting_duration|confirmation_changed|confirmation_recovered|state_save_failed) :;; *) decision=not_evaluated;; esac
+    case "${decision:-}" in not_evaluated|not_disconnected|sample_unavailable|disabled|network_gate|cooldown|requested|request_failed|recovery_exhausted|keepalive_nudged|waiting_duration|confirmation_changed|confirmation_recovered|state_save_failed) :;; *) decision=not_evaluated;; esac
     case "$native_reason" in not_used) :;; *) native_reason=not_used;; esac
     case "$duration" in -1) :;; *) is_uint "$duration" || duration=-1;; esac
-    [ "$age" -ge 0 ] && [ "$age" -le 90 ] || state=stale
+    if [ "$source" != unavailable ]; then [ "$age" -ge 0 ] && [ "$age" -le 90 ] || state=stale; fi
     # Never present stale duration as live and never extrapolate past the sample.
     connected=0; missing=0
     [ "$state" = connected ] && [ "$duration" -ge 0 ] && connected="$duration"
@@ -493,12 +659,12 @@ case "${1:-status}" in
             decision=network_gate
         elif [ "$state" = unknown ]; then
             auto_recovery
-        elif [ "$source" != gms_socket ] && [ "$source" != gms_socket_absence ]; then
+        elif [ "$source" != gms_socket ] && [ "$source" != gms_socket_absence ] && [ "$source" != gms_socket_stalled ]; then
             decision=not_disconnected
         elif [ "$state" = connecting ] || [ "$state" = disconnected ]; then
             [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 2
             observe || exit $?
-            if { [ "$source" = gms_socket ] || [ "$source" = gms_socket_absence ]; } &&
+            if { [ "$source" = gms_socket ] || [ "$source" = gms_socket_absence ] || [ "$source" = gms_socket_stalled ]; } &&
                { [ "$state" = connecting ] || [ "$state" = disconnected ]; }; then
                 record_event rescue_confirmed '两次采样仍未观察到 MCS 连接，准备请求恢复'
                 request_reconnect rescue
@@ -517,9 +683,12 @@ case "${1:-status}" in
             record_event reconnect_skipped '当前应用无活动网络；未发送手动重连'
         elif [ "$state" = connecting ] || [ "$state" = disconnected ]; then
             request_reconnect manual
+        elif [ "$state" = unknown ]; then
+            record_event manual_reconnect_unverified '内核 Socket 证据不可用；按用户手动请求执行恢复序列，不推断断联'
+            request_reconnect manual
         else
             decision=not_disconnected
-            record_event reconnect_skipped 'GMS 已连接或状态不可确认；未发送手动重连'
+            record_event reconnect_skipped 'MCS TCP 已建立；未发送手动重连'
         fi
         write_evidence
         ;;
