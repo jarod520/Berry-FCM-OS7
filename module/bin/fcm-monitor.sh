@@ -353,6 +353,71 @@ retry_interval() {
     case "$retry_streak" in 0|1) echo 30;; 2) echo 45;; 3) echo 60;; *) echo 90;; esac
 }
 
+# Recovery triggers. Each stage is independent: a rejected command falls through to
+# the next one at once; an accepted one is followed by a kernel-socket re-sample and
+# "connected" ends the sequence. Verified-on-device triggers come first for the shell.
+#   MCS_HEARTBEAT / ACTION_HEARTBEAT_NOW / GTALK_HEARTBEAT  heartbeat broadcasts
+#   GCM_RECONNECT       reconnect broadcast (not exported on OriginOS 7; tried as a last resort)
+#   GCM_SERVICE_START   best-effort explicit start of GMS's own GcmService (unverified)
+# Never force-stops/restarts GMS and never alters DNS/VPN/proxy/routing.
+recovery_actions() {
+    case "$(id -u 2>/dev/null)" in
+      0) echo "GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT GTALK_RECONNECT GMS_INITIALIZE GCM_SERVICE_START";;
+      2000) echo "MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT GTALK_RECONNECT GMS_INITIALIZE GCM_RECONNECT GCM_SERVICE_START";;
+      *) return 1;;
+    esac
+}
+
+# Idempotent preparation: lift GMS out of app standby so broadcasts and its network
+# are not deferred. Failures are ignored.
+prepare_gms_for_recovery() {
+    "$AM_BIN" set-inactive --user 0 "$GMS" false >/dev/null 2>&1 || :
+    "$AM_BIN" set-standby-bucket --user 0 "$GMS" active >/dev/null 2>&1 || :
+    # Shell-UID-safe hardening used by common push-fix tools: Doze whitelist and
+    # background-run appops, so heartbeats and the MCS socket are not deferred.
+    "$CMD_BIN" deviceidle whitelist "+$GMS" >/dev/null 2>&1 || :
+    "$CMD_BIN" appops set "$GMS" RUN_IN_BACKGROUND allow >/dev/null 2>&1 || :
+    "$CMD_BIN" appops set "$GMS" RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1 || :
+}
+
+# Send one trigger; returns 0 when the system accepted it.
+send_recovery_action() {
+    trigger_label="$1"
+    case "$trigger_label" in
+      GCM_RECONNECT) trigger_action=com.google.android.intent.action.GCM_RECONNECT;;
+      MCS_HEARTBEAT) trigger_action=com.google.android.intent.action.MCS_HEARTBEAT;;
+      ACTION_HEARTBEAT_NOW) trigger_action=com.google.android.gms.gcm.ACTION_HEARTBEAT_NOW;;
+      GTALK_HEARTBEAT) trigger_action=com.google.android.intent.action.GTALK_HEARTBEAT;;
+      GTALK_RECONNECT) trigger_action=com.google.android.intent.action.GTALK_RECONNECT;;
+      GMS_INITIALIZE) trigger_action=com.google.android.gms.INITIALIZE;;
+      GCM_SERVICE_START) trigger_action=;;
+      *) return 1;;
+    esac
+    if [ "$trigger_label" = GCM_SERVICE_START ]; then
+        trigger_reply="$("$AM_BIN" startservice --user 0 -n "$GMS/.gcm.GcmService" 2>&1)"
+        trigger_rc=$?
+        [ "$trigger_rc" -eq 0 ] && printf '%s\n' "$trigger_reply" | grep -q 'Starting service' &&
+            ! printf '%s\n' "$trigger_reply" | grep -qiE 'Error|Exception|not allowed|Permission|not found'
+        return $?
+    fi
+    trigger_reply="$("$AM_BIN" broadcast --user 0 -a "$trigger_action" -p "$GMS" 2>&1)"
+    trigger_rc=$?
+    [ "$trigger_rc" -eq 0 ] && printf '%s\n' "$trigger_reply" | grep -q 'Broadcast completed:' &&
+        ! printf '%s\n' "$trigger_reply" | grep -qiE 'Permission Denial|SecurityException|not allowed|Error:|result=-[0-9]'
+}
+
+# After an accepted trigger give GMS up to 5 s to rebuild MCS; return early on a
+# connected socket, otherwise the caller moves on to the next trigger.
+settle_wait() {
+    [ "${BERRY_FCM_TEST_MODE:-0}" != 1 ] || return 0
+    settle_i=0
+    while [ "$settle_i" -lt 5 ]; do
+        sleep 1; settle_i=$((settle_i+1))
+        case "$(scan_sockets 2>/dev/null)" in connected\|*) return 0;; esac
+    done
+    return 0
+}
+
 # A continuous absence of a verified GMS UID-owned MCS socket is considered only
 # after 45 seconds. A fresh MCS socket is positive transport evidence; one absence
 # sample alone never creates an outage. Sampling gaps reset the continuity anchor.
@@ -380,25 +445,16 @@ request_reconnect() {
     sequence_requested=0
     sequence_index=0
     confirmation_unavailable=0
-    for action_label in GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT; do
-        case "$action_label" in
-          GCM_RECONNECT) action=com.google.android.intent.action.GCM_RECONNECT;;
-          MCS_HEARTBEAT) action=com.google.android.intent.action.MCS_HEARTBEAT;;
-          ACTION_HEARTBEAT_NOW) action=com.google.android.gms.gcm.ACTION_HEARTBEAT_NOW;;
-          GTALK_HEARTBEAT) action=com.google.android.intent.action.GTALK_HEARTBEAT;;
-        esac
+    prepare_gms_for_recovery
+    for action_label in $(recovery_actions); do
         sequence_index=$((sequence_index+1))
         attempts=$((attempts+1))
-        reply="$("$AM_BIN" broadcast --user 0 -a "$action" -p "$GMS" 2>&1)"
-        rc=$?
-        if [ "$rc" -eq 0 ] && printf '%s\n' "$reply" | grep -q 'Broadcast completed:' &&
-            ! printf '%s\n' "$reply" | grep -qiE 'Permission Denial|SecurityException|not allowed|Error:|result=-[0-9]'; then
+        if send_recovery_action "$action_label"; then
             sequence_requested=1
             last_result=requested
-            completion="$(printf '%s\n' "$reply" | grep 'Broadcast completed:' | tail -n 1)"
-            record_event reconnect_requested "$reason UID=0 $action_label exit=$rc $completion；等待内核复采确认（序列 $sequence_index/4）"
+            record_event reconnect_requested "$reason UID=0 $action_label 已被系统接受（序列 $sequence_index）；等待内核复采确认"
             save_state || return $?
-            [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 2
+            settle_wait
             if observe; then
                 case "$state" in
                   connected)
@@ -428,7 +484,7 @@ request_reconnect() {
             fi
         else
             [ "$sequence_requested" = 1 ] || last_result=failed
-            record_event reconnect_failed "$reason UID=0 $action_label exit=$rc；本命令未被系统接受，立即尝试下一种原生触发"
+            record_event reconnect_failed "$reason UID=0 $action_label exit=$trigger_rc；本命令未被系统接受，立即尝试下一种原生触发"
             save_state || return $?
         fi
     done
@@ -436,13 +492,13 @@ request_reconnect() {
     if [ "$sequence_requested" = 1 ]; then
         decision=recovery_exhausted
         if [ "$confirmation_unavailable" = 1 ]; then
-            record_event reconnect_sequence_exhausted "四种原生触发已执行，但至少一次内核复采不可用且未确认恢复；本轮结束，按退避间隔再次巡检"
+            record_event reconnect_sequence_exhausted "全部原生触发已执行，但至少一次内核复采不可用且未确认恢复；本轮结束，按退避间隔再次巡检"
         else
-            record_event reconnect_sequence_exhausted "四种原生触发均未使内核 MCS TCP 恢复；本轮结束，按退避间隔再次巡检"
+            record_event reconnect_sequence_exhausted "全部原生触发均未使内核 MCS TCP 恢复；本轮结束，按退避间隔再次巡检"
         fi
     else
         decision=request_failed
-        record_event reconnect_sequence_failed "四种原生触发均未被系统接受；本轮结束，按退避间隔再次巡检"
+        record_event reconnect_sequence_failed "全部原生触发均未被系统接受；本轮结束，按退避间隔再次巡检"
     fi
     save_state
 }

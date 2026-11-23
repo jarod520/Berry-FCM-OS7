@@ -54,6 +54,7 @@ esac
 MOCK
 cat > "$TMP/bin/am" <<'MOCK'
 #!/bin/sh
+case "$1" in set-inactive|set-standby-bucket) exit 0;; esac
 echo "$*" >> "$MCS_AM_LOG"
 if [ "${MCS_AM_FAIL:-0}" = 1 ] ||
    { [ -n "${MCS_AM_FAIL_ACTION:-}" ] && printf '%s' "$*" | grep -Fq "$MCS_AM_FAIL_ACTION"; }; then
@@ -139,7 +140,7 @@ settime 10061
 export MCS_AM_FAIL_ACTION=GCM_RECONNECT
 run monitor >/dev/null
 unset MCS_AM_FAIL_ACTION
-requests 4
+requests 7
 grep -Fq 'GCM_RECONNECT' "$TMP/am.log" || fail "first recovery stage missing"
 grep -Fq 'MCS_HEARTBEAT' "$TMP/am.log" || fail "second recovery stage missing after first failure"
 grep -Fq 'ACTION_HEARTBEAT_NOW' "$TMP/am.log" || fail "third recovery stage missing"
@@ -156,7 +157,7 @@ assert_json "$j" fcm_last_result=requested
 # A second patrol inside the backoff window must not repeat the whole sequence.
 settime 10062
 run monitor >/dev/null
-requests 4
+requests 7
 j="$(sh "$MON" snapshot)"
 assert_json "$j" fcm_recovery_decision=cooldown
 
@@ -167,7 +168,7 @@ run monitor >/dev/null
 j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_last_result=restored
-requests 4
+requests 7
 
 # If an intermediate trigger restores the socket, stop the sequence immediately.
 echo connecting > "$TMP/mode"
@@ -178,7 +179,7 @@ settime 10124
 export MCS_AM_CONNECT_ON_ACTION=MCS_HEARTBEAT
 run monitor >/dev/null
 unset MCS_AM_CONNECT_ON_ACTION
-requests 6
+requests 9
 j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_last_result=restored
@@ -191,13 +192,13 @@ assert_json "$j" fcm_state=disconnected
 assert_json "$j" fcm_tcp_hint=stalled
 settime 10213
 run monitor >/dev/null
-requests 10
+requests 16
 echo connected > "$TMP/mode"
 settime 10214
 run monitor >/dev/null
 j="$(run status)"
 assert_json "$j" fcm_state=connected
-requests 10
+requests 16
 
 # A connected socket with no TCP data received for 30 minutes is also suspected stalled.
 echo idle > "$TMP/mode"
@@ -207,33 +208,33 @@ assert_json "$j" fcm_state=disconnected
 assert_json "$j" fcm_tcp_hint=stalled
 settime 10230
 run monitor >/dev/null
-requests 14
+requests 23
 echo connected > "$TMP/mode"
 settime 10231
 run monitor >/dev/null
 j="$(run status)"
 assert_json "$j" fcm_state=connected
-requests 14
+requests 23
 
 # Continuous, successfully-readable absence is timed; one absent sample is not enough.
 echo absent > "$TMP/mode"
 settime 10257
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
-requests 14
+requests 23
 settime 10302
 j="$(run status)"
 assert_json "$j" fcm_state=disconnected
 settime 10317
 run monitor >/dev/null
-requests 18
+requests 30
 
 # An unreadable ownership/source sample is unavailable, not falsely disconnected.
 echo unknown > "$TMP/mode"
 settime 10318
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
-requests 18
+requests 30
 
 # When ss cannot expose UID, the root-readable /proc TCP tables are the fallback.
 mkdir -p "$TMP/proc"
@@ -251,7 +252,7 @@ j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=gms_socket
 assert_json "$j" fcm_tcp_hint=established
-requests 18
+requests 30
 
 # A GMS-owned HTTPS socket to an unrelated peer must remain unknown even when
 # mtalk DNS candidates are available; it must never age into false absence.
@@ -262,7 +263,7 @@ settime 10320
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
 assert_json "$j" fcm_source=unavailable
-requests 18
+requests 30
 
 # If a recovery follow-up cannot atomically publish evidence, it must not
 # save the in-memory sample state and create a false state/evidence generation.
@@ -285,14 +286,14 @@ exec "$REAL_MV" "$@"
 MOCK
 chmod +x "$TMP/bin/mv"
 echo 0 > "$TMP/data/evidence-mv-count"
-export MCS_FAIL_EVIDENCE_MV=1 MCS_FAIL_EVIDENCE_MV_AT=6 MCS_AM_INCREMENT_UPTIME=1
+export MCS_FAIL_EVIDENCE_MV=1 MCS_FAIL_EVIDENCE_MV_AT=8 MCS_AM_INCREMENT_UPTIME=1
 run monitor >/dev/null
 unset MCS_FAIL_EVIDENCE_MV MCS_FAIL_EVIDENCE_MV_AT MCS_AM_INCREMENT_UPTIME
-requests 22
-test "$(cat "$TMP/data/evidence-mv-count")" = 7
+requests 37
+test "$(cat "$TMP/data/evidence-mv-count")" = 9
 state_sample_uptime="$(awk -F'|' '{print $28}' "$TMP/data/mcs-monitor.state")"
 evidence_sample_uptime="$(awk -F'|' '{print $7}' "$TMP/data/mcs-evidence")"
-[ "$state_sample_uptime" = 10383 ] || fail "failed final follow-up evidence publish advanced state sample"
+[ "$state_sample_uptime" = 10385 ] || fail "failed final follow-up evidence publish advanced state sample"
 [ "$evidence_sample_uptime" = "$state_sample_uptime" ] || fail "failed follow-up overwrote last committed evidence generation"
 j="$(sh "$MON" snapshot)"
 assert_json "$j" fcm_state=connecting
@@ -310,7 +311,7 @@ settime 10460
 export MCS_AM_UNKNOWN_ON_ACTION=GCM_RECONNECT
 run monitor >/dev/null
 unset MCS_AM_UNKNOWN_ON_ACTION
-requests 4
+requests 7
 for action in GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT; do
     grep -Fq "$action" "$TMP/am.log" || fail "unknown follow-up stopped recovery before $action"
 done
@@ -319,4 +320,4 @@ assert_json "$j" fcm_state=unknown
 assert_json "$j" fcm_recovery_decision=recovery_exhausted
 
 [ ! -s "$TMP/dumpsys.log" ] || fail "dumpsys was invoked by the monitor"
-echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO stall recovery, same-cycle four-trigger escalation, evidence-first commit protection, and dump independence"
+echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO stall recovery, same-cycle seven-trigger escalation, evidence-first commit protection, and dump independence"

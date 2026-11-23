@@ -288,6 +288,18 @@ send_recovery_action() {
         ! printf '%s\n' "$trigger_reply" | grep -qiE 'Permission Denial|SecurityException|not allowed|Error:|result=-[0-9]'
 }
 
+# After an accepted trigger give GMS up to 5 s to rebuild MCS; return early on a
+# connected socket, otherwise the caller moves on to the next trigger.
+settle_wait() {
+    [ "${BERRY_FCM_TEST_MODE:-0}" != 1 ] || return 0
+    settle_i=0
+    while [ "$settle_i" -lt 5 ]; do
+        sleep 1; settle_i=$((settle_i+1))
+        case "$(scan_sockets 2>/dev/null)" in connected\|*) return 0;; esac
+    done
+    return 0
+}
+
 request_reconnect() {
     reason="$1"; nowm="$(num "$(monotime)")"; nowe="$(num "$(now_epoch)")"
     # An explicit user request may run while kernel evidence is unavailable;
@@ -329,7 +341,7 @@ request_reconnect() {
                 record_event reconnect_state_commit_failed "广播已提交但恢复结果状态写入失败；保留请求前已提交的退避锚点"
                 return 0
             fi
-            [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 2
+            settle_wait
             if observe; then
                 case "$state" in
                   connected)
