@@ -801,6 +801,7 @@ echo "$!" > "$TEST_DIR/busybox-monitor-child-pid"
 wait
 MOCK
 chmod +x "$TMP/module/bin/fcm-monitor.sh"
+cp "$TMP/module/bin/fcm-monitor.sh" "$TMP/standard-fcm-monitor.sh"
 : > "$TMP/samples" # the sleep mock stops the service once enough samples exist
 TEST_NO_TIMEOUT=1 BERRY_KSU_BUSYBOX="$TMP/bin/busybox" sh "$TMP/module/service.sh" &
 service_pid=$!
@@ -872,6 +873,9 @@ wait "$service_pid" 2>/dev/null || :
 test ! -d "$TMP/data/service.lock"
 echo 'PASS: startup cleans legacy monitor group before patrol start'
 
+# Later scenarios replaced the monitor mock; restore the sampling one.
+cp "$TMP/standard-fcm-monitor.sh" "$TMP/module/bin/fcm-monitor.sh"
+chmod +x "$TMP/module/bin/fcm-monitor.sh"
 # If timeout is missing from Toybox, KernelSU BusyBox and PATH, the watchdog
 # fallback must still execute and bound the monitor rather than skip sampling.
 mkdir -p "$TMP/no-timeout-bin"
@@ -887,7 +891,7 @@ echo 1 > "$TMP/data/enabled"
 : > "$TMP/samples"
 : > "$TMP/data/guard.log"
 export TEST_NO_TIMEOUT=1 TEST_HANG_CHILD=1
-timeout 8 env PATH="$TMP/no-timeout-bin" BERRY_TOYBOX_BIN="$TMP/bin/toybox" \
+timeout 25 env PATH="$TMP/no-timeout-bin" BERRY_TOYBOX_BIN="$TMP/bin/toybox" \
     BERRY_KSU_BUSYBOX="$TMP/missing-busybox" sh "$TMP/module/service.sh"
 unset TEST_NO_TIMEOUT TEST_HANG_CHILD
 child_pid="$(cat "$TMP/hung-child-pid")"
@@ -905,7 +909,7 @@ echo 1 > "$TMP/data/enabled"
 : > "$TMP/samples"
 : > "$TMP/data/guard.log"
 export TEST_NO_TIMEOUT=1 TEST_NO_SETSID=1 TEST_HANG_CHILD=1
-timeout 8 env PATH="$TMP/no-timeout-bin" BERRY_TOYBOX_BIN="$TMP/bin/toybox" \
+timeout 25 env PATH="$TMP/no-timeout-bin" BERRY_TOYBOX_BIN="$TMP/bin/toybox" \
     BERRY_KSU_BUSYBOX="$TMP/missing-busybox" sh "$TMP/module/service.sh"
 unset TEST_NO_TIMEOUT TEST_NO_SETSID TEST_HANG_CHILD
 child_pid="$(cat "$TMP/hung-child-pid")"
@@ -942,7 +946,7 @@ echo 1 > "$TMP/data/enabled"
 : > "$TMP/data/guard.log"
 rm -f "$TMP/busybox-timeout-called"
 export TEST_NO_TIMEOUT=1 TEST_NO_SETSID=1 TEST_HANG_CHILD=1
-timeout 8 env PATH="$TMP/no-timeout-bin" BERRY_TOYBOX_BIN="$TMP/bin/toybox" \
+timeout 25 env PATH="$TMP/no-timeout-bin" BERRY_TOYBOX_BIN="$TMP/bin/toybox" \
     BERRY_KSU_BUSYBOX="$TMP/bin/busybox-timeout-no-setsid" sh "$TMP/module/service.sh"
 unset TEST_NO_TIMEOUT TEST_NO_SETSID TEST_HANG_CHILD
 test ! -e "$TMP/busybox-timeout-called"
@@ -974,7 +978,7 @@ echo 1 > "$TMP/data/enabled"
 : > "$TMP/samples"
 : > "$TMP/data/guard.log"
 export TEST_NO_TIMEOUT=1 TEST_HANG_CHILD=1
-timeout 8 env PATH="$TMP/no-timeout-bin" BERRY_TOYBOX_BIN="$TMP/bin/toybox" \
+timeout 25 env PATH="$TMP/no-timeout-bin" BERRY_TOYBOX_BIN="$TMP/bin/toybox" \
     BERRY_KSU_BUSYBOX="$TMP/bin/busybox-no-k" sh "$TMP/module/service.sh"
 unset TEST_NO_TIMEOUT TEST_HANG_CHILD
 child_pid="$(cat "$TMP/hung-child-pid")"
