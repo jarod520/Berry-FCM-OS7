@@ -231,8 +231,11 @@ if [ "${TEST_KILL_PATROL:-0}" = 1 ] && [ ! -e "$TEST_DIR/kill.done" ] && [ -s "$
 fi
 if [ "${TEST_KILL_PATROL:-0}" = 1 ] && [ "$(grep -c patrol_supervisor_start "$TEST_DIR/data/guard.log" 2>/dev/null || true)" -ge 2 ]; then rm -f "$TEST_DIR/module/module.prop"; fi
 if [ "$(wc -l < "$TEST_DIR/samples")" -ge 3 ]; then
-    [ -e "$TEST_DIR/fix.done" ] || touch "$TEST_DIR/samples_during_fix"
-    rm -f "$TEST_DIR/module/module.prop"
+    if [ -e "$TEST_DIR/fix.done" ]; then
+        rm -f "$TEST_DIR/module/module.prop"
+    else
+        touch "$TEST_DIR/samples_during_fix"
+    fi
 fi
 MOCK
 cat > "$TMP/module/bin/wake-timer-arm64" <<'MOCK'
