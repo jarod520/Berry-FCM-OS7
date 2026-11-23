@@ -326,7 +326,15 @@ if [ "$1" = --list ]; then
 fi
 case "$1" in
     setsid) shift
-        exec python3 -c 'import os,sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$@"
+        exec python3 -c 'import os,sys
+try:
+ os.setsid()
+except OSError:
+ os.setpgid(0,0)
+ pid=os.fork()
+ if pid: os._exit(0)
+ os.setsid()
+os.execvp(sys.argv[1], sys.argv[1:])' "$@"
         ;;
     kill) shift; exec /bin/kill "$@";;
     timeout) shift;;
