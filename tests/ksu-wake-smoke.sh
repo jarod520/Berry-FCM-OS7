@@ -201,7 +201,13 @@ hot_enabled_line="$(grep -n 'berry_fcm_ksu/enabled' "$ROOT/module/hotinstall.sh"
 hot_stop_line="$(grep -n '^if is_guardian' "$ROOT/module/hotinstall.sh" | head -n 1 | cut -d: -f1)"
 [ "$hot_stop_line" -lt "$hot_enabled_line" ]
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+trap 'rc=$?; if [ "$rc" -ne 0 ]; then
+    echo "KSU wake smoke failed; guard.log follows:" >&2
+    cat "$TMP/data/guard.log" >&2 2>/dev/null || :
+    echo "KSU wake smoke lock/process artifacts:" >&2
+    find "$TMP/data" -maxdepth 3 -type f -print -exec cat {} \; >&2 2>/dev/null || :
+fi
+rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/data" "$TMP/module/bin" "$TMP/bin"
 export TEST_DIR="$TMP"
 export PATH="$TMP/bin:$PATH"
