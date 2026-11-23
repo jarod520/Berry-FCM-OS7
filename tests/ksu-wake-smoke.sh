@@ -325,7 +325,9 @@ if [ "$1" = --list ]; then
     exit 0
 fi
 case "$1" in
-    setsid) shift; exec /usr/bin/setsid "$@";;
+    setsid) shift
+        exec python3 -c 'import os,sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$@"
+        ;;
     kill) shift; exec /bin/kill "$@";;
     timeout) shift;;
     *) exit 2;;
