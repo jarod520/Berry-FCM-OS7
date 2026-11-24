@@ -19,6 +19,7 @@ PM_BIN="${BERRY_PM_BIN:-pm}"
 AM_BIN="${BERRY_AM_BIN:-am}"
 UPTIME_FILE="${BERRY_UPTIME_FILE:-/proc/uptime}"
 BOOT_ID_FILE="${BERRY_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}"
+PROC_NET_DIR="${BERRY_PROC_NET_DIR:-/proc/net}"
 
 if [ "${BERRY_FCM_TEST_MODE:-0}" != 1 ] && [ "${BERRY_FCM_ADB_SHELL:-0}" != 1 ]; then
     [ "$(id -u)" = 0 ] || { echo 'ERROR: 需要 Root / ADB shell 权限' >&2; exit 10; }
@@ -57,7 +58,9 @@ load_state() {
     case "$state" in connected|connecting|disconnected|unknown|never_seen) : ;; *) state=unknown;; esac
     case "$last_result" in none|requested|failed|restored) : ;; *) last_result=none;; esac
     case "$last_try_reason" in none|auto|manual|rescue) : ;; *) last_try_reason=none;; esac
-    if [ -n "$prev_b" ] && [ "$prev_b" != "$b" ]; then
+    # An unreadable boot id is not a reboot: keep the stored one.
+    [ -n "$b" ] || b="$prev_b"
+    if [ -n "$prev_b" ] && [ -n "$b" ] && [ "$prev_b" != "$b" ]; then
         state=never_seen; conn_key=; conn_since=0; conn_since_mono=0; missing_since=0; missing_epoch=0
         last_try_mono=0; transport=; remote=; sample_epoch=0; sample_mono=0; down_observed=0; retry_streak=0; outage_hint_mono=0
         unknown_since_mono=0; last_nudge_mono=0
@@ -129,7 +132,7 @@ gms_uid() {
     printf '%s\n' "$uid"
 }
 
-scan_sockets() {
+scan_ss() {
     uid="$(gms_uid 2>/dev/null)" || { printf 'unknown||||gms_uid_unavailable\n'; return; }
     command -v "$SS_BIN" >/dev/null 2>&1 || { printf 'unknown||||ss_unavailable\n'; return; }
     # -i adds TCP_INFO (unacked/retrans/lastrcv) where the ss build supports it.
@@ -222,6 +225,48 @@ scan_sockets() {
         fi;;
     esac
     printf '%s\n' "$result"
+}
+
+# Kernel TCP tables carry the owning UID and are readable by the ADB shell on most
+# builds, so they back up a redacted or empty ss. Absence is trusted only when the
+# tables prove ownership is visible (at least one GMS-UID socket is listed).
+scan_proc_net() {
+    uid="$(gms_uid 2>/dev/null)" || { printf 'unknown||||gms_uid_unavailable\n'; return; }
+    [ -r "$PROC_NET_DIR/tcp" ] || { printf 'unknown||||proc_net_tcp_unreadable\n'; return; }
+    for table in "$PROC_NET_DIR/tcp" "$PROC_NET_DIR/tcp6"; do
+        [ -r "$table" ] || continue
+        awk -v u="$uid" '
+          NR > 1 && $8 == u {
+            visible=1
+            split($3,a,":"); port=toupper(a[2]); st=$4; lp=toupper(substr($2,index($2,":")+1))
+            if (port=="146C" || port=="146D" || port=="146E") {
+              tp="tcp" (port=="146C"?5228:(port=="146D"?5229:5230))
+              if (st=="01" && rank<3) {rank=3; kind="connected"; transport=tp; key=$2 ">" $3 "#" $10}
+              else if (st=="02" && rank<1) {rank=1; kind="connecting"; transport=tp; key=$2 ">" $3 "#" $10}
+            } else if (port=="01BB" && st=="01") {unverified443=1}
+          }
+          END {
+            if (rank>0) printf "%s|%s||%s|\n",kind,transport,key
+            else if (unverified443) print "unknown||||proc_net_443_unverified"
+            else if (visible) print "absent||||proc_net_no_mcs_socket"
+            else print "unknown||||proc_net_gms_socket_not_visible"
+          }' "$table"
+    done | awk -F'|' '
+      $1=="connected" {connected=$0}
+      $1=="connecting" && !connecting {connecting=$0}
+      $1=="unknown" && !unknown {unknown=$0}
+      $1=="absent" {absent=$0}
+      END {if(connected) print connected; else if(connecting) print connecting; else if(absent) print absent; else if(unknown) print unknown; else print "unknown||||proc_net_unavailable"}'
+}
+
+scan_sockets() {
+    scan_result="$(scan_ss)"
+    case "$scan_result" in
+      unknown\|\|\|\|ss_unavailable|unknown\|\|\|\|ss_failed|unknown\|\|\|\|ss_uid_metadata_unavailable|unknown\|\|\|\|ss_gms_socket_not_visible)
+        proc_result="$(scan_proc_net)"
+        case "$proc_result" in unknown\|\|\|\|proc_net_tcp_unreadable|unknown\|\|\|\|gms_uid_unavailable) :;; *) scan_result="$proc_result";; esac;;
+    esac
+    printf '%s\n' "$scan_result"
 }
 
 # Current state and recovery decisions come exclusively from GMS-UID kernel Socket evidence.

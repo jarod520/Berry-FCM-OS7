@@ -138,6 +138,20 @@ export MCS_SS_MODE=no_uid
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
 
+# A redacted ss falls back to the kernel TCP tables, which carry the owning UID.
+mkdir -p "$TMP/procnet"
+cat > "$TMP/procnet/tcp" <<'TCP'
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0200000A:B000 BC9DFA8E:146C 01 00000000:00000000 00:00000000 00000000 10200        0 777 1 0 0 0 0 0
+TCP
+export BERRY_PROC_NET_DIR="$TMP/procnet"
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+printf '%s\n' '  sl  local_address rem_address   st' > "$TMP/procnet/tcp"
+j="$(run status)"
+assert_json "$j" fcm_state=unknown
+unset BERRY_PROC_NET_DIR
+
 # Legacy dump-derived connected/disconnected state is invalidated on upgrade.
 printf 'test-boot|connected|old|0|10000|1700010000|0|0|0|0|0|none|0|0|tcp5228|old-peer|10000|none|0|0|0|0|0\n' > "$TMP/data/mcs-monitor.state"
 printf 'gms|202|ERR_IO_RST_HB|none|none|not_evaluated\n' > "$TMP/data/mcs-evidence"
