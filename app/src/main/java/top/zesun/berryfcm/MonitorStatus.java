@@ -7,8 +7,8 @@ final class MonitorStatus {
     enum State {
         AUTH_REQUIRED("需要授权"), DISABLED("监控未开启"), NOT_RUNNING("监控未运行"),
         WAITING("等待有效检查"), FAILED("连接检查失败"), UNKNOWN("暂无有效状态样本"),
-        CONNECTED("FCM 已连接"), CONNECTING("FCM 正在重连（尚未连接）"),
-        DISCONNECTED("FCM 已断开");
+        CONNECTED("FCM 长连接已建立"), CONNECTING("FCM 长连接建立中"),
+        DISCONNECTED("FCM 长连接未建立");
         final String label;
         State(String label) { this.label = label; }
     }

@@ -81,6 +81,10 @@ save_state() {
         rm -f "$tmp"
         return 1
     fi
+    if [ "$boot_changed" = 1 ]; then
+        boot_changed=0
+        record_event reboot '设备重启：清除上一启动周期的连接计时，保留历史事件'
+    fi
 }
 
 record_event() {

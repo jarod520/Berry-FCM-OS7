@@ -290,7 +290,7 @@ public final class MonitorActivity extends Ui {
                     : parts[1].equals("tcp_absence_started") ? "TCP 缺失计时开始"
                     : parts[1].equals("tcp_absence_confirmed") ? "TCP 缺失确认断联"
                     : parts[1].equals("down_reconfirmed") ? "再次确认断联"
-                    : parts[1].equals("connection_down") ? "确认 FCM 已断开"
+                    : parts[1].equals("connection_down") ? "确认 FCM 长连接未建立"
                     : parts[1].equals("connection_restored") ? "原生状态恢复"
                     : parts[1].equals("reconnect_skipped") ? "恢复请求跳过"
                     : parts[1].equals("watchdog_fired") ? "系统兜底闹钟触发"
