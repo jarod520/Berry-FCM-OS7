@@ -52,6 +52,16 @@ case "$mode" in
   *) exit 2;;
 esac
 MOCK
+# BusyBox-style flock: "flock [-sxun] FILE PROG ARGS"; the numeric FD form takes no program.
+cat > "$TMP/bin/flock" <<'MOCK'
+#!/bin/sh
+while [ $# -gt 0 ]; do case "$1" in -*) shift;; *) break;; esac; done
+target="$1"; shift
+case "$target" in ''|*[!0-9]*) :;; *) [ $# -eq 0 ] || { echo "flock: Max 1 argument" >&2; exit 1; };; esac
+[ $# -gt 0 ] || exit 0
+exec "$@"
+MOCK
+chmod +x "$TMP/bin/flock"
 cat > "$TMP/bin/am" <<'MOCK'
 #!/bin/sh
 case "$1" in set-inactive|set-standby-bucket) exit 0;; esac

@@ -835,7 +835,7 @@ with_flock() {
     case "$lock_result_pid" in ''|*[!0-9]*) return 14;; esac
     lock_result="$DATA/mcs-monitor.lock.result.$lock_result_pid"
     rm -f "$lock_result" "$lock_result.tmp."*
-    "$@" -xn 9 sh "$0" "$command" __locked__ "$lock_result"
+    "$@" -xn "$DATA/mcs-monitor.lock" sh "$0" "$command" __locked__ "$lock_result"
     flock_rc=$?
     if [ ! -s "$lock_result" ]; then
         rm -f "$lock_result" "$lock_result.tmp."*
@@ -877,11 +877,11 @@ case "$command" in
     status|monitor|reconnect|reset-history)
         busybox="${BERRY_KSU_BUSYBOX:-/data/adb/ksu/bin/busybox}"
         if [ -x /system/bin/flock ]; then
-            with_flock /system/bin/flock 9>>"$DATA/mcs-monitor.lock"
+            with_flock /system/bin/flock
         elif [ -x "$busybox" ] && "$busybox" --list 2>/dev/null | grep -qx flock; then
-            with_flock "$busybox" flock 9>>"$DATA/mcs-monitor.lock"
+            with_flock "$busybox" flock
         elif command -v flock >/dev/null 2>&1; then
-            with_flock flock 9>>"$DATA/mcs-monitor.lock"
+            with_flock flock
         else
             lock_boot="$(boot_id | tr -cd 'A-Za-z0-9-')"
             [ -n "$lock_boot" ] || exit 11
