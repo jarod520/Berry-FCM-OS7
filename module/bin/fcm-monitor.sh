@@ -835,7 +835,7 @@ with_flock() {
     case "$lock_result_pid" in ''|*[!0-9]*) return 14;; esac
     lock_result="$DATA/mcs-monitor.lock.result.$lock_result_pid"
     rm -f "$lock_result" "$lock_result.tmp."*
-    "$@" -xn 9 sh "$0" "$command" --locked "$lock_result"
+    "$@" -xn 9 sh "$0" "$command" __locked__ "$lock_result"
     flock_rc=$?
     if [ ! -s "$lock_result" ]; then
         rm -f "$lock_result" "$lock_result.tmp."*
@@ -853,7 +853,7 @@ with_flock() {
 }
 
 command="${1:-status}"
-if [ "${2:-}" = --locked ]; then
+if [ "${2:-}" = __locked__ ]; then
     lock_result="${3:-}"
     case "$lock_result" in "$DATA"/mcs-monitor.lock.result.*) :;; *) exit 14;; esac
     if write_lock_owner; then

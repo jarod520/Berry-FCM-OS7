@@ -320,4 +320,7 @@ assert_json "$j" fcm_state=unknown
 assert_json "$j" fcm_recovery_decision=recovery_exhausted
 
 [ ! -s "$TMP/dumpsys.log" ] || fail "dumpsys was invoked by the monitor"
+# BusyBox flock permutes options: the child marker must never look like one
+# ("flock: Unknown option 'locked'" left the monitor permanently stale on device).
+! grep -Eq -- '"\$command" --[a-z]' "$ROOT/module/bin/fcm-monitor.sh" || fail "flock child argument starts with a dash"
 echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO stall recovery, same-cycle seven-trigger escalation, evidence-first commit protection, and dump independence"
