@@ -18,7 +18,7 @@ import java.util.concurrent.Executors;
 public final class MonitorActivity extends Ui {
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private TextView headline, current, technical, events, eventsFull, recoveryEvents, runtimeEvents, environmentEvents, manualResult, reconnectHint;
+    private TextView headline, current, technical, events, eventsFull, runtimeEvents, environmentEvents, manualResult, reconnectHint;
     private Button checkButton, reconnectButton;
     private Switch enabled, automatic;
     private final Runnable update = new Runnable() {
@@ -87,7 +87,7 @@ public final class MonitorActivity extends Ui {
         technical.setTextIsSelectable(true);
         extra.addView(technical);
 
-        LinearLayout timeline = card("最新事件", "显示升级前保留的 GMS 历史辅助事件；不参与当前状态判定。");
+        LinearLayout timeline = card("最新事件", "最近的连接、断联与恢复记录。");
         events = text("暂无记录", 13, false, ink);
         events.setTextIsSelectable(true);
         timeline.addView(events);
@@ -95,10 +95,6 @@ public final class MonitorActivity extends Ui {
         eventsFull = text("暂无历史记录", 13, false, ink);
         eventsFull.setTextIsSelectable(true);
         history.addView(eventsFull);
-        LinearLayout recovery = disclosure(timeline, "恢复与异常记录", false);
-        recoveryEvents = text("暂无恢复记录", 13, false, ink);
-        recoveryEvents.setTextIsSelectable(true);
-        recovery.addView(recoveryEvents);
         LinearLayout runtime = disclosure(timeline, "熄屏巡检与唤醒记录", false);
         runtimeEvents = text("暂无巡检记录", 13, false, ink);
         runtimeEvents.setTextIsSelectable(true);
@@ -165,8 +161,7 @@ public final class MonitorActivity extends Ui {
                 : "后台正在自动重试，无需手动重复配对。";
         String durationLine = "";
         if ("gms_socket".equals(stateSource) && "connected".equals(state))
-            durationLine = "\n" + MonitorStatus.connectedDuration(-1,
-                    j.optLong("fcm_observed_up_seconds", -1));
+            durationLine = "\n" + MonitorStatus.connectedDuration(Math.max(j.optLong("fcm_connected_seconds", 0), j.optLong("fcm_observed_up_seconds", 0)));
         else if (("connecting".equals(state) || "disconnected".equals(state))
                 && j.optLong("fcm_observed_down_seconds", -1) >= 0)
             durationLine = "\n已观察未连接：" + MonitorStatus.duration(j.optLong("fcm_observed_down_seconds"));
@@ -174,7 +169,6 @@ public final class MonitorActivity extends Ui {
                 + (age < 0 ? "（上次运行的记录）" : "（" + age + " 秒前）"))
                 + (prefs.monitorEnabled() && sample > 0 && age >= 0 && age <= 90
                     && !stateEvidence && lastError.isEmpty() ? "\n原因：" + nativeReason : "")
-                + "\n升级前保留的 GMS 历史关闭事件：" + j.optInt("fcm_native_close_events", 0) + " 条（仅历史辅助信息）"
                 + durationLine
                 + (attempt > 0 ? "\n上次检查尝试：" + time(attempt / 1000) : "")
                 + (stateEvidence && ("connecting".equals(state) || "disconnected".equals(state))
@@ -194,7 +188,7 @@ public final class MonitorActivity extends Ui {
         else if (!FcmMonitorService.isRunning()) current.setText("监控未运行，请点击下方按钮启动。");
         JSONObject env = j.optJSONObject("app_environment");
         technical.setText((age < 0 || age > 90 || !ready || !prefs.monitorEnabled()
-                || !lastError.isEmpty() ? "以下是历史证据，不代表当前连接。\n" : "")
+                || !lastError.isEmpty() ? "以下为历史数据。\n" : "")
                 + "原始状态：" + state
                 + "\n状态来源：" + ("gms_socket".equals(stateSource) ? "GMS UID 的精确 MCS TCP 正向证据"
                     : "gms_socket_absence".equals(stateSource) ? "内核 Socket 连续 MCS TCP 缺失证据"
@@ -208,8 +202,7 @@ public final class MonitorActivity extends Ui {
                     + " · 屏幕 " + localValue(env.optString("screen"))
                     + " · Doze " + localValue(env.optString("device_idle"))
                     + "\nGMS Doze 白名单：" + localValue(env.optString("gms_doze_exempt")))
-                + "\n历史最后一次关闭错误（不代表现在断开）：" + j.optString("fcm_last_close_code", "无")
-                + "\n保留的历史连接成功事件：" + j.optInt("fcm_native_connected_events", 0) + " 条"
+                + "\n最后一次关闭错误：" + j.optString("fcm_last_close_code", "无")
                 + "\n上次观察在线：" + time(j.optLong("fcm_last_seen", 0))
                 + "\n最近一次历史断开：" + time(j.optLong("fcm_disconnect_since", 0))
                 + "\n最近恢复观测：" + time(j.optLong("fcm_last_restore", 0))
@@ -221,12 +214,10 @@ public final class MonitorActivity extends Ui {
                 + "\n累计任务持锁：" + MonitorStatus.duration(FcmMonitorService.transactionWakeMs(this) / 1000)
                 + "\n历史已发送的恢复请求：" + j.optInt("fcm_attempts", 0) + " 次"
                 + "\n连续恢复尝试次数：" + j.optInt("fcm_retry_streak", 0) + " 次"
-                + "\n历史上次恢复请求结果：" + recoveryLabel(j.optString("fcm_last_result", "none"))
-                + "\n注意：升级前保留的 GMS 关闭事件仅供历史参考，同一时刻多网络关闭不等于多次整体断开。");
+                + "\n历史上次恢复请求结果：" + recoveryLabel(j.optString("fcm_last_result", "none")));
         String[] lines = FcmMonitorService.lastEvents(this).split("\n");
         events.setText(eventText(lines, 6));
         eventsFull.setText(eventText(lines, 24));
-        recoveryEvents.setText(eventText(FcmMonitorService.lastRecoveryEvents(this).split("\\n"), 24));
         runtimeEvents.setText(eventText(FcmMonitorService.lastRuntimeEvents(this).split("\\n"), 36));
         environmentEvents.setText(eventText(FcmMonitorService.lastEnvironmentEvents(this).split("\\n"), 24));
     }

@@ -8,7 +8,6 @@ GMS=com.google.android.gms
 DATA="${BERRY_FCM_DATA:-/data/adb/berry_fcm_apk}"
 STATE="$DATA/mcs-monitor.state"
 EVENTS="$DATA/mcs-monitor-events.log"
-NATIVE_EVENTS="$DATA/mcs-native-events.log"
 EVIDENCE="$DATA/mcs-evidence"
 DNS_IPS="$DATA/mtalk-dns-ips.txt"
 LEARNED_IPS="$DATA/mtalk-learned-ips.txt"
@@ -508,7 +507,7 @@ EOF_SOCKET
         new_transport="$socket_transport"; new_remote="$socket_remote"
         previous_down_observed=0; outage_hint_mono=0
         [ "$previous_down_state" = connected ] ||
-            record_event socket_connected "内核 Socket 证据观察到 GMS UID 的 MCS TCP 已建立；只证明传输层连接"
+            record_event socket_connected "GMS 已连接（MCS TCP 已建立）"
         ;;
       connecting)
         observed=connecting; source=gms_socket
@@ -664,11 +663,6 @@ status_json() {
     connected=0; missing=0
     [ "$state" = connected ] && [ "$duration" -ge 0 ] && connected="$duration"
     { [ "$state" = connecting ] || [ "$state" = disconnected ]; } && [ "$duration" -ge 0 ] && missing="$duration"
-    closes=0; successes=0
-    if [ -f "$NATIVE_EVENTS" ]; then
-        closes="$(awk -F'|' '$2=="gms_close"{n++} END{print n+0}' "$NATIVE_EVENTS")"
-        successes="$(awk -F'|' '$2=="gms_connected"{n++} END{print n+0}' "$NATIVE_EVENTS")"
-    fi
     auto=0; auto_enabled && auto=1
     gate="${BERRY_AUTO_GATE:-ready}"
     case "$gate" in ready|settling|offline|unavailable) :;; *) gate=unavailable;; esac
@@ -687,8 +681,8 @@ status_json() {
         observed_seconds=$((nowm-down_observed-age))
         [ "$observed_seconds" -ge 0 ] || observed_seconds=0
     fi
-    printf '{"fcm_state":"%s","fcm_source":"%s","fcm_transport":"%s","fcm_remote":"%s","fcm_connection_since":%s,"fcm_connected_seconds":%s,"fcm_disconnect_since":%s,"fcm_missing_seconds":%s,"fcm_native_duration":%s,"fcm_observed_up_seconds":%s,"fcm_native_close_events":%s,"fcm_native_connected_events":%s,"fcm_last_close_code":"%s","fcm_tcp_hint":"%s","fcm_last_seen":%s,"fcm_last_restore":%s,"fcm_last_try":%s,"fcm_last_result":"%s","fcm_attempts":%s,"fcm_sample_time":%s,"fcm_sample_age_seconds":%s,"fcm_native_reason":"%s","fcm_auto":%s,"fcm_auto_gate":"%s","fcm_retry_in":%s,"fcm_retry_streak":%s,"fcm_observed_down_seconds":%s,"fcm_recovery_decision":"%s"}\n' \
-      "$state" "$source" "$transport" "$remote" "$conn_since" "$connected" "$last_down" "$missing" "$duration" "$observed_up" "$closes" "$successes" "$close_code" "$tcp_hint" "$last_seen" "$last_restore" "$last_try_epoch" "$last_result" "$attempts" "$sample_epoch" "$age" "$native_reason" "$auto" "$gate" "$retry_in" "$retry_streak" "$observed_seconds" "$decision"
+    printf '{"fcm_state":"%s","fcm_source":"%s","fcm_transport":"%s","fcm_remote":"%s","fcm_connection_since":%s,"fcm_connected_seconds":%s,"fcm_disconnect_since":%s,"fcm_missing_seconds":%s,"fcm_native_duration":%s,"fcm_observed_up_seconds":%s,"fcm_last_close_code":"%s","fcm_tcp_hint":"%s","fcm_last_seen":%s,"fcm_last_restore":%s,"fcm_last_try":%s,"fcm_last_result":"%s","fcm_attempts":%s,"fcm_sample_time":%s,"fcm_sample_age_seconds":%s,"fcm_native_reason":"%s","fcm_auto":%s,"fcm_auto_gate":"%s","fcm_retry_in":%s,"fcm_retry_streak":%s,"fcm_observed_down_seconds":%s,"fcm_recovery_decision":"%s"}\n' \
+      "$state" "$source" "$transport" "$remote" "$conn_since" "$connected" "$last_down" "$missing" "$duration" "$observed_up" "$close_code" "$tcp_hint" "$last_seen" "$last_restore" "$last_try_epoch" "$last_result" "$attempts" "$sample_epoch" "$age" "$native_reason" "$auto" "$gate" "$retry_in" "$retry_streak" "$observed_seconds" "$decision"
 }
 
 case "${1:-status}" in
@@ -757,13 +751,10 @@ case "${1:-status}" in
         write_evidence
         ;;
     events)
-        [ -f "$NATIVE_EVENTS" ] && tail -n 80 "$NATIVE_EVENTS" || :
-        ;;
-    recovery-events)
         [ -f "$EVENTS" ] && tail -n 80 "$EVENTS" || :
         ;;
     reset-history)
-        : > "$EVENTS"; : > "$NATIVE_EVENTS"; echo 'FCM 事件历史已清空（连接状态未更改）'
+        : > "$EVENTS"; echo 'FCM 事件历史已清空（连接状态未更改）'
         ;;
-    *) echo 'status|snapshot|monitor|rescue|reconnect|events|recovery-events|reset-history' >&2; exit 2;;
+    *) echo 'status|snapshot|monitor|rescue|reconnect|events|reset-history' >&2; exit 2;;
 esac

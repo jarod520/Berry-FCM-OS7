@@ -99,7 +99,7 @@ public final class DiagnosticsActivity extends Ui {
                         ? "无" : FcmMonitorService.currentError(this)) + "\n"
                 + FcmMonitorService.lastSnapshot(this).toString() + "\n"
                 + "\n== GMS 原生连接事件 ==\n" + FcmMonitorService.lastEvents(this)
-                + "\n== BerryFCM 恢复与采样事件 ==\n" + FcmMonitorService.lastRecoveryEvents(this)
+                + "\n== BerryFCM 恢复与采样事件 ==\n" + FcmMonitorService.lastEvents(this)
                 + "\n== BerryFCM 熄屏巡检与唤醒 ==\n" + FcmMonitorService.lastRuntimeEvents(this)
                 + "\n== 采样环境变化（不代表 GMS 实际路由） ==\n" + FcmMonitorService.lastEnvironmentEvents(this);
         Intent share = new Intent(Intent.ACTION_SEND);

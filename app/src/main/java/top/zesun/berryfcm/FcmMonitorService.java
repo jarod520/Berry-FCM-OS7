@@ -228,9 +228,6 @@ public final class FcmMonitorService extends Service {
     static String lastEnvironmentEvents(Context context) {
         return context.getSharedPreferences(SNAPSHOT, MODE_PRIVATE).getString("environment_events", "");
     }
-    static String lastRecoveryEvents(Context context) {
-        return context.getSharedPreferences(SNAPSHOT, MODE_PRIVATE).getString("recovery_events", "");
-    }
     static String lastRuntimeEvents(Context context) {
         return context.getSharedPreferences(SNAPSHOT, MODE_PRIVATE).getString("runtime_events", "");
     }
@@ -321,10 +318,8 @@ public final class FcmMonitorService extends Service {
                 !currentError(this).isEmpty(), stateEvidence,
                 snapshot.optString("fcm_state", "unknown"));
         if (state == MonitorStatus.State.CONNECTED) {
-            long observed = snapshot.optLong("fcm_observed_up_seconds", -1);
-            return "MCS TCP 已建立 · FCM 认证未证实 · " + (observed >= 60
-                    ? "已观察在线：" + MonitorStatus.notificationDuration(observed)
-                    : "连接时长待确认");
+            long up = Math.max(snapshot.optLong("fcm_connected_seconds", 0), snapshot.optLong("fcm_observed_up_seconds", 0));
+            return "GMS 已连接 · " + (up >= 60 ? MonitorStatus.notificationDuration(up) : "刚建立");
         }
         if (state == MonitorStatus.State.DISCONNECTED || state == MonitorStatus.State.CONNECTING) {
             long seconds = snapshot.optLong("fcm_observed_down_seconds", -1);
@@ -805,19 +800,16 @@ public final class FcmMonitorService extends Service {
                 String result = execute(p, mode, prefix + (normalRecovery ? "monitor" : "status")
                         + " >/dev/null 2>&1 || exit 9; "
                         + "echo BERRY_JSON_BEGIN; " + prefix + "snapshot; "
-                        + "echo BERRY_EVENTS_BEGIN; " + prefix + "events; "
-                        + "echo BERRY_RECOVERY_BEGIN; " + prefix + "recovery-events");
+                        + "echo BERRY_EVENTS_BEGIN; " + prefix + "events");
                 int jsonStart = result.indexOf("BERRY_JSON_BEGIN\n");
                 int eventsStart = result.indexOf("\nBERRY_EVENTS_BEGIN");
-                int recoveryStart = result.indexOf("\nBERRY_RECOVERY_BEGIN", eventsStart);
-                if (jsonStart < 0 || eventsStart <= jsonStart || recoveryStart <= eventsStart)
+                if (jsonStart < 0 || eventsStart <= jsonStart)
                     throw new IllegalStateException("监测脚本未返回完整状态");
                 String json = result.substring(jsonStart + "BERRY_JSON_BEGIN\n".length(), eventsStart).trim();
                 JSONObject parsed = new JSONObject(json);
                 if (!parsed.has("fcm_source") || !parsed.has("fcm_native_reason"))
                     throw new IllegalStateException("监测脚本版本不匹配");
-                String events = result.substring(eventsStart + "\nBERRY_EVENTS_BEGIN".length(), recoveryStart).trim();
-                String recovery = result.substring(recoveryStart + "\nBERRY_RECOVERY_BEGIN".length()).trim();
+                String events = result.substring(eventsStart + "\nBERRY_EVENTS_BEGIN".length()).trim();
                 if (!scheduled || !session.equals(activeSession) || !p.monitorEnabled()
                         || !key.equals(p.connectionKey())) return;
                 updateConfirmationWindow(parsed);
@@ -830,7 +822,7 @@ public final class FcmMonitorService extends Service {
                         .putString("sample_mode", key)
                         .putLong("sample_elapsed", SystemClock.elapsedRealtime())
                         .putLong("next_attempt_elapsed", 0)
-                        .putString("json", json).putString("events", events).putString("recovery_events", recovery)
+                        .putString("json", json).putString("events", events)
                         .remove("error").putString("attempt_state", "success").apply();
             } catch (Exception error) {
                 if (!Thread.currentThread().isInterrupted() && attemptKey.equals(p.connectionKey())

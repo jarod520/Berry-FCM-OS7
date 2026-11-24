@@ -25,7 +25,7 @@ public final class MonitorStatusSmoke {
                 || MonitorStatus.hasStateEvidence("gms")
                 || MonitorStatus.hasStateEvidence("unavailable"))
             throw new AssertionError("state evidence sources");
-        if (!"GMS MCS TCP 已建立（FCM 认证未证实）".equals(
+        if (!"GMS 已连接（MCS TCP 已建立）".equals(
                 MonitorStatus.label(MonitorStatus.State.CONNECTED, "gms_socket")))
             throw new AssertionError("socket evidence label");
         if (!"6分 40秒".equals(MonitorStatus.duration(400))) throw new AssertionError("duration");
@@ -36,13 +36,10 @@ public final class MonitorStatusSmoke {
             if (!notificationLabels[i].equals(MonitorStatus.notificationDuration(notificationSeconds[i])))
                 throw new AssertionError("notification duration: " + notificationSeconds[i]);
         }
-        if (!"GMS 计时：0 秒（待后续采样确认）".equals(MonitorStatus.connectedDuration(0, 0)))
-            throw new AssertionError("native zero may be genuine");
-        if (!"已观察在线：15秒（GMS 计时仍为 0，非实际总时长）"
-                .equals(MonitorStatus.connectedDuration(0, 15)))
-            throw new AssertionError("stalled clock fallback");
-        if (!"GMS 计时：2分 0秒".equals(MonitorStatus.connectedDuration(120, 15)))
-            throw new AssertionError("prefer native nonzero time");
+        if (!"已连接：刚建立".equals(MonitorStatus.connectedDuration(0)))
+            throw new AssertionError("zero duration");
+        if (!"已连接：2分 0秒".equals(MonitorStatus.connectedDuration(120)))
+            throw new AssertionError("nonzero duration");
         System.out.println("PASS: shared monitor truth table and qualified duration formatting");
     }
 }

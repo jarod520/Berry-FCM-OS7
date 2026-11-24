@@ -19,11 +19,11 @@ final class MonitorStatus {
     }
     static String label(State state, String source) {
         if (state == State.CONNECTED && "gms_socket".equals(source))
-            return "GMS MCS TCP 已建立（FCM 认证未证实）";
+            return "GMS 已连接（MCS TCP 已建立）";
         if (state == State.CONNECTING && "gms_socket".equals(source))
-            return "GMS MCS TCP 正在连接（尚未建立）";
+            return "GMS 正在连接";
         if (state == State.DISCONNECTED && "gms_socket_absence".equals(source))
-            return "GMS MCS TCP 持续缺失（内核 Socket 观察）";
+            return "GMS 未连接（MCS TCP 持续缺失）";
         if (state == State.DISCONNECTED && "gms_socket_stalled".equals(source))
             return "GMS MCS TCP 已卡死（持续重传/长时间无数据）";
         return state.label;
@@ -41,15 +41,8 @@ final class MonitorStatus {
         if ("disconnected".equals(raw)) return State.DISCONNECTED;
         return State.UNKNOWN;
     }
-    static String connectedDuration(long nativeSeconds, long observedSeconds) {
-        if (nativeSeconds > 0) return "GMS 计时：" + duration(nativeSeconds);
-        if (observedSeconds > 0) {
-            return "已观察在线：" + duration(observedSeconds)
-                    + (nativeSeconds == 0 ? "（GMS 计时仍为 0，非实际总时长）"
-                                          : "（非实际连接总时长）");
-        }
-        return nativeSeconds == 0 ? "GMS 计时：0 秒（待后续采样确认）"
-                : "连接时长：无法确认";
+    static String connectedDuration(long seconds) {
+        return seconds > 0 ? "已连接：" + duration(seconds) : "已连接：刚建立";
     }
 
     static String notificationDuration(long seconds) {

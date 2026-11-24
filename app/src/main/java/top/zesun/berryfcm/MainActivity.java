@@ -123,9 +123,8 @@ public final class MainActivity extends Ui {
                 + "\n最近检查：" + (age >= 0 ? age + " 秒前" : "尚无本次检查结果");
         if (age >= 0 && age <= 90 && stateEvidence && lastError.isEmpty()) {
             if ("gms_socket".equals(stateSource) && "connected".equals(observed)) {
-                description += "\n" + MonitorStatus.connectedDuration(-1,
-                        snapshot.optLong("fcm_observed_up_seconds", -1));
-                description += "\n依据 GMS UID 的 MCS TCP 正向证据；不代表消息送达。";
+                description += "\n" + MonitorStatus.connectedDuration(Math.max(snapshot.optLong("fcm_connected_seconds", 0), snapshot.optLong("fcm_observed_up_seconds", 0)));
+                description += "\n依据：GMS UID 的 MCS TCP 连接。";
             } else if ("gms_socket_absence".equals(stateSource)) {
                 description += "\n依据内核 Socket 连续缺失 MCS TCP 并经二次采样确认。";
                 long down = snapshot.optLong("fcm_observed_down_seconds", -1);
