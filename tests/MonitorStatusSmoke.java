@@ -24,7 +24,7 @@ public final class MonitorStatusSmoke {
                 || MonitorStatus.hasStateEvidence("gms")
                 || MonitorStatus.hasStateEvidence("unavailable"))
             throw new AssertionError("state evidence sources");
-        if (!"GMS 已连接（MCS TCP 已建立）".equals(
+        if (!"FCM 长连接已建立（GMS MCS TCP）".equals(
                 MonitorStatus.label(MonitorStatus.State.CONNECTED, "gms_socket")))
             throw new AssertionError("socket evidence label");
         if (!"6分 40秒".equals(MonitorStatus.duration(400))) throw new AssertionError("duration");

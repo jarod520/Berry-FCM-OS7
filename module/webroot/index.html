@@ -123,7 +123,7 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
     <div class="status"><span>本次连接开始</span><span class="value" id="tSince">—</span></div>
     <div class="status"><span>GMS 连接计时</span><span class="value" id="tConnected">—</span></div>
     <div class="status"><span>最近断开时间</span><span class="value" id="tDown">—</span></div>
-    <div class="status"><span>GMS 未连接计时</span><span class="value" id="tMissing">—</span></div>
+    <div class="status"><span>FCM 长连接未建立计时</span><span class="value" id="tMissing">—</span></div>
     <div class="status"><span>最近恢复连接</span><span class="value" id="tRestore">—</span></div>
     <div class="status"><span>最近重连请求</span><span class="value" id="tTry">—</span></div>
     <div class="status"><span>最近请求结果</span><span class="value" id="tResult">—</span></div>
@@ -298,7 +298,7 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
    row('proc',j.gcm_persistent===1?'good':'bad',j.gcm_persistent===1?'运行中':'未运行');
    const fstate=j.fcm_state||'unknown',connected=fstate==='connected';
    const down=fstate==='disconnected'||fstate==='connecting';
-   const labels={connected:'GMS 已连接',connecting:'GMS 正在连接',disconnected:'GMS 未连接',unknown:'状态未知，等待下次采样',stale:'等待有效检查'};
+   const labels={connected:'FCM 长连接已建立',connecting:'FCM 长连接建立中',disconnected:'FCM 长连接未建立',unknown:'状态未知，等待下次采样',stale:'等待有效检查'};
    const socketSrc=String(j.fcm_source||'').startsWith('gms_socket');
    const failed=j.fcm_check_exit!==0&&j.fcm_check_exit!==13;
    const stateLabel=labels[fstate]||labels.unknown;

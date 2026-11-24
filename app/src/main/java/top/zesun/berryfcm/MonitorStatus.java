@@ -19,11 +19,11 @@ final class MonitorStatus {
     }
     static String label(State state, String source) {
         if (state == State.CONNECTED && "gms_socket".equals(source))
-            return "GMS 已连接（MCS TCP 已建立）";
+            return "FCM 长连接已建立（GMS MCS TCP）";
         if (state == State.CONNECTING && "gms_socket".equals(source))
-            return "GMS 正在连接";
+            return "FCM 长连接建立中";
         if (state == State.DISCONNECTED && "gms_socket_absence".equals(source))
-            return "GMS 未连接（MCS TCP 持续缺失）";
+            return "FCM 长连接未建立（MCS TCP 持续缺失）";
         if (state == State.DISCONNECTED && "gms_socket_stalled".equals(source))
             return "GMS MCS TCP 已卡死（持续重传/长时间无数据）";
         return state.label;

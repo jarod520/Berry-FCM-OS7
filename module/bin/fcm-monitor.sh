@@ -544,14 +544,14 @@ EOF_SOCKET
         new_transport="$socket_transport"; new_remote="$socket_remote"
         previous_down_observed=0; outage_hint_mono=0
         [ "$previous_down_state" = connected ] ||
-            record_event socket_connected "GMS 已连接（MCS TCP 已建立）"
+            record_event socket_connected "FCM 长连接已建立（GMS MCS TCP）"
         ;;
       connecting)
         observed=connecting; source=gms_socket
         new_transport="$socket_transport"; new_remote="$socket_remote"
         if [ "$previous_down_state" != connecting ] || [ "$outage_hint_mono" -le 0 ] || [ "$socket_now" -lt "$outage_hint_mono" ]; then
             down_observed="$socket_now"; outage_hint_mono="$socket_now"
-            record_event socket_connecting "GMS 正在连接（MCS TCP 建立中）"
+            record_event socket_connecting "FCM 长连接建立中（GMS MCS TCP）"
         fi
         previous_down_observed="$outage_hint_mono"
         ;;
@@ -567,7 +567,7 @@ EOF_SOCKET
         observed=disconnected; source=gms_socket_absence; tcp_hint=absent
         if [ "$outage_hint_mono" -le 0 ] || [ "$socket_now" -lt "$outage_hint_mono" ]; then
             outage_hint_mono="$socket_now"
-            record_event tcp_absence_started "GMS 未连接：已读取内核 TCP 表，未发现 MCS TCP"
+            record_event tcp_absence_started "FCM 长连接未建立：已读取内核 TCP 表，未发现 MCS TCP"
         fi
         previous_down_observed="$outage_hint_mono"
         ;;
@@ -584,7 +584,7 @@ EOF_SOCKET
           connecting|disconnected)
             last_restore="$nowe"
             if [ "$last_result" = requested ] && [ "$last_try_epoch" -ge "$previous_missing_epoch" ] && [ "$last_try_epoch" -gt 0 ]; then last_result=restored; fi
-            record_event connection_restored "GMS 连接恢复（MCS TCP 已建立）"
+            record_event connection_restored "FCM 长连接恢复（GMS MCS TCP 已建立）"
             ;;
           unknown)
             [ "$previous_down_observed" -le 0 ] ||
@@ -803,7 +803,7 @@ case "${1:-status}" in
           cooldown) echo "仍在重连冷却期";;
           confirmation_recovered) echo "内核复采已观察到 MCS TCP，停止后续恢复动作";;
           confirmation_changed) echo "复采状态变为未知，已停止本轮后续恢复动作";;
-          *) echo "GMS 已连接或状态不可确认，未发送重连";;
+          *) echo "FCM 长连接已建立或状态不可确认，未发送重连";;
         esac
         ;;
     events)

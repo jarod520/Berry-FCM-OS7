@@ -319,7 +319,7 @@ public final class FcmMonitorService extends Service {
                 snapshot.optString("fcm_state", "unknown"));
         if (state == MonitorStatus.State.CONNECTED) {
             long up = Math.max(snapshot.optLong("fcm_connected_seconds", 0), snapshot.optLong("fcm_observed_up_seconds", 0));
-            return "GMS 已连接 · " + (up >= 60 ? MonitorStatus.notificationDuration(up) : "刚建立");
+            return "FCM 长连接已建立 · " + (up >= 60 ? MonitorStatus.notificationDuration(up) : "刚建立");
         }
         if (state == MonitorStatus.State.DISCONNECTED || state == MonitorStatus.State.CONNECTING) {
             long seconds = snapshot.optLong("fcm_observed_down_seconds", -1);
