@@ -52,20 +52,6 @@ case "$mode" in
   *) exit 2;;
 esac
 MOCK
-# Toybox-style flock: exactly one FD operand ("flock -xn 9"), non-blocking exclusive lock
-# on the inherited descriptor. Any program operand is rejected like on device.
-cat > "$TMP/bin/flock" <<'MOCK'
-#!/bin/sh
-operands=0; fd=
-while [ $# -gt 0 ]; do
-    case "$1" in -*) shift;; *) operands=$((operands + 1)); fd="$1"; shift;; esac
-done
-[ "$operands" -eq 1 ] || { echo "flock: Max 1 argument" >&2; exit 1; }
-exec python3 -c 'import fcntl,sys
-try: fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
-except OSError: sys.exit(1)' "$fd"
-MOCK
-chmod +x "$TMP/bin/flock"
 cat > "$TMP/bin/am" <<'MOCK'
 #!/bin/sh
 case "$1" in set-inactive|set-standby-bucket) exit 0;; esac
@@ -334,7 +320,7 @@ assert_json "$j" fcm_state=unknown
 assert_json "$j" fcm_recovery_decision=recovery_exhausted
 
 [ ! -s "$TMP/dumpsys.log" ] || fail "dumpsys was invoked by the monitor"
-# BusyBox flock permutes options: the child marker must never look like one
-# ("flock: Unknown option 'locked'" left the monitor permanently stale on device).
-! grep -Eq -- '"\$command" --[a-z]' "$ROOT/module/bin/fcm-monitor.sh" || fail "flock child argument starts with a dash"
+# Android's Toybox/BusyBox flock cannot run a program under a lock, so the monitor must
+# never depend on flock: it uses the atomic mkdir lock with owner identity checks.
+! grep -q 'flock' "$ROOT/module/bin/fcm-monitor.sh" || fail "monitor must not depend on flock"
 echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO stall recovery, same-cycle seven-trigger escalation, evidence-first commit protection, and dump independence"

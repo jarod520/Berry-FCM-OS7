@@ -826,111 +826,47 @@ case "${1:-status}" in
 esac
 }
 
-with_flock() {
-    # Keep the descriptor lock held by flock for the entire monitor command.
-    # The child writes its real command status to a private result file and
-    # exits zero so flock's status remains reserved for lock/launcher errors.
-    lock_result_pid=
-    IFS=' ' read -r lock_result_pid _ < /proc/self/stat || return 14
-    case "$lock_result_pid" in ''|*[!0-9]*) return 14;; esac
-    lock_result="$DATA/mcs-monitor.lock.result.$lock_result_pid"
-    rm -f "$lock_result" "$lock_result.tmp."*
-    # Toybox/BusyBox flock only accept an FD operand ("flock -xn 9"): open the lock
-    # file here, lock the descriptor, and let the child inherit it so the lock lives
-    # exactly as long as the monitor command.
-    exec 9>>"$DATA/mcs-monitor.lock" || return 14
-    "$@" -xn 9
-    flock_rc=$?
-    if [ "$flock_rc" -eq 0 ]; then
-        sh "$0" "$command" __locked__ "$lock_result"
-        flock_rc=$?
-    fi
-    exec 9>&-
-    if [ ! -s "$lock_result" ]; then
-        rm -f "$lock_result" "$lock_result.tmp."*
-        if [ "$flock_rc" -eq 1 ]; then
-            echo "后台正在检查 GMS，请稍后重试" >&2
-            return 13
-        fi
-        printf "无法取得 GMS 检查锁：flock 退出码 %s\n" "$flock_rc" >&2
-        return 14
-    fi
-    monitor_rc="$(cat "$lock_result" 2>/dev/null)"
-    rm -f "$lock_result"
-    is_uint "$monitor_rc" || return 14
-    return "$monitor_rc"
-}
-
 command="${1:-status}"
-if [ "${2:-}" = __locked__ ]; then
-    lock_result="${3:-}"
-    case "$lock_result" in "$DATA"/mcs-monitor.lock.result.*) :;; *) exit 14;; esac
-    if write_lock_owner; then
-        trap 'clear_lock_owner' EXIT
-        (run_monitor_command "$command")
-        monitor_rc=$?
-        clear_lock_owner
-        trap - EXIT
-    else
-        echo "无法登记 GMS monitor 进程身份，拒绝启动未受监管的检查" >&2
-        monitor_rc=14
-    fi
-    result_writer_pid=
-    IFS=' ' read -r result_writer_pid _ < /proc/self/stat || exit 14
-    case "$result_writer_pid" in ''|*[!0-9]*) exit 14;; esac
-    printf '%s\n' "$monitor_rc" > "$lock_result.tmp.$result_writer_pid" &&
-        mv -f "$lock_result.tmp.$result_writer_pid" "$lock_result" || exit 14
-    exit 0
-fi
 case "$command" in
     status|monitor|reconnect|reset-history)
-        busybox="${BERRY_KSU_BUSYBOX:-/data/adb/ksu/bin/busybox}"
-        if [ -x /system/bin/flock ]; then
-            with_flock /system/bin/flock
-        elif [ -x "$busybox" ] && "$busybox" --list 2>/dev/null | grep -qx flock; then
-            with_flock "$busybox" flock
-        elif command -v flock >/dev/null 2>&1; then
-            with_flock flock
-        else
-            lock_boot="$(boot_id | tr -cd 'A-Za-z0-9-')"
-            [ -n "$lock_boot" ] || exit 11
-            lock_dir="$DATA/mcs-monitor-$lock_boot.lockdir"
-            lock_owner_alive() {
-                owner_pid="$1"; owner_stamp="$2"
-                case "$owner_pid:$owner_stamp" in *[!0-9:]*|:*) return 1;; esac
-                [ "$owner_pid" -gt 1 ] && kill -0 "$owner_pid" 2>/dev/null || return 1
-                [ "$(proc_start_time "$owner_pid")" = "$owner_stamp" ] || return 1
-                tr "\000" " " < "/proc/$owner_pid/cmdline" 2>/dev/null | grep -Fq "fcm-monitor.sh"
-            }
-            if ! mkdir "$lock_dir" 2>/dev/null; then
+        lock_boot="$(boot_id | tr -cd 'A-Za-z0-9-')"
+        [ -n "$lock_boot" ] || exit 11
+        lock_dir="$DATA/mcs-monitor-$lock_boot.lockdir"
+        lock_owner_alive() {
+            owner_pid="$1"; owner_stamp="$2"
+            case "$owner_pid:$owner_stamp" in *[!0-9:]*|:*) return 1;; esac
+            [ "$owner_pid" -gt 1 ] && kill -0 "$owner_pid" 2>/dev/null || return 1
+            [ "$(proc_start_time "$owner_pid")" = "$owner_stamp" ] || return 1
+            tr "\000" " " < "/proc/$owner_pid/cmdline" 2>/dev/null | grep -Fq "fcm-monitor.sh"
+        }
+        if ! mkdir "$lock_dir" 2>/dev/null; then
+            owner_pid="$(cat "$lock_dir/pid" 2>/dev/null)"
+            owner_stamp="$(cat "$lock_dir/starttime" 2>/dev/null)"
+            if [ -z "$owner_pid" ] || [ -z "$owner_stamp" ]; then
+                sleep 1
                 owner_pid="$(cat "$lock_dir/pid" 2>/dev/null)"
                 owner_stamp="$(cat "$lock_dir/starttime" 2>/dev/null)"
-                if [ -z "$owner_pid" ] || [ -z "$owner_stamp" ]; then
-                    sleep 1
-                    owner_pid="$(cat "$lock_dir/pid" 2>/dev/null)"
-                    owner_stamp="$(cat "$lock_dir/starttime" 2>/dev/null)"
-                fi
-                if lock_owner_alive "$owner_pid" "$owner_stamp"; then
-                    echo "后台正在检查 GMS，请稍后重试" >&2
-                    exit 13
-                fi
-                stale_lock="$lock_dir.stale.$$"
-                if mv "$lock_dir" "$stale_lock" 2>/dev/null; then rm -rf "$stale_lock"; fi
-                mkdir "$lock_dir" 2>/dev/null || { echo "后台正在检查 GMS，请稍后重试" >&2; exit 13; }
             fi
-            lock_dir_pid=
-            IFS=' ' read -r lock_dir_pid _ < /proc/self/stat 2>/dev/null || exit 11
-            case "$lock_dir_pid" in ''|*[!0-9]*) exit 11;; esac
-            echo "$lock_dir_pid" > "$lock_dir/pid"
-            proc_start_time "$lock_dir_pid" > "$lock_dir/starttime"
-            trap 'clear_lock_owner; rm -f "$lock_dir/pid" "$lock_dir/starttime"; rmdir "$lock_dir" 2>/dev/null || :' EXIT
-            trap 'exit 130' HUP INT TERM
-            if ! write_lock_owner; then
-                echo "无法登记 GMS monitor 进程身份，拒绝启动未受监管的检查" >&2
-                exit 14
+            if lock_owner_alive "$owner_pid" "$owner_stamp"; then
+                echo "后台正在检查 GMS，请稍后重试" >&2
+                exit 13
             fi
-            run_monitor_command "$command"
+            stale_lock="$lock_dir.stale.$$"
+            if mv "$lock_dir" "$stale_lock" 2>/dev/null; then rm -rf "$stale_lock"; fi
+            mkdir "$lock_dir" 2>/dev/null || { echo "后台正在检查 GMS，请稍后重试" >&2; exit 13; }
         fi
+        lock_dir_pid=
+        IFS=' ' read -r lock_dir_pid _ < /proc/self/stat 2>/dev/null || exit 11
+        case "$lock_dir_pid" in ''|*[!0-9]*) exit 11;; esac
+        echo "$lock_dir_pid" > "$lock_dir/pid"
+        proc_start_time "$lock_dir_pid" > "$lock_dir/starttime"
+        trap 'clear_lock_owner; rm -f "$lock_dir/pid" "$lock_dir/starttime"; rmdir "$lock_dir" 2>/dev/null || :' EXIT
+        trap 'exit 130' HUP INT TERM
+        if ! write_lock_owner; then
+            echo "无法登记 GMS monitor 进程身份，拒绝启动未受监管的检查" >&2
+            exit 14
+        fi
+        run_monitor_command "$command"
         ;;
     *) run_monitor_command "$command";;
 esac
