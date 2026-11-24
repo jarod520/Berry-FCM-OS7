@@ -85,7 +85,7 @@ load_state() {
     reconnects=0; last_down=0
     down_observed=0; retry_streak=0; outage_hint_mono=0
     native_timer_duration=0; native_timer_since=0; native_timer_last_request=0; native_timer_key=
-    prev_b=
+    prev_b=; boot_changed=0
     if [ -f "$STATE" ]; then
         IFS='|' read -r prev_b state conn_key conn_since conn_since_mono last_seen missing_since missing_epoch last_try_mono last_try_epoch attempts last_result last_restore outages transport remote sample_epoch last_try_reason reconnects last_down down_observed retry_streak outage_hint_mono native_timer_duration native_timer_since native_timer_last_request native_timer_key sample_mono < "$STATE" || :
     fi
@@ -108,7 +108,7 @@ load_state() {
         last_try_mono=0; transport=; remote=; sample_epoch=0; sample_mono=0; down_observed=0; retry_streak=0; outage_hint_mono=0
         native_timer_duration=0; native_timer_since=0; native_timer_last_request=0; native_timer_key=
         : > "$LEARNED_IPS"
-        record_event reboot '设备重启：清除上一启动周期的连接计时，保留历史事件'
+        boot_changed=1
     fi
 }
 
@@ -120,6 +120,10 @@ save_state() {
       "$transport" "$remote" "$sample_epoch" "$last_try_reason" "$reconnects" "$last_down" "$down_observed" "$retry_streak" "$outage_hint_mono" \
       "$native_timer_duration" "$native_timer_since" "$native_timer_last_request" "$native_timer_key" "$sample_mono" > "$tmp" || { rc=$?; rm -f "$tmp"; return "$rc"; }
     mv -f "$tmp" "$STATE" || { rc=$?; rm -f "$tmp"; return "$rc"; }
+    if [ "$boot_changed" = 1 ]; then
+        boot_changed=0
+        record_event reboot '设备重启：清除上一启动周期的连接计时，保留历史事件'
+    fi
     return 0
 }
 
