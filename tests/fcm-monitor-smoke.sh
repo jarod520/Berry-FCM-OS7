@@ -220,7 +220,7 @@ requests 23
 echo absent > "$TMP/mode"
 settime 10257
 j="$(run status)"
-assert_json "$j" fcm_state=unknown
+assert_json "$j" fcm_state=disconnected
 requests 23
 settime 10302
 j="$(run status)"

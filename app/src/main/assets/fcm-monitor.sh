@@ -514,7 +514,7 @@ EOF_SOCKET
         new_transport="$socket_transport"; new_remote="$socket_remote"
         if [ "$previous_down_state" != connecting ] || [ "$outage_hint_mono" -le 0 ] || [ "$socket_now" -lt "$outage_hint_mono" ]; then
             down_observed="$socket_now"; outage_hint_mono="$socket_now"
-            record_event socket_connecting "内核 Socket 证据观察到 GMS MCS TCP 正在建立连接"
+            record_event socket_connecting "GMS 正在连接（MCS TCP 建立中）"
         fi
         previous_down_observed="$outage_hint_mono"
         ;;
@@ -530,19 +530,13 @@ EOF_SOCKET
       absent)
         # scan_sockets reports "absent" only when ownership is provable: Root
         # read the full table, or a GMS-UID-owned socket is visible to the shell.
-        source=gms_socket_absence_pending
+        observed=disconnected; source=gms_socket_absence; tcp_hint=absent
         if [ "$outage_hint_mono" -le 0 ] || [ "$socket_now" -lt "$outage_hint_mono" ] ||
            [ $((socket_now-outage_hint_mono)) -gt 900 ]; then
             outage_hint_mono="$socket_now"
-            record_event tcp_absence_started "已读取到 GMS UID 的内核 Socket 但未发现 MCS TCP；开始连续缺失计时"
+            record_event tcp_absence_started "GMS 未连接：已读取内核 TCP 表，未发现 MCS TCP"
         fi
-        socket_down_age=$((socket_now-outage_hint_mono))
-        previous_down_observed="$outage_hint_mono"; tcp_hint=absent
-        if [ "$socket_down_age" -ge 60 ] && [ "$socket_down_age" -le 900 ]; then
-            observed=disconnected; source=gms_socket_absence
-            [ "$previous_down_state" = disconnected ] ||
-                record_event tcp_absence_confirmed "GMS MCS TCP 连续缺失 $socket_down_age 秒，达到断联证据阈值"
-        fi
+        previous_down_observed="$outage_hint_mono"
         ;;
       *)
         observed=unknown; source=unavailable; tcp_hint=unknown
@@ -556,11 +550,11 @@ EOF_SOCKET
           connecting|disconnected)
             last_restore="$nowe"
             if [ "$last_result" = requested ] && [ "$last_try_epoch" -ge "$previous_missing_epoch" ] && [ "$last_try_epoch" -gt 0 ]; then last_result=restored; fi
-            record_event connection_restored "内核 Socket 证据再次观察到 GMS MCS TCP 建立"
+            record_event connection_restored "GMS 连接恢复（MCS TCP 已建立）"
             ;;
           unknown)
             [ "$previous_down_observed" -le 0 ] ||
-                record_event connection_observed_after_unknown "未知样本后重新观察到 GMS MCS TCP；不推断未知期间恢复时刻"
+                record_event connection_observed_after_unknown "已连接：此前样本不可用，本轮重新观察到 MCS TCP"
             ;;
         esac
         current_key="$socket_remote"
@@ -624,6 +618,7 @@ auto_recovery() {
     fi
     required=60
     [ "$state" = disconnected ] && required=15
+    [ "$source" = gms_socket_absence ] && required=45
     observed_age=0
     [ "$down_observed" -gt 0 ] && [ "$nowm" -ge "$down_observed" ] && observed_age=$((nowm-down_observed))
     if [ "$observed_age" -lt "$required" ]; then decision=waiting_duration; return 0; fi
@@ -652,7 +647,7 @@ status_json() {
     source=unavailable; duration=-1; close_code=; tcp_hint=none; native_reason=not_used; decision=not_evaluated
     if [ -f "$EVIDENCE" ]; then IFS='|' read -r source duration close_code tcp_hint native_reason decision < "$EVIDENCE" || :; fi
     case "$source" in
-      gms_socket|gms_socket_absence|gms_socket_absence_pending|gms_socket_stalled) :;;
+      gms_socket|gms_socket_absence|gms_socket_stalled) :;;
       *) state=unknown; source=unavailable; duration=-1; close_code=; tcp_hint=unknown; native_reason=not_used; decision=sample_unavailable;;
     esac
     case "${decision:-}" in not_evaluated|not_disconnected|sample_unavailable|disabled|network_gate|cooldown|requested|request_failed|recovery_exhausted|keepalive_nudged|waiting_duration|confirmation_changed|confirmation_recovered|state_save_failed) :;; *) decision=not_evaluated;; esac

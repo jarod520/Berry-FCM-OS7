@@ -21,7 +21,6 @@ public final class MonitorStatusSmoke {
                 || !MonitorStatus.hasStateEvidence("gms_socket_absence")
                 || !MonitorStatus.hasStateEvidence("gms_socket_stalled")
                 || !MonitorStatus.hasStateEvidence("gms_socket_stalled")
-                || MonitorStatus.hasStateEvidence("gms_socket_absence_pending")
                 || MonitorStatus.hasStateEvidence("gms")
                 || MonitorStatus.hasStateEvidence("unavailable"))
             throw new AssertionError("state evidence sources");

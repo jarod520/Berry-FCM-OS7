@@ -34,7 +34,6 @@ grep -Fq 'auto_recovery() {' "$APK"
 ! grep -Fq 'socket_fallback_ready' "$APK"
 grep -Fq 'observe || return $?' "$APK"
 grep -Fq 'legacy_dump_state_discarded' "$APK"
-grep -Fq 'gms_socket_absence_pending' "$APK"
 repair_block="$(sed -n '/if (repair) {/,/} else {/p' "$GUARD")"
 ! printf '%s\\n' "$repair_block" | grep -Fq 'dumpsys'
 printf '%s\\n' "$repair_block" | grep -Fq 'cmd package unstop --user 0'

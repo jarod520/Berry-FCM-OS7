@@ -192,7 +192,6 @@ public final class MonitorActivity extends Ui {
                 + "原始状态：" + state
                 + "\n状态来源：" + ("gms_socket".equals(stateSource) ? "GMS UID 的精确 MCS TCP 正向证据"
                     : "gms_socket_absence".equals(stateSource) ? "内核 Socket 连续 MCS TCP 缺失证据"
-                    : "gms_socket_absence_pending".equals(stateSource) ? "正在累计 MCS TCP 缺失时间"
                     : "gms_socket_stalled".equals(stateSource) ? "TCP_INFO：MCS 连接卡死（重传/长时间无数据）"
                     : nativeReason)
                 + "\nTCP 辅助检查：" + tcpHint(j.optString("fcm_tcp_hint", "none"))

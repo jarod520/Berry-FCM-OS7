@@ -163,8 +163,8 @@ j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=gms_socket
 
-# Root absence needs 60 seconds of continuous verified socket-table evidence,
-# then 15 seconds of a fresh down observation and a second confirmation read.
+# Root absence is disconnected at once; recovery waits 45 seconds of absence
+# plus a second confirmation read.
 rm -f "$TMP/data/mcs-monitor.state" "$TMP/data/mcs-evidence"
 : > "$MCS_AM_LOG"
 export MCS_SS_MODE=absent MCS_SENDER_UID=0
@@ -172,14 +172,13 @@ settime 11000
 run monitor
 requests 0
 j="$(run snapshot)"
-assert_json "$j" fcm_state=unknown
-assert_json "$j" fcm_source=gms_socket_absence_pending
-settime 11060
+assert_json "$j" fcm_state=disconnected
+assert_json "$j" fcm_source=gms_socket_absence
+settime 11030
 run monitor
 requests 0
 j="$(run snapshot)"
 assert_json "$j" fcm_state=disconnected
-assert_json "$j" fcm_source=gms_socket_absence
 settime 11075
 run monitor
 # Staged recovery: first trigger is GCM_RECONNECT; kernel stays disconnected so later triggers follow.
