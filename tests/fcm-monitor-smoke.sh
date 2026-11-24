@@ -52,14 +52,18 @@ case "$mode" in
   *) exit 2;;
 esac
 MOCK
-# BusyBox-style flock: "flock [-sxun] FILE PROG ARGS"; the numeric FD form takes no program.
+# Toybox-style flock: exactly one FD operand ("flock -xn 9"), non-blocking exclusive lock
+# on the inherited descriptor. Any program operand is rejected like on device.
 cat > "$TMP/bin/flock" <<'MOCK'
 #!/bin/sh
-while [ $# -gt 0 ]; do case "$1" in -*) shift;; *) break;; esac; done
-target="$1"; shift
-case "$target" in ''|*[!0-9]*) :;; *) [ $# -eq 0 ] || { echo "flock: Max 1 argument" >&2; exit 1; };; esac
-[ $# -gt 0 ] || exit 0
-exec "$@"
+operands=0; fd=
+while [ $# -gt 0 ]; do
+    case "$1" in -*) shift;; *) operands=$((operands + 1)); fd="$1"; shift;; esac
+done
+[ "$operands" -eq 1 ] || { echo "flock: Max 1 argument" >&2; exit 1; }
+exec python3 -c 'import fcntl,sys
+try: fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
+except OSError: sys.exit(1)' "$fd"
 MOCK
 chmod +x "$TMP/bin/flock"
 cat > "$TMP/bin/am" <<'MOCK'

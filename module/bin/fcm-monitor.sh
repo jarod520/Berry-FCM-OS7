@@ -835,8 +835,17 @@ with_flock() {
     case "$lock_result_pid" in ''|*[!0-9]*) return 14;; esac
     lock_result="$DATA/mcs-monitor.lock.result.$lock_result_pid"
     rm -f "$lock_result" "$lock_result.tmp."*
-    "$@" -xn "$DATA/mcs-monitor.lock" sh "$0" "$command" __locked__ "$lock_result"
+    # Toybox/BusyBox flock only accept an FD operand ("flock -xn 9"): open the lock
+    # file here, lock the descriptor, and let the child inherit it so the lock lives
+    # exactly as long as the monitor command.
+    exec 9>>"$DATA/mcs-monitor.lock" || return 14
+    "$@" -xn 9
     flock_rc=$?
+    if [ "$flock_rc" -eq 0 ]; then
+        sh "$0" "$command" __locked__ "$lock_result"
+        flock_rc=$?
+    fi
+    exec 9>&-
     if [ ! -s "$lock_result" ]; then
         rm -f "$lock_result" "$lock_result.tmp."*
         if [ "$flock_rc" -eq 1 ]; then
