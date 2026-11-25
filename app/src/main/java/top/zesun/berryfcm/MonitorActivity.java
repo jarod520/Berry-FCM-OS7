@@ -18,7 +18,7 @@ import java.util.concurrent.Executors;
 public final class MonitorActivity extends Ui {
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private TextView headline, current, technical, events, eventsFull, recoveryEvents, runtimeEvents, environmentEvents, manualResult, reconnectHint;
+    private TextView headline, current, technical, events, eventsFull, runtimeEvents, environmentEvents, manualResult, reconnectHint;
     private Button checkButton, reconnectButton;
     private Switch enabled, automatic;
     private final Runnable update = new Runnable() {
@@ -87,7 +87,7 @@ public final class MonitorActivity extends Ui {
         technical.setTextIsSelectable(true);
         extra.addView(technical);
 
-        LinearLayout timeline = card("最新事件", "读取 GMS 原生事件；显示最近 6 条，历史缓冲区有容量限制。");
+        LinearLayout timeline = card("最新事件", "最近的连接、断联与恢复记录。");
         events = text("暂无记录", 13, false, ink);
         events.setTextIsSelectable(true);
         timeline.addView(events);
@@ -95,10 +95,6 @@ public final class MonitorActivity extends Ui {
         eventsFull = text("暂无历史记录", 13, false, ink);
         eventsFull.setTextIsSelectable(true);
         history.addView(eventsFull);
-        LinearLayout recovery = disclosure(timeline, "恢复与异常记录", false);
-        recoveryEvents = text("暂无恢复记录", 13, false, ink);
-        recoveryEvents.setTextIsSelectable(true);
-        recovery.addView(recoveryEvents);
         LinearLayout runtime = disclosure(timeline, "熄屏巡检与唤醒记录", false);
         runtimeEvents = text("暂无巡检记录", 13, false, ink);
         runtimeEvents.setTextIsSelectable(true);
@@ -164,18 +160,15 @@ public final class MonitorActivity extends Ui {
                 ? "后台将持续检查；如长时间无数据，请检查通知及系统后台策略。"
                 : "后台正在自动重试，无需手动重复配对。";
         String durationLine = "";
-        if ("gms".equals(stateSource) && "connected".equals(state))
-            durationLine = "\n" + MonitorStatus.connectedDuration(
-                    j.optLong("fcm_native_duration", -1),
-                    j.optLong("fcm_observed_up_seconds", -1));
-        else if ("gms".equals(stateSource) && ("connecting".equals(state) || "disconnected".equals(state))
-                && j.optLong("fcm_native_duration", -1) >= 0)
-            durationLine = "\n未连接计时：" + MonitorStatus.duration(j.optLong("fcm_native_duration"));
+        if ("gms_socket".equals(stateSource) && "connected".equals(state))
+            durationLine = "\n" + MonitorStatus.connectedDuration(Math.max(j.optLong("fcm_connected_seconds", 0), j.optLong("fcm_observed_up_seconds", 0)));
+        else if (("connecting".equals(state) || "disconnected".equals(state))
+                && j.optLong("fcm_observed_down_seconds", -1) >= 0)
+            durationLine = "\n已观察未连接：" + MonitorStatus.duration(j.optLong("fcm_observed_down_seconds"));
         current.setText("最近检查：" + (sample <= 0 ? "暂无" : time(sample)
                 + (age < 0 ? "（上次运行的记录）" : "（" + age + " 秒前）"))
                 + (prefs.monitorEnabled() && sample > 0 && age >= 0 && age <= 90
                     && !stateEvidence && lastError.isEmpty() ? "\n原因：" + nativeReason : "")
-                + "\n保留的连接关闭事件：" + j.optInt("fcm_native_close_events", 0) + " 条（不是独立断开次数）"
                 + durationLine
                 + (attempt > 0 ? "\n上次检查尝试：" + time(attempt / 1000) : "")
                 + (stateEvidence && ("connecting".equals(state) || "disconnected".equals(state))
@@ -195,11 +188,11 @@ public final class MonitorActivity extends Ui {
         else if (!FcmMonitorService.isRunning()) current.setText("监控未运行，请点击下方按钮启动。");
         JSONObject env = j.optJSONObject("app_environment");
         technical.setText((age < 0 || age > 90 || !ready || !prefs.monitorEnabled()
-                || !lastError.isEmpty() ? "以下是历史证据，不代表当前连接。\n" : "")
+                || !lastError.isEmpty() ? "以下为历史数据。\n" : "")
                 + "原始状态：" + state
-                + "\n状态来源：" + ("gms".equals(stateSource) ? "Google GMS 原生 MCS"
-                    : "gms_socket".equals(stateSource) ? "GMS UID 的精确 MCS TCP 正向证据"
-                    : "gms_socket_fallback".equals(stateSource) ? "UID0 连续 MCS TCP 缺失证据"
+                + "\n状态来源：" + ("gms_socket".equals(stateSource) ? "GMS UID 的精确 MCS TCP 正向证据"
+                    : "gms_socket_absence".equals(stateSource) ? "内核 Socket 连续 MCS TCP 缺失证据"
+                    : "gms_socket_stalled".equals(stateSource) ? "TCP_INFO：MCS 连接卡死（重传/长时间无数据）"
                     : nativeReason)
                 + "\nTCP 辅助检查：" + tcpHint(j.optString("fcm_tcp_hint", "none"))
                 + "\n服务器：" + j.optString("fcm_transport", "无")
@@ -208,8 +201,7 @@ public final class MonitorActivity extends Ui {
                     + " · 屏幕 " + localValue(env.optString("screen"))
                     + " · Doze " + localValue(env.optString("device_idle"))
                     + "\nGMS Doze 白名单：" + localValue(env.optString("gms_doze_exempt")))
-                + "\n历史最后一次关闭错误（不代表现在断开）：" + j.optString("fcm_last_close_code", "无")
-                + "\n保留的历史连接成功事件：" + j.optInt("fcm_native_connected_events", 0) + " 条"
+                + "\n最后一次关闭错误：" + j.optString("fcm_last_close_code", "无")
                 + "\n上次观察在线：" + time(j.optLong("fcm_last_seen", 0))
                 + "\n最近一次历史断开：" + time(j.optLong("fcm_disconnect_since", 0))
                 + "\n最近恢复观测：" + time(j.optLong("fcm_last_restore", 0))
@@ -221,12 +213,10 @@ public final class MonitorActivity extends Ui {
                 + "\n累计任务持锁：" + MonitorStatus.duration(FcmMonitorService.transactionWakeMs(this) / 1000)
                 + "\n历史已发送的恢复请求：" + j.optInt("fcm_attempts", 0) + " 次"
                 + "\n连续恢复尝试次数：" + j.optInt("fcm_retry_streak", 0) + " 次"
-                + "\n历史上次恢复请求结果：" + recoveryLabel(j.optString("fcm_last_result", "none"))
-                + "\n注意：GMS 原生历史有限，同一时刻的多网络关闭事件不等于多次整体断开。");
+                + "\n历史上次恢复请求结果：" + recoveryLabel(j.optString("fcm_last_result", "none")));
         String[] lines = FcmMonitorService.lastEvents(this).split("\n");
         events.setText(eventText(lines, 6));
         eventsFull.setText(eventText(lines, 24));
-        recoveryEvents.setText(eventText(FcmMonitorService.lastRecoveryEvents(this).split("\\n"), 24));
         runtimeEvents.setText(eventText(FcmMonitorService.lastRuntimeEvents(this).split("\\n"), 36));
         environmentEvents.setText(eventText(FcmMonitorService.lastEnvironmentEvents(this).split("\\n"), 24));
     }
@@ -236,7 +226,7 @@ public final class MonitorActivity extends Ui {
             case "established": return "发现相关 TCP 连接";
             case "connecting": return "发现正在建立的 TCP 连接";
             case "absent": return "未发现匹配的 TCP 连接";
-            case "none": case "unknown": default: return "未取得独立证据（以 GMS 原生状态为准）";
+            case "none": case "unknown": default: return "未取得独立证据（以 GMS UID 内核 Socket 检测为准）";
         }
     }
 
@@ -251,12 +241,14 @@ public final class MonitorActivity extends Ui {
     }
     private String recoveryDecision(JSONObject j, int retryIn) {
         switch (j.optString("fcm_recovery_decision", "")) {
-            case "gms_stopped_unknown": return "GMS 停止状态未通过检查，未发送请求";
             case "requested": return "已请求 GMS 重连，等待原生确认";
             case "request_failed": return "重连请求失败，见恢复记录";
             case "confirmation_changed": return "第二次检查状态变化，暂不干预";
             case "cooldown": return "请求冷却约 " + retryIn + " 秒";
-            case "waiting_confirmation": return "等待第二次原生检查";
+            case "recovery_exhausted": return "已依次尝试全部触发手段，内核复采仍未恢复；按退避等待下一轮";
+            case "keepalive_nudged": return "内核证据不可用；已发送保活心跳（不判断联）";
+            case "confirmation_recovered": return "第二次内核 Socket 检查已恢复，取消重连";
+            case "waiting_confirmation": return "等待第二次内核 Socket 检查";
             case "waiting_duration":
                 long seconds = j.optLong("fcm_observed_down_seconds", -1);
                 return "尚未达到恢复条件" + (seconds < 0 ? "" : "（本轮已观察 " + seconds + " 秒）");
@@ -298,7 +290,7 @@ public final class MonitorActivity extends Ui {
                     : parts[1].equals("tcp_absence_started") ? "TCP 缺失计时开始"
                     : parts[1].equals("tcp_absence_confirmed") ? "TCP 缺失确认断联"
                     : parts[1].equals("down_reconfirmed") ? "再次确认断联"
-                    : parts[1].equals("connection_down") ? "确认 FCM 已断开"
+                    : parts[1].equals("connection_down") ? "确认 FCM 长连接未建立"
                     : parts[1].equals("connection_restored") ? "原生状态恢复"
                     : parts[1].equals("reconnect_skipped") ? "恢复请求跳过"
                     : parts[1].equals("watchdog_fired") ? "系统兜底闹钟触发"

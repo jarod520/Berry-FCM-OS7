@@ -7,21 +7,25 @@ final class MonitorStatus {
     enum State {
         AUTH_REQUIRED("需要授权"), DISABLED("监控未开启"), NOT_RUNNING("监控未运行"),
         WAITING("等待有效检查"), FAILED("连接检查失败"), UNKNOWN("暂无有效状态样本"),
-        CONNECTED("FCM 已连接"), CONNECTING("FCM 正在重连（尚未连接）"),
-        DISCONNECTED("FCM 已断开");
+        CONNECTED("FCM 长连接已建立"), CONNECTING("FCM 长连接建立中"),
+        DISCONNECTED("FCM 长连接未建立");
         final String label;
         State(String label) { this.label = label; }
     }
     private MonitorStatus() {}
     static boolean hasStateEvidence(String source) {
-        return "gms".equals(source) || "gms_socket".equals(source)
-                || "gms_socket_fallback".equals(source);
+        return "gms_socket".equals(source) || "gms_socket_absence".equals(source)
+                || "gms_socket_stalled".equals(source);
     }
     static String label(State state, String source) {
         if (state == State.CONNECTED && "gms_socket".equals(source))
-            return "GMS MCS TCP 已建立（FCM 认证未证实）";
-        if (state == State.DISCONNECTED && "gms_socket_fallback".equals(source))
-            return "FCM TCP 持续缺失（Root 观察）";
+            return "FCM 长连接已建立（GMS MCS TCP）";
+        if (state == State.CONNECTING && "gms_socket".equals(source))
+            return "FCM 长连接建立中";
+        if (state == State.DISCONNECTED && "gms_socket_absence".equals(source))
+            return "FCM 长连接未建立（MCS TCP 持续缺失）";
+        if (state == State.DISCONNECTED && "gms_socket_stalled".equals(source))
+            return "GMS MCS TCP 已卡死（持续重传/长时间无数据）";
         return state.label;
     }
     static State resolve(boolean authorized, boolean enabled, boolean running,
@@ -37,15 +41,8 @@ final class MonitorStatus {
         if ("disconnected".equals(raw)) return State.DISCONNECTED;
         return State.UNKNOWN;
     }
-    static String connectedDuration(long nativeSeconds, long observedSeconds) {
-        if (nativeSeconds > 0) return "GMS 计时：" + duration(nativeSeconds);
-        if (observedSeconds > 0) {
-            return "已观察在线：" + duration(observedSeconds)
-                    + (nativeSeconds == 0 ? "（GMS 计时仍为 0，非实际总时长）"
-                                          : "（非实际连接总时长）");
-        }
-        return nativeSeconds == 0 ? "GMS 计时：0 秒（待后续采样确认）"
-                : "连接时长：无法确认";
+    static String connectedDuration(long seconds) {
+        return seconds > 0 ? "已连接：" + duration(seconds) : "已连接：刚建立";
     }
 
     static String notificationDuration(long seconds) {

@@ -5,21 +5,440 @@ DATA=/data/adb/berry_fcm_ksu
 mkdir -p "$DATA" || exit 0
 [ "$(id -u)" = 0 ] || exit 0
 LOCK="$DATA/service.lock"
+MAINTENANCE_LOCK="$DATA/maintenance.lock"
+TOYBOX_BIN="${BERRY_TOYBOX_BIN:-/system/bin/toybox}"
+KSU_BUSYBOX="${BERRY_KSU_BUSYBOX:-/data/adb/ksu/bin/busybox}"
+proc_start_time() {
+    [ -r "/proc/$1/stat" ] || return 1
+    tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $20}'
+}
+proc_group_id() {
+    [ -r "/proc/$1/stat" ] || return 1
+    tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $3}'
+}
+process_group_alive() {
+    awk -v pgid="$1" '
+        {
+            stat=$0
+            sub(/^.*[)] /, "", stat)
+            split(stat, fields, " ")
+            if (fields[1] != "Z" && fields[3] == pgid) found=1
+        }
+        END { exit !found }
+    ' /proc/[0-9]*/stat 2>/dev/null
+}
+proc_state() {
+    [ -r "/proc/$1/stat" ] || return 1
+    tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $1}'
+}
+service_process_matches() {
+    pid="$1"
+    case "$pid" in ""|*[!0-9]*) return 1;; esac
+    [ "$pid" -gt 1 ] && kill -0 "$pid" 2>/dev/null || return 1
+    cmdline="$(tr "\000" " " < "/proc/$pid/cmdline" 2>/dev/null)"
+    case "$cmdline" in *"/berry_fcm_ksu/service.sh"*) return 0;; *) return 1;; esac
+}
+service_identity() {
+    pid="$1"; stamp="$2"
+    case "$pid:$stamp" in *[!0-9:]*|:*|*:) return 1;; esac
+    [ "$pid" -gt 1 ] && [ "$stamp" -gt 0 ] && kill -0 "$pid" 2>/dev/null || return 1
+    [ "$(proc_start_time "$pid")" = "$stamp" ] || return 1
+    service_process_matches "$pid"
+}
+patrol_identity_for_lock() {
+    stale_patrol_pid=; stale_patrol_stamp=
+    IFS=' ' read -r stale_patrol_pid stale_patrol_stamp < "$LOCK/patrol" 2>/dev/null || return 1
+    case "$stale_patrol_pid:$stale_patrol_stamp" in *[!0-9:]*|:*|*:) return 1;; esac
+    [ "$stale_patrol_pid" -gt 1 ] && [ "$stale_patrol_stamp" -gt 0 ] &&
+        kill -0 "$stale_patrol_pid" 2>/dev/null || return 1
+    [ "$(proc_start_time "$stale_patrol_pid")" = "$stale_patrol_stamp" ] || return 1
+    tr "\000" " " < "/proc/$stale_patrol_pid/cmdline" 2>/dev/null | grep -Fq "patrol.sh"
+}
+stop_stale_patrol() {
+    patrol_identity_for_lock || return 0
+    kill -TERM "$stale_patrol_pid" 2>/dev/null || :
+    n=0
+    while patrol_identity_for_lock && [ "$(proc_state "$stale_patrol_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 4 ]; do
+        sleep 1; n=$((n + 1))
+    done
+    if patrol_identity_for_lock && [ "$(proc_state "$stale_patrol_pid" 2>/dev/null)" != Z ]; then
+        kill -KILL "$stale_patrol_pid" 2>/dev/null || :
+        n=0
+        while patrol_identity_for_lock && [ "$(proc_state "$stale_patrol_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 3 ]; do
+            sleep 1; n=$((n + 1))
+        done
+    fi
+    if patrol_identity_for_lock && [ "$(proc_state "$stale_patrol_pid" 2>/dev/null)" != Z ]; then
+        printf '[%s] stale_patrol_stop_unconfirmed pid=%s start=%s; refusing a duplicate patrol\n' \
+            "$(date '+%F %T')" "$stale_patrol_pid" "$stale_patrol_stamp" >> "$DATA/guard.log"
+        return 1
+    fi
+    printf '[%s] stale_patrol_stopped pid=%s start=%s before service restart\n' \
+        "$(date '+%F %T')" "$stale_patrol_pid" "$stale_patrol_stamp" >> "$DATA/guard.log"
+    return 0
+}
+
+monitor_owner_alive() {
+    monitor_pid=; monitor_stamp=
+    IFS=' ' read -r monitor_pid monitor_stamp < "$DATA/mcs-monitor.lock.owner" 2>/dev/null || return 1
+    case "$monitor_pid:$monitor_stamp" in *[!0-9:]*|:*|*:) return 1;; esac
+    [ "$monitor_pid" -gt 1 ] && [ "$monitor_stamp" -gt 0 ] &&
+        kill -0 "$monitor_pid" 2>/dev/null || return 1
+    [ "$(proc_start_time "$monitor_pid")" = "$monitor_stamp" ] || return 1
+    tr "\000" " " 2>/dev/null < "/proc/$monitor_pid/cmdline" | grep -Fq "fcm-monitor.sh"
+}
+monitor_group_tool() {
+    if [ -x "$TOYBOX_BIN" ] && "$TOYBOX_BIN" --list 2>/dev/null | grep -qx kill; then
+        printf '%s\n' "$TOYBOX_BIN"
+    elif [ -x "$KSU_BUSYBOX" ] && "$KSU_BUSYBOX" --list 2>/dev/null | grep -qx kill; then
+        printf '%s\n' "$KSU_BUSYBOX"
+    fi
+}
+monitor_group_identity_alive() {
+    # Before each group signal, revalidate at least one recorded identity still anchors this PGID.
+    if kill -0 "$monitor_pgid" 2>/dev/null &&
+       [ "$(proc_start_time "$monitor_pgid")" = "$monitor_group_stamp" ] &&
+       [ "$(proc_group_id "$monitor_pgid")" = "$monitor_pgid" ]; then
+        if [ "$(proc_state "$monitor_pgid" 2>/dev/null)" = Z ] ||
+           tr -d "\000" < "/proc/$monitor_pgid/cmdline" 2>/dev/null | grep -Eq "timeout|fcm-monitor\\.sh"; then
+            return 0
+        fi
+    fi
+    if kill -0 "$monitor_pid" 2>/dev/null &&
+       [ "$(proc_start_time "$monitor_pid")" = "$monitor_stamp" ] &&
+       [ "$(proc_group_id "$monitor_pid")" = "$monitor_pgid" ]; then
+        if [ "$(proc_state "$monitor_pid" 2>/dev/null)" = Z ] ||
+           tr -d "\000" < "/proc/$monitor_pid/cmdline" 2>/dev/null | grep -Fq "fcm-monitor.sh"; then
+            return 0
+        fi
+    fi
+    return 1
+}
+monitor_process_exists() {
+    for monitor_cmdline in /proc/[0-9]*/cmdline; do
+        [ -r "$monitor_cmdline" ] || continue
+        monitor_cmdline_text="$(tr "\\000" " " < "$monitor_cmdline" 2>/dev/null)"
+        case "$monitor_cmdline_text" in *fcm-monitor.sh*) return 0;; esac
+    done
+    return 1
+}
+stop_monitor_owner() {
+    [ -s "$DATA/mcs-monitor.lock.owner" ] || { rm -f "$DATA/mcs-monitor.lock.owner"; return 0; }
+    monitor_pid=; monitor_stamp=; monitor_pgid=; monitor_isolated=; monitor_group_stamp=
+    IFS=' ' read -r monitor_pid monitor_stamp monitor_pgid monitor_isolated monitor_group_stamp < "$DATA/mcs-monitor.lock.owner" 2>/dev/null || :
+    case "$monitor_pid:$monitor_stamp" in *[!0-9:]*|:*|*:)
+        if ! monitor_process_exists; then
+            rm -f "$DATA/mcs-monitor.lock.owner"
+            printf '[%s] stale_monitor_owner_record_cleared reason=no_monitor_process\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+            return 0
+        fi
+        printf '[%s] monitor_owner_identity_invalid; monitor process still exists, preserving owner lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+        return 1
+        ;;
+    esac
+    [ "$monitor_pid" -gt 1 ] && [ "$monitor_stamp" -gt 0 ] || return 1
+    if [ -z "$monitor_isolated" ] && kill -0 "$monitor_pid" 2>/dev/null &&
+       [ "$(proc_start_time "$monitor_pid")" = "$monitor_stamp" ] &&
+       [ "$(proc_group_id "$monitor_pid")" = "$monitor_pid" ]; then
+        if [ "$(proc_state "$monitor_pid" 2>/dev/null)" = Z ] ||
+           tr -d '\000' < "/proc/$monitor_pid/cmdline" 2>/dev/null | grep -Fq 'fcm-monitor.sh'; then
+            monitor_pgid="$monitor_pid"
+            monitor_isolated=1
+            monitor_group_stamp="$monitor_stamp"
+            printf '[%s] monitor_legacy_group_inferred pid=%s pgid=%s\n' "$(date '+%F %T')" "$monitor_pid" "$monitor_pgid" >> "$DATA/guard.log"
+        fi
+    fi
+    case "$monitor_isolated" in
+        1)
+            case "$monitor_pgid:$monitor_group_stamp" in *[!0-9:]*|:*|*:)
+                # Old isolated owners used the monitor itself as group leader.
+                [ "$monitor_pgid" = "$monitor_pid" ] || return 1
+                monitor_group_stamp="$monitor_stamp"
+                ;;
+            esac
+            [ "$monitor_pgid" -gt 1 ] && [ "$monitor_group_stamp" -gt 0 ] || return 1
+            monitor_group_tool="$(monitor_group_tool)"
+            [ -n "$monitor_group_tool" ] || {
+                printf '[%s] monitor_group_tool_unavailable pid=%s; preserving owner lock\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
+                return 1
+            }
+            if kill -0 "$monitor_pgid" 2>/dev/null; then
+                [ "$(proc_start_time "$monitor_pgid")" = "$monitor_group_stamp" ] &&
+                    [ "$(proc_group_id "$monitor_pgid")" = "$monitor_pgid" ] || {
+                    printf '[%s] monitor_group_leader_reused_or_moved pgid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pgid" >> "$DATA/guard.log"
+                    return 1
+                }
+                if [ "$(proc_state "$monitor_pgid" 2>/dev/null)" != Z ]; then
+                    group_cmdline="$(tr -d '\000' < "/proc/$monitor_pgid/cmdline" 2>/dev/null)"
+                    case "$group_cmdline" in *timeout*|*fcm-monitor.sh*) :;; *)
+                        printf '[%s] monitor_group_leader_cmdline_mismatch pgid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pgid" >> "$DATA/guard.log"
+                        return 1
+                        ;;
+                    esac
+                fi
+            fi
+            if kill -0 "$monitor_pid" 2>/dev/null; then
+                [ "$(proc_start_time "$monitor_pid")" = "$monitor_stamp" ] &&
+                    [ "$(proc_group_id "$monitor_pid")" = "$monitor_pgid" ] || {
+                    printf '[%s] monitor_owner_pid_reused_or_moved pid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
+                    return 1
+                }
+                if [ "$(proc_state "$monitor_pid" 2>/dev/null)" != Z ] &&
+                   ! tr -d '\000' < "/proc/$monitor_pid/cmdline" 2>/dev/null | grep -Fq 'fcm-monitor.sh'; then
+                    printf '[%s] monitor_owner_cmdline_mismatch pid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
+                    return 1
+                fi
+            fi
+            if process_group_alive "$monitor_pgid"; then
+                monitor_group_identity_alive || {
+                    printf '[%s] monitor_group_identity_unverified_before_term pgid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pgid" >> "$DATA/guard.log"
+                    return 1
+                }
+                "$monitor_group_tool" kill -TERM "-$monitor_pgid" 2>/dev/null || :
+                n=0
+                while process_group_alive "$monitor_pgid" && [ "$n" -lt 3 ]; do
+                    sleep 1; n=$((n + 1))
+                done
+                if process_group_alive "$monitor_pgid"; then
+                    monitor_group_identity_alive || {
+                        printf '[%s] monitor_group_identity_unverified_before_kill pgid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pgid" >> "$DATA/guard.log"
+                        return 1
+                    }
+                    "$monitor_group_tool" kill -KILL "-$monitor_pgid" 2>/dev/null || :
+                    n=0
+                    while process_group_alive "$monitor_pgid" && [ "$n" -lt 3 ]; do
+                        sleep 1; n=$((n + 1))
+                    done
+                fi
+            fi
+            if process_group_alive "$monitor_pgid"; then
+                printf '[%s] monitor_group_stop_unconfirmed pid=%s start=%s pgid=%s\n' \
+                    "$(date '+%F %T')" "$monitor_pid" "$monitor_stamp" "$monitor_pgid" >> "$DATA/guard.log"
+                return 1
+            fi
+            rm -f "$DATA/mcs-monitor.lock.owner"
+            return 0
+            ;;
+        0|'') :;;
+        *) return 1;;
+    esac
+    monitor_owner_alive || { rm -f "$DATA/mcs-monitor.lock.owner"; return 0; }
+    kill -TERM "$monitor_pid" 2>/dev/null || :
+    n=0
+    while monitor_owner_alive && [ "$(proc_state "$monitor_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 3 ]; do
+        sleep 1; n=$((n + 1))
+    done
+    if monitor_owner_alive && [ "$(proc_state "$monitor_pid" 2>/dev/null)" != Z ]; then
+        kill -KILL "$monitor_pid" 2>/dev/null || :
+        n=0
+        while monitor_owner_alive && [ "$(proc_state "$monitor_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 3 ]; do
+            sleep 1; n=$((n + 1))
+        done
+    fi
+    if monitor_owner_alive && [ "$(proc_state "$monitor_pid" 2>/dev/null)" != Z ]; then
+        printf '[%s] monitor_owner_stop_unconfirmed pid=%s start=%s\n' \
+            "$(date '+%F %T')" "$monitor_pid" "$monitor_stamp" >> "$DATA/guard.log"
+        return 1
+    fi
+    rm -f "$DATA/mcs-monitor.lock.owner"
+}
+
+maintenance_owner_identity() {
+    maintenance_pid=; maintenance_stamp=
+    IFS=' ' read -r maintenance_pid maintenance_stamp < "$MAINTENANCE_LOCK/owner" 2>/dev/null || return 1
+    case "$maintenance_pid:$maintenance_stamp" in *[!0-9:]*|:*|*:) return 1;; esac
+    [ "$maintenance_pid" -gt 1 ] && [ "$maintenance_stamp" -gt 0 ] &&
+        kill -0 "$maintenance_pid" 2>/dev/null || return 1
+    [ "$(proc_start_time "$maintenance_pid")" = "$maintenance_stamp" ] || return 1
+    [ "$(proc_state "$maintenance_pid")" != Z ]
+}
+maintenance_child_group_alive() {
+    [ -n "$maintenance_child_tool" ] && [ -n "$maintenance_child_pgid" ] &&
+        process_group_alive "$maintenance_child_pgid"
+}
+maintenance_child_group_identity_alive() {
+    [ -n "$maintenance_child_stop_pid" ] && [ -n "$maintenance_child_stop_stamp" ] &&
+        [ -n "$maintenance_child_pgid" ] || return 1
+    kill -0 "$maintenance_child_stop_pid" 2>/dev/null || return 1
+    [ "$(proc_start_time "$maintenance_child_stop_pid")" = "$maintenance_child_stop_stamp" ] &&
+        [ "$(proc_group_id "$maintenance_child_stop_pid")" = "$maintenance_child_pgid" ] || return 1
+    [ "$(proc_state "$maintenance_child_stop_pid" 2>/dev/null)" = Z ] ||
+        tr -d '\000' < "/proc/$maintenance_child_stop_pid/cmdline" 2>/dev/null | grep -Fq '/bin/ctl.sh'
+}
+stop_maintenance_child() {
+    [ -s "$MAINTENANCE_LOCK/child" ] || return 0
+    child_file_pid=; child_file_stamp=; child_file_pgid=; child_file_tool=
+    IFS=' ' read -r child_file_pid child_file_stamp child_file_pgid child_file_tool < "$MAINTENANCE_LOCK/child" 2>/dev/null || :
+    case "$child_file_pid:$child_file_stamp:$child_file_pgid" in
+        *[!0-9:]*|:*|*:)
+            printf '[%s] maintenance_child_identity_invalid; refusing to clear maintenance lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+            return 1
+            ;;
+    esac
+    [ "$child_file_pid" -gt 1 ] && [ "$child_file_stamp" -gt 0 ] &&
+        [ "$child_file_pgid" = "$child_file_pid" ] || return 1
+    case "$child_file_tool" in "$TOYBOX_BIN"|"$KSU_BUSYBOX") :;; *)
+        printf '[%s] maintenance_child_tool_invalid; refusing to clear maintenance lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+        return 1
+        ;;
+    esac
+    [ -x "$child_file_tool" ] &&
+        "$child_file_tool" --list 2>/dev/null | grep -qx kill || return 1
+    if kill -0 "$child_file_pid" 2>/dev/null; then
+        [ "$(proc_start_time "$child_file_pid")" = "$child_file_stamp" ] &&
+            [ "$(proc_group_id "$child_file_pid")" = "$child_file_pgid" ] || {
+                printf '[%s] maintenance_child_pid_reused_or_moved pid=%s; refusing group signal\n' "$(date '+%F %T')" "$child_file_pid" >> "$DATA/guard.log"
+                return 1
+            }
+    fi
+    maintenance_child_stop_pid="$child_file_pid"
+    maintenance_child_stop_stamp="$child_file_stamp"
+    maintenance_child_pgid="$child_file_pgid"
+    maintenance_child_tool="$child_file_tool"
+    if maintenance_child_group_alive; then
+        maintenance_child_group_identity_alive || {
+            printf '[%s] maintenance_child_group_identity_unverified_before_term pgid=%s; refusing group signal\n' "$(date '+%F %T')" "$maintenance_child_pgid" >> "$DATA/guard.log"
+            return 1
+        }
+        "$maintenance_child_tool" kill -TERM "-$maintenance_child_pgid" 2>/dev/null || :
+        n=0
+        while maintenance_child_group_alive && [ "$n" -lt 4 ]; do
+            sleep 1; n=$((n + 1))
+        done
+        if maintenance_child_group_alive; then
+            maintenance_child_group_identity_alive || {
+                printf '[%s] maintenance_child_group_identity_unverified_before_kill pgid=%s; refusing group signal\n' "$(date '+%F %T')" "$maintenance_child_pgid" >> "$DATA/guard.log"
+                return 1
+            }
+            "$maintenance_child_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
+            n=0
+            while maintenance_child_group_alive && [ "$n" -lt 3 ]; do
+                sleep 1; n=$((n + 1))
+            done
+        fi
+    fi
+    if maintenance_child_group_alive; then
+        printf '[%s] maintenance_child_stop_unconfirmed pid=%s start=%s pgid=%s\n' \
+            "$(date '+%F %T')" "$maintenance_child_stop_pid" "$maintenance_child_stop_stamp" "$maintenance_child_pgid" >> "$DATA/guard.log"
+        return 1
+    fi
+    if [ "$(awk '{print $1}' "$MAINTENANCE_LOCK/child" 2>/dev/null)" = "$maintenance_child_stop_pid" ] &&
+       [ "$(awk '{print $2}' "$MAINTENANCE_LOCK/child" 2>/dev/null)" = "$maintenance_child_stop_stamp" ]; then
+        rm -f "$MAINTENANCE_LOCK/child"
+    fi
+    return 0
+}
+stop_maintenance_owner() {
+    [ -d "$MAINTENANCE_LOCK" ] || return 0
+    n=0
+    while [ ! -s "$MAINTENANCE_LOCK/owner" ] && [ "$n" -lt 2 ]; do
+        sleep 1; n=$((n + 1))
+    done
+    if [ ! -s "$MAINTENANCE_LOCK/owner" ]; then
+        printf '[%s] maintenance_owner_unpublished; refusing to clear maintenance lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+        return 1
+    fi
+    maintenance_pid=; maintenance_stamp=
+    IFS=' ' read -r maintenance_pid maintenance_stamp < "$MAINTENANCE_LOCK/owner" 2>/dev/null || :
+    case "$maintenance_pid:$maintenance_stamp" in
+        *[!0-9:]*|:*|*:)
+            printf '[%s] maintenance_owner_identity_invalid; refusing to clear maintenance lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+            return 1
+            ;;
+    esac
+    [ "$maintenance_pid" -gt 1 ] && [ "$maintenance_stamp" -gt 0 ] || {
+        printf '[%s] maintenance_owner_identity_invalid; refusing to clear maintenance lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+        return 1
+    }
+    stop_maintenance_child || return 1
+    if ! maintenance_owner_identity; then
+        rm -rf "$MAINTENANCE_LOCK"
+        return 0
+    fi
+    maintenance_stop_pid="$maintenance_pid"
+    maintenance_stop_stamp="$maintenance_stamp"
+    kill -TERM "$maintenance_stop_pid" 2>/dev/null || :
+    n=0
+    while maintenance_owner_identity &&
+          [ "$maintenance_pid" = "$maintenance_stop_pid" ] &&
+          [ "$maintenance_stamp" = "$maintenance_stop_stamp" ] && [ "$n" -lt 4 ]; do
+        sleep 1; n=$((n + 1))
+    done
+    if maintenance_owner_identity &&
+       [ "$maintenance_pid" = "$maintenance_stop_pid" ] &&
+       [ "$maintenance_stamp" = "$maintenance_stop_stamp" ]; then
+        kill -KILL "$maintenance_stop_pid" 2>/dev/null || :
+        n=0
+        while maintenance_owner_identity &&
+              [ "$maintenance_pid" = "$maintenance_stop_pid" ] &&
+              [ "$maintenance_stamp" = "$maintenance_stop_stamp" ] && [ "$n" -lt 3 ]; do
+            sleep 1; n=$((n + 1))
+        done
+    fi
+    if maintenance_owner_identity &&
+       [ "$maintenance_pid" = "$maintenance_stop_pid" ] &&
+       [ "$maintenance_stamp" = "$maintenance_stop_stamp" ]; then
+        printf '[%s] maintenance_owner_stop_unconfirmed pid=%s start=%s\n' \
+            "$(date '+%F %T')" "$maintenance_stop_pid" "$maintenance_stop_stamp" >> "$DATA/guard.log"
+        return 1
+    fi
+    if [ -d "$MAINTENANCE_LOCK" ] &&
+       [ "$(awk '{print $1}' "$MAINTENANCE_LOCK/owner" 2>/dev/null)" = "$maintenance_stop_pid" ] &&
+       [ "$(awk '{print $2}' "$MAINTENANCE_LOCK/owner" 2>/dev/null)" = "$maintenance_stop_stamp" ]; then
+        rm -rf "$MAINTENANCE_LOCK"
+    fi
+    printf '[%s] maintenance_owner_stopped pid=%s start=%s\n' \
+        "$(date '+%F %T')" "$maintenance_stop_pid" "$maintenance_stop_stamp" >> "$DATA/guard.log"
+    return 0
+}
+
 if ! mkdir "$LOCK" 2>/dev/null; then
     old="$(cat "$LOCK/pid" 2>/dev/null)"
-    case "$old" in ''|*[!0-9]*) old=0 ;; esac
-    [ "$old" -gt 1 ] && kill -0 "$old" 2>/dev/null && exit 0
-    rm -rf "$LOCK"
+    stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
+    if [ -z "$old" ] || [ -z "$stamp" ]; then
+        sleep 1
+        old="$(cat "$LOCK/pid" 2>/dev/null)"
+        stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
+    fi
+    service_identity "$old" "$stamp" && exit 0
+    if service_process_matches "$old"; then
+        printf '[%s] service_lock_identity_unverified pid=%s start=%s; refusing duplicate supervisor\n' \
+            "$(date '+%F %T')" "$old" "$stamp" >> "$DATA/guard.log"
+        exit 0
+    fi
+    stop_stale_patrol || exit 0
+    stop_maintenance_owner || exit 0
+    stale="$DATA/service.lock.stale.$old.$stamp"
+    if mv "$LOCK" "$stale" 2>/dev/null; then rm -rf "$stale"; fi
     mkdir "$LOCK" 2>/dev/null || exit 0
 fi
-echo $$ > "$LOCK/pid"
+IFS=' ' read -r service_pid _ < /proc/self/stat
+case "$service_pid" in ""|*[!0-9]*) rmdir "$LOCK" 2>/dev/null || :; exit 0;; esac
+[ "$service_pid" -gt 1 ] || { rmdir "$LOCK" 2>/dev/null || :; exit 0; }
+service_start_stamp="$(proc_start_time "$service_pid")"
+[ -n "$service_start_stamp" ] || { rmdir "$LOCK" 2>/dev/null || :; exit 0; }
+echo "$service_pid" > "$LOCK/pid"
+printf '%s\n' "$service_start_stamp" > "$LOCK/starttime"
+echo "$service_pid" > "$LOCK/wake-pid"
+if ! stop_monitor_owner; then
+    current_lock_pid="$(cat "$LOCK/pid" 2>/dev/null)"
+    current_lock_stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
+    if [ "$current_lock_pid" = "$service_pid" ] &&
+       [ "$current_lock_stamp" = "$service_start_stamp" ] &&
+       [ "$(proc_start_time "$service_pid")" = "$service_start_stamp" ]; then
+        rm -rf "$LOCK"
+    fi
+    printf '[%s] service_start_aborted reason=monitor_owner_cleanup_unconfirmed pid=%s\n' \
+        "$(date '+%F %T')" "$service_pid" >> "$DATA/guard.log"
+    exit 0
+fi
 cgroup_path() {
     while IFS=: read -r hierarchy controllers group; do
         if [ "$hierarchy" = 0 ] && [ -z "$controllers" ]; then
             printf '%s\n' "$group"
             return
         fi
-    done < "/proc/$$/cgroup"
+    done < "/proc/$service_pid/cgroup"
 }
 group="$(cgroup_path)"
 cgroup_ready=1
@@ -27,49 +446,42 @@ case "$group" in
     /apps/*)
         # Hot install and WebUI can inherit the Manager's app freezer group.
         # Move only this service; workers inherit the verified group.
-        if { printf '%s\n' "$$" > /sys/fs/cgroup/cgroup.procs; } 2>/dev/null &&
+        if { printf '%s\n' "$service_pid" > /sys/fs/cgroup/cgroup.procs; } 2>/dev/null &&
            [ "$(cgroup_path)" = / ]; then
-            printf '[%s] service_cgroup_detached pid=%s from=%s to=/\n' "$(date '+%F %T')" "$$" "$group" >> "$DATA/guard.log"
+            printf '[%s] service_cgroup_detached pid=%s from=%s to=/\n' "$(date '+%F %T')" "$service_pid" "$group" >> "$DATA/guard.log"
         else
             cgroup_ready=0
-            printf '[%s] service_cgroup_detach_failed pid=%s group=%s\n' "$(date '+%F %T')" "$$" "$group" >> "$DATA/guard.log"
+            printf '[%s] service_cgroup_detach_failed pid=%s group=%s\n' "$(date '+%F %T')" "$service_pid" "$group" >> "$DATA/guard.log"
         fi
         ;;
 esac
 wait_pid=
 timer_pid=
-service_pid=$$
-mode_changed=0
-wake_count=0
-wake_seen=0
-stop_wait() {
-    [ -z "$wait_pid" ] || kill "$wait_pid" 2>/dev/null || :
-}
+
+service_stamp="$(cat "$LOCK/starttime" 2>/dev/null)"
+stop_wait() { [ -z "$wait_pid" ] || kill "$wait_pid" 2>/dev/null || :; }
 stop_timer() {
     [ -n "$timer_pid" ] || return 0
-    kill "$timer_pid" 2>/dev/null || :
+    kill -TERM "$timer_pid" 2>/dev/null || :
+    n=0
+    while kill -0 "$timer_pid" 2>/dev/null && [ "$(proc_state "$timer_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 4 ]; do
+        sleep 1; n=$((n + 1))
+    done
+    if kill -0 "$timer_pid" 2>/dev/null && [ "$(proc_state "$timer_pid" 2>/dev/null)" != Z ]; then
+        kill -KILL "$timer_pid" 2>/dev/null || :
+        n=0
+        while kill -0 "$timer_pid" 2>/dev/null && [ "$(proc_state "$timer_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 3 ]; do
+            sleep 1; n=$((n + 1))
+        done
+    fi
+    if kill -0 "$timer_pid" 2>/dev/null && [ "$(proc_state "$timer_pid" 2>/dev/null)" != Z ]; then
+        printf '[%s] timer_stop_unconfirmed pid=%s; refusing to start a duplicate timer worker\n' \
+            "$(date '+%F %T')" "$timer_pid" >> "$DATA/guard.log"
+        return 1
+    fi
     wait "$timer_pid" 2>/dev/null || :
     timer_pid=
 }
-stop_service() {
-    stop_wait
-    stop_timer
-    exit 0
-}
-refresh_mode() {
-    mode_changed=1
-    stop_wait
-}
-on_timer() {
-    wake_count=$((wake_count + 1))
-    stop_wait
-}
-trap 'rm -rf "$LOCK"' EXIT
-trap stop_service HUP INT TERM
-trap refresh_mode USR1
-trap on_timer USR2
-echo $$ > "$LOCK/wake-pid"
-
 timer_worker() {
     # The parent owns the service lock. This worker only owns the native timer.
     trap - EXIT USR1 USR2
@@ -89,7 +501,7 @@ timer_worker() {
     trap timer_worker_cleanup EXIT
     trap 'exit 0' HUP INT TERM
     echo timed > "$DATA/wake-status"
-    while [ -e "$MODDIR/module.prop" ] && kill -0 "$service_pid" 2>/dev/null; do
+    while [ -e "$MODDIR/module.prop" ] && [ "$(proc_start_time "$service_pid")" = "$service_stamp" ]; do
         "$MODDIR/bin/wake-timer-arm64" "$1" >> "$log" 2>&1 &
         alarm_pid=$!
         if ! wait "$alarm_pid"; then
@@ -99,13 +511,14 @@ timer_worker() {
             return 1
         fi
         alarm_pid=
+        [ "$(proc_start_time "$service_pid")" = "$service_stamp" ] || return 0
         kill -USR2 "$service_pid" 2>/dev/null || return 0
         tail -n 120 "$log" > "$log.tmp" && mv -f "$log.tmp" "$log"
     done
 }
 
 sync_timer() {
-    stop_timer
+    stop_timer || return 1
     if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ] &&
        [ "$(cat "$DATA/wake-mode" 2>/dev/null)" = timed ]; then
         if [ "$cgroup_ready" = 1 ]; then
@@ -127,79 +540,191 @@ while [ "$(getprop sys.boot_completed)" != 1 ] && [ "$n" -lt 120 ]; do
     sleep 3; n=$((n + 1))
 done
 printf '[%s] service_started pid=%s wake_mode=%s enabled=%s cgroup_ready=%s\n' \
-    "$(date '+%F %T')" "$$" "$(cat "$DATA/wake-mode" 2>/dev/null || echo passive)" \
+    "$(date '+%F %T')" "$service_pid" "$(cat "$DATA/wake-mode" 2>/dev/null || echo passive)" \
     "$(cat "$DATA/enabled" 2>/dev/null || echo 0)" "$cgroup_ready" >> "$DATA/guard.log"
-# The 30s sleep does not wake a suspended CPU. Resume with a fresh GMS read.
-last_fix=0
-mode_changed=1
-while [ -e "$MODDIR/module.prop" ]; do
-    if [ "$mode_changed" = 1 ]; then
-        mode_changed=0
-        sync_timer
+PATROL_RESTART_DELAY="${BERRY_PATROL_RESTART_DELAY_SECONDS:-5}"
+case "$PATROL_RESTART_DELAY" in ""|*[!0-9]*) PATROL_RESTART_DELAY=5;; esac
+patrol_pid=
+patrol_stamp=
+patrol_started=0
+patrol_sample_started=0
+patrol_identity_alive() {
+    [ -n "$patrol_pid" ] || return 1
+    kill -0 "$patrol_pid" 2>/dev/null || return 1
+    [ -n "$patrol_stamp" ] && [ "$(proc_start_time "$patrol_pid")" = "$patrol_stamp" ]
+}
+patrol_alive() {
+    patrol_identity_alive || return 1
+    tr "\000" " " 2>/dev/null < "/proc/$patrol_pid/cmdline" | grep -Fq "patrol.sh"
+}
+prepare_patrol_start() {
+    # A patrol can exit while its bounded monitor child is still unwinding.
+    # Never start a replacement patrol until any recorded monitor owner/group
+    # has been identity-checked and cleaned; otherwise repeated rc=13 lock
+    # contention can create a restart loop with no fresh sample heartbeat.
+    if [ -s "$DATA/mcs-monitor.lock.owner" ] && ! stop_monitor_owner; then
+        printf '[%s] patrol_restart_blocked reason=monitor_owner_cleanup_unconfirmed\n' \
+            "$(date '+%F %T')" >> "$DATA/guard.log"
+        return 1
     fi
-    wake_event=0
-    pending="$wake_count"
-    if [ "$pending" != "$wake_seen" ]; then
-        wake_event=1
-        wake_seen="$pending"
+    return 0
+}
+start_patrol() {
+    rm -f "$DATA/patrol.heartbeat" "$DATA/patrol.sample.heartbeat"
+    sh "$MODDIR/bin/patrol.sh" </dev/null >> "$DATA/patrol.log" 2>&1 &
+    patrol_pid=$!
+    patrol_stamp=
+    n=0
+    while [ -z "$patrol_stamp" ] && [ "$n" -lt 5 ]; do
+        patrol_stamp="$(proc_start_time "$patrol_pid")"
+        [ -n "$patrol_stamp" ] || sleep 1
+        n=$((n + 1))
+    done
+    if [ -z "$patrol_stamp" ]; then kill "$patrol_pid" 2>/dev/null || :; wait "$patrol_pid" 2>/dev/null || :; patrol_pid=; return 1; fi
+    patrol_started="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
+    case "$patrol_started" in ""|*[!0-9]*) patrol_started=0;; esac
+    if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]; then patrol_sample_started="$patrol_started"; else patrol_sample_started=0; fi
+    printf "%s %s\n" "$patrol_pid" "$patrol_stamp" > "$LOCK/patrol"
+    printf '[%s] patrol_supervisor_start pid=%s start=%s\n' "$(date '+%F %T')" "$patrol_pid" "$patrol_stamp" >> "$DATA/guard.log"
+}
+stop_patrol() {
+    [ -n "$patrol_pid" ] || return 0
+    if patrol_identity_alive; then
+        kill -TERM "$patrol_pid" 2>/dev/null || :
+        n=0
+        while patrol_identity_alive && [ "$(proc_state "$patrol_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 4 ]; do
+            sleep 1; n=$((n + 1))
+        done
+        if patrol_identity_alive && [ "$(proc_state "$patrol_pid" 2>/dev/null)" != Z ]; then
+            kill -KILL "$patrol_pid" 2>/dev/null || :
+            n=0
+            while patrol_identity_alive && [ "$(proc_state "$patrol_pid" 2>/dev/null)" != Z ] && [ "$n" -lt 3 ]; do
+                sleep 1; n=$((n + 1))
+            done
+        fi
     fi
+    if patrol_identity_alive && [ "$(proc_state "$patrol_pid" 2>/dev/null)" != Z ]; then
+        printf '[%s] patrol_stop_unconfirmed pid=%s start=%s; supervisor will not spawn a duplicate\n' \
+            "$(date '+%F %T')" "$patrol_pid" "$patrol_stamp" >> "$DATA/guard.log"
+        return 1
+    fi
+    wait "$patrol_pid" 2>/dev/null || :
+    patrol_pid=; patrol_stamp=
+    rm -f "$LOCK/patrol"
+}
+service_cleanup() {
+    cleanup_ok=1
+    stop_timer || cleanup_ok=0
+    # Stop patrol first so it cannot launch a monitor after the owner-lock check.
+    if stop_patrol; then
+        stop_monitor_owner || cleanup_ok=0
+        stop_maintenance_owner || cleanup_ok=0
+    else
+        cleanup_ok=0
+        printf '[%s] service_cleanup_blocked reason=patrol_stop_unconfirmed; preserving owner locks\n' \
+            "$(date '+%F %T')" >> "$DATA/guard.log"
+    fi
+    if [ "$cleanup_ok" = 1 ]; then
+        rm -rf "$LOCK"
+    else
+        printf '[%s] service_cleanup_incomplete; preserving lock to block duplicate workers\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+    fi
+}
+stop_service() { stop_wait; exit 0; }
+refresh_mode() {
+    mode_changed=1
+    stop_wait
+    [ -z "$patrol_pid" ] || kill -USR1 "$patrol_pid" 2>/dev/null || :
     if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]; then
-        now="$(awk '{print int($1)}' /proc/uptime)"
-        case "$now" in ''|*[!0-9]*) now=0 ;; esac
-        # Read the native GMS state; TCP sockets are auxiliary evidence.
-        # It never restarts/kills GMS and never changes DNS/VPN/proxy/routing.
-        if [ "$wake_event" = 1 ]; then
-            printf '[%s] 定时器触发，检查 GMS 原生状态\n' "$(date '+%F %T')" >> "$DATA/guard.log"
-        fi
-        check_started_epoch="$(date +%s 2>/dev/null)"
-        case "$check_started_epoch" in ''|*[!0-9]*) check_started_epoch=0;; esac
-        check_wake_mode="$(cat "$DATA/wake-mode" 2>/dev/null || echo passive)"
-        printf '[%s] fcm_check_start pid=%s uptime=%s wake=%s mode=%s\n' \
-            "$(date '+%F %T')" "$$" "$now" "$wake_event" "$check_wake_mode" >> "$DATA/guard.log"
-        result="$(sh "$MODDIR/bin/fcm-monitor.sh" monitor 2>&1)"
-        monitor_rc=$?
-        sample="$(sh "$MODDIR/bin/fcm-monitor.sh" snapshot 2>/dev/null)"
-        summary="$(printf '%s\n' "$sample" | sed -n 's/.*"fcm_state":"\([a-z_]*\)".*"fcm_sample_time":\([0-9]*\).*"fcm_recovery_decision":"\([a-z_]*\)".*/state=\1 sample_epoch=\2 recovery=\3/p')"
-        if [ "$wake_event" = 1 ]; then
-            printf '[%s] wake_gms_check_finished rc=%s %s\n' "$(date '+%F %T')" "$monitor_rc" "${summary:-snapshot=unavailable}" >> "$DATA/guard.log"
-        fi
-        check_finished_epoch="$(date +%s 2>/dev/null)"
-        case "$check_finished_epoch" in ''|*[!0-9]*) check_finished_epoch=0;; esac
-        check_elapsed=unknown
-        if [ "$check_started_epoch" -gt 0 ] && [ "$check_finished_epoch" -ge "$check_started_epoch" ]; then
-            check_elapsed=$((check_finished_epoch-check_started_epoch))
-        fi
-        printf '[%s] fcm_check_end rc=%s elapsed_s=%s %s\n' \
-            "$(date '+%F %T')" "$monitor_rc" "$check_elapsed" "${summary:-snapshot=unavailable}" >> "$DATA/guard.log"
-        [ -z "$result" ] || printf '[%s] %s\n' "$(date '+%F %T')" "$result" >> "$DATA/guard.log"
-        if [ "$last_fix" = 0 ] || [ "$now" -lt "$last_fix" ] || [ $((now - last_fix)) -ge 300 ]; then
-            fix_started_epoch="$(date +%s 2>/dev/null)"
-            case "$fix_started_epoch" in ''|*[!0-9]*) fix_started_epoch=0;; esac
-            printf '[%s] maintenance_start pid=%s uptime=%s operation=guard_fix\n' \
-                "$(date '+%F %T')" "$$" "$now" >> "$DATA/guard.log"
-            HEARTBEAT_MODE=auto sh "$MODDIR/bin/ctl.sh" fix >> "$DATA/guard.log" 2>&1
-            fix_rc=$?
-            fix_finished_epoch="$(date +%s 2>/dev/null)"
-            case "$fix_finished_epoch" in ''|*[!0-9]*) fix_finished_epoch=0;; esac
-            fix_elapsed=unknown
-            if [ "$fix_started_epoch" -gt 0 ] && [ "$fix_finished_epoch" -ge "$fix_started_epoch" ]; then
-                fix_elapsed=$((fix_finished_epoch-fix_started_epoch))
+        patrol_sample_started="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
+        case "$patrol_sample_started" in ""|*[!0-9]*) patrol_sample_started=0;; esac
+        rm -f "$DATA/patrol.sample.heartbeat"
+    else
+        patrol_sample_started=0
+    fi
+}
+on_timer() { [ -z "$patrol_pid" ] || kill -USR2 "$patrol_pid" 2>/dev/null || :; }
+trap service_cleanup EXIT
+trap stop_service HUP INT TERM
+trap refresh_mode USR1
+trap on_timer USR2
+
+mode_changed=1
+while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ]; do
+    if [ "$mode_changed" = 1 ]; then mode_changed=0; sync_timer; fi
+    if ! patrol_alive; then
+        if [ -n "$patrol_pid" ]; then
+            if patrol_identity_alive && [ "$(proc_state "$patrol_pid" 2>/dev/null)" != Z ]; then
+                stop_patrol || :
+            else
+                wait "$patrol_pid" 2>/dev/null || :
+                patrol_pid=; patrol_stamp=
+                rm -f "$LOCK/patrol"
             fi
-            printf '[%s] maintenance_end pid=%s operation=guard_fix rc=%s elapsed_s=%s\n' \
-                "$(date '+%F %T')" "$$" "$fix_rc" "$fix_elapsed" >> "$DATA/guard.log"
-            last_fix="$now"
         fi
-        bytes="$(wc -c < "$DATA/guard.log" 2>/dev/null)"
-        case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
-        if [ "$bytes" -gt 131072 ]; then
-            tail -n 160 "$DATA/guard.log" > "$DATA/guard.log.tmp" && mv -f "$DATA/guard.log.tmp" "$DATA/guard.log"
+        now_up="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
+        case "$now_up" in ""|*[!0-9]*) now_up=0;; esac
+        if [ -z "$patrol_pid" ] && { [ "$patrol_started" -eq 0 ] || [ "$now_up" -ge $((patrol_started + PATROL_RESTART_DELAY)) ]; }; then
+            if prepare_patrol_start; then
+                start_patrol || patrol_started="$now_up"
+            else
+                patrol_started="$now_up"
+            fi
+        fi
+    else
+        hb="$(cat "$DATA/patrol.heartbeat" 2>/dev/null)"
+        now_up="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
+        case "$hb" in ""|*[!0-9]*) hb=0;; esac
+        case "$now_up" in ""|*[!0-9]*) now_up=0;; esac
+        patrol_stale=0
+        if [ "$hb" -gt 0 ] && [ "$now_up" -ge "$hb" ] && [ $((now_up - hb)) -gt 90 ]; then
+            patrol_stale=1
+        elif [ "$hb" -eq 0 ] && [ "$patrol_started" -gt 0 ] && [ "$now_up" -ge "$patrol_started" ] && [ $((now_up - patrol_started)) -gt 90 ]; then
+            patrol_stale=1
+        fi
+        sample_hb="$(cat "$DATA/patrol.sample.heartbeat" 2>/dev/null)"
+        case "$sample_hb" in ""|*[!0-9]*) sample_hb=0;; esac
+        sample_stale=0
+        if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]; then
+            if [ "$sample_hb" -gt 0 ] && [ "$now_up" -ge "$sample_hb" ] && [ $((now_up - sample_hb)) -gt 90 ]; then
+                sample_stale=1
+            elif [ "$sample_hb" -eq 0 ] && [ "$patrol_sample_started" -gt 0 ] &&
+                 [ "$now_up" -ge "$patrol_sample_started" ] && [ $((now_up - patrol_sample_started)) -gt 90 ]; then
+                sample_stale=1
+            fi
+        fi
+        if [ "$patrol_stale" = 1 ] || [ "$sample_stale" = 1 ]; then
+            watchdog_reason=patrol_heartbeat
+            [ "$sample_stale" = 1 ] && watchdog_reason=monitor_sample
+            [ "$patrol_stale" = 1 ] && [ "$sample_stale" = 1 ] && watchdog_reason=patrol_and_monitor
+            printf '[%s] patrol_watchdog_stale reason=%s pid=%s heartbeat=%s sample=%s started=%s uptime=%s\n' \
+                "$(date '+%F %T')" "$watchdog_reason" "$patrol_pid" "$hb" "$sample_hb" "$patrol_started" "$now_up" >> "$DATA/guard.log"
+            # Stop patrol first so it cannot publish a monitor owner after cleanup.
+            watchdog_cleanup_ok=1
+            watchdog_cleanup_reason=
+            stop_patrol || {
+                watchdog_cleanup_ok=0
+                watchdog_cleanup_reason=patrol_stop_unconfirmed
+            }
+            if [ "$watchdog_cleanup_ok" = 1 ] && [ "$sample_stale" = 1 ]; then
+                stop_monitor_owner || {
+                    watchdog_cleanup_ok=0
+                    watchdog_cleanup_reason=monitor_owner_stop_unconfirmed
+                }
+            fi
+            if [ "$watchdog_cleanup_ok" = 1 ]; then
+                rm -f "$DATA/patrol.heartbeat" "$DATA/patrol.sample.heartbeat"
+                patrol_started="$now_up"
+                if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]; then patrol_sample_started="$now_up"; else patrol_sample_started=0; fi
+            else
+                printf '[%s] patrol_watchdog_cleanup_blocked reason=%s; preserving stale heartbeat for retry\n' \
+                    "$(date '+%F %T')" "$watchdog_cleanup_reason" >> "$DATA/guard.log"
+            fi
         fi
     fi
-    if [ "$mode_changed" = 1 ] || [ "$wake_count" != "$wake_seen" ]; then continue; fi
-    sleep 30 &
+    sleep 5 &
     wait_pid=$!
-    if [ "$mode_changed" = 1 ] || [ "$wake_count" != "$wake_seen" ]; then stop_wait; fi
-    wait "$wait_pid"
+    wait "$wait_pid" 2>/dev/null || :
     wait_pid=
 done
-stop_timer
+exit 0

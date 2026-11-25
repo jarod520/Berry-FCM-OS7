@@ -22,7 +22,7 @@ target_list() {
 installed() {
     cmd package path --user 0 "$1" 2>/dev/null | grep -q '^package:' && return 0
     pm path --user 0 "$1" 2>/dev/null | grep -q '^package:' && return 0
-    dumpsys -t 3 package "$1" 2>/dev/null | grep -q 'Package \['
+    return 1
 }
 # 1=stopped, 0=not stopped, -1=no reliable data
 stopped() {
@@ -43,11 +43,18 @@ persistent() {
 wake_mode() {
     if [ "$(cat "$DATA/wake-mode" 2>/dev/null)" = timed ]; then echo timed; else echo passive; fi
 }
+proc_start_time() {
+    [ -r "/proc/$1/stat" ] || return 1
+    tr -d "\n" < "/proc/$1/stat" 2>/dev/null | sed "s/^.*) //" | awk '{print $20}'
+}
 refresh_guard() {
     pid="$(cat "$DATA/service.lock/wake-pid" 2>/dev/null)"
-    case "$pid" in ''|*[!0-9]*) pid=0;; esac
-    if [ "$pid" -gt 1 ] && [ "$(cat "$DATA/service.lock/pid" 2>/dev/null)" = "$pid" ] &&
-        tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q '/berry_fcm_ksu/service.sh '; then
+    stamp="$(cat "$DATA/service.lock/starttime" 2>/dev/null)"
+    case "$pid:$stamp" in *[!0-9:]*|:*|*:) pid=0;; esac
+    if [ "$pid" -gt 1 ] && [ "$stamp" -gt 0 ] &&
+        [ "$(cat "$DATA/service.lock/pid" 2>/dev/null)" = "$pid" ] &&
+        [ "$(proc_start_time "$pid")" = "$stamp" ] &&
+        tr "\000" " " < "/proc/$pid/cmdline" 2>/dev/null | grep -q "/berry_fcm_ksu/service.sh"; then
         kill -USR1 "$pid" 2>/dev/null && return 0
     fi
     if [ "$(cat "$ENABLED" 2>/dev/null)" = 1 ]; then
@@ -57,13 +64,10 @@ refresh_guard() {
 # Extended checks inspired by fcmfix-coloros17. Pure Android public shell commands;
 # vendor-specific ColorOS hooks are NOT present or implied.
 gms_uid() {
-    # Android 17 varies the `list packages -U` output, so try package dump as fallback.
-    uid="$(cmd package list packages -U "$GMS" 2>/dev/null |         awk -v pkg="$GMS" '$1=="package:"pkg && $2~/^uid:[0-9]+/ {sub(/^uid:/,"",$2); split($2,ids,","); if (ids[1]~/^[0-9]+$/) {print ids[1]; exit}}')"
+    # Use cmd/pm package UID APIs only. A failed lookup remains unavailable.
+    uid="$(cmd package list packages -U "$GMS" 2>/dev/null | awk -v pkg="$GMS" '$1=="package:"pkg && $2~/^uid:[0-9]+/ {sub(/^uid:/,"",$2); split($2,ids,","); if (ids[1]~/^[0-9]+$/) {print ids[1]; exit}}')"
     if [ -z "$uid" ]; then
-        uid="$(pm list packages -U "$GMS" 2>/dev/null |             awk -v pkg="$GMS" '$1=="package:"pkg && $2~/^uid:[0-9]+/ {sub(/^uid:/,"",$2); split($2,ids,","); if (ids[1]~/^[0-9]+$/) {print ids[1]; exit}}')"
-    fi
-    if [ -z "$uid" ]; then
-        uid="$(dumpsys package "$GMS" 2>/dev/null | sed -n 's/^[[:space:]]*userId=\([0-9][0-9]*\).*/\1/p' | head -n 1)"
+        uid="$(pm list packages -U "$GMS" 2>/dev/null | awk -v pkg="$GMS" '$1=="package:"pkg && $2~/^uid:[0-9]+/ {sub(/^uid:/,"",$2); split($2,ids,","); if (ids[1]~/^[0-9]+$/) {print ids[1]; exit}}')"
     fi
     case "$uid" in ''|*[!0-9]*) return 1;; *) printf '%s\n' "$uid" ;; esac
 }
@@ -188,26 +192,24 @@ heartbeat() {
     fi
 }
 fix() {
-    changed=0; failed=0; count=0
+    changed=0; failed=0
     for pkg in $(target_list); do
         installed "$pkg" || { echo "$pkg 未安装，跳过"; continue; }
-        st="$(stopped "$pkg")"
-        [ "$st" = 0 ] && { echo "$pkg 未停止"; continue; }
-        [ "$st" = -1 ] && { echo "$pkg stopped 状态未知，跳过"; failed=$((failed + 1)); continue; }
-        [ "$count" -lt 10 ] || { echo '本轮最多修复 10 个应用'; break; }
-        count=$((count + 1))
-        if cmd package unstop --user 0 "$pkg" >/dev/null 2>&1 && [ "$(stopped "$pkg")" = 0 ]; then
-            echo "$pkg 已解除 stopped (复检通过)"
+        # Package-state diagnostics must not decide whether to issue unstop.
+        # The package command itself is the operation result; a failed diagnostic
+        # must never prevent the independent MCS heartbeat below.
+        if cmd package unstop --user 0 "$pkg" >/dev/null 2>&1; then
+            echo "$pkg 已提交 unstop 命令"
             changed=$((changed + 1))
         else
-            echo "$pkg 解除 stopped 失败 (可能权限/系统限制)"
+            echo "$pkg unstop 命令失败 (可能权限/系统限制)"
             failed=$((failed + 1))
         fi
     done
-    if installed "$GMS" && { [ "${HEARTBEAT_MODE:-manual}" != auto ] || [ "$changed" -gt 0 ]; }; then
+    if installed "$GMS"; then
         heartbeat || echo '部分心跳未确认，并不代表推送必然失败'
     fi
-    echo "本轮解除 stopped: $changed, 失败: $failed"
+    echo "本轮 unstop 命令成功: $changed, 失败: $failed"
     [ "$failed" = 0 ]
 }
 watch() {

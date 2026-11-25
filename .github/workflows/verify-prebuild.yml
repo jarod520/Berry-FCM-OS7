@@ -2,11 +2,8 @@ name: BerryFCM pre-build source and functional gates
 
 on:
   push:
-    branches: [main, release/1.0-rc.1]
-    paths:
-      - 'app/**'
-      - 'tests/**'
-      - '.github/workflows/verify-prebuild.yml'
+    branches:
+      - fix/rc5-mcs-patrol-20261122
   workflow_dispatch:
 
 permissions:
@@ -29,6 +26,7 @@ jobs:
           set -eu
           sh -n app/src/main/assets/fcm-monitor.sh
           sh tests/apk-native-fcm-smoke.sh
+          sh tests/apk-no-dump-smoke.sh
       - name: Verify UI, Android permissions, release discipline and icon semantics
         run: sh tests/apk-module-smoke.sh
       - name: Pre-build source and whitespace audit

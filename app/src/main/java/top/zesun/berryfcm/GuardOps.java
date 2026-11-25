@@ -30,8 +30,8 @@ final class GuardOps {
         return items;
     }
 
-    // Each target can take two 3s dumpsys calls. Keep a batch well below
-    // the 45s shell limit, include GMS only once, never silently drop targets.
+    // Status-only batches use one bounded package diagnostic per target;
+    // repair batches use package-manager commands and never depend on dumpsys.
     static List<String> commandBatches(Set<String> selected, boolean repair) {
         return commandBatches(selected, repair, 5);
     }
@@ -48,21 +48,21 @@ final class GuardOps {
         StringBuilder cmd = new StringBuilder();
         for (String pkg : items) {
             if (!PACKAGE.matcher(pkg).matches()) continue;
-            cmd.append("p='").append(pkg).append("'; ")
-               .append("l=\"$(dumpsys -t 3 package \"$p\" 2>/dev/null | ")
-               .append("grep -E '^[[:space:]]*User 0:.*installed=' | head -n 1)\"; ")
-               .append("case \" $l \" in *' installed=false '*) echo \"$p|unknown\";; ");
+            cmd.append("p='").append(pkg).append("'; ");
             if (repair) {
-                cmd.append("*' stopped=true '*) cmd package unstop --user 0 \"$p\" >/dev/null 2>&1; ")
-                   .append("l=\"$(dumpsys -t 3 package \"$p\" 2>/dev/null | ")
-                   .append("grep -E '^[[:space:]]*User 0:.*installed=' | head -n 1)\"; ")
-                   .append("case \" $l \" in *' stopped=false '*) echo \"$p|restored\";; ")
-                   .append("*) echo \"$p|repair_failed\";; esac;; ");
+                cmd.append("if cmd package path --user 0 \"$p\" 2>/dev/null | grep -q '^package:' || ")
+                   .append("pm path --user 0 \"$p\" 2>/dev/null | grep -q '^package:'; then ")
+                   .append("if cmd package unstop --user 0 \"$p\" >/dev/null 2>&1; then ")
+                   .append("echo \"$p|unstop_submitted\"; else echo \"$p|repair_failed\"; fi; ")
+                   .append("else echo \"$p|not_installed\"; fi; ");
             } else {
-                cmd.append("*' stopped=true '*) echo \"$p|stopped\";; ");
+                cmd.append("l=\"$(dumpsys -t 3 package \"$p\" 2>/dev/null | ")
+                   .append("grep -E '^[[:space:]]*User 0:.*installed=' | head -n 1)\"; ")
+                   .append("case \" $l \" in *' installed=false '*) echo \"$p|unknown\";; ")
+                   .append("*' stopped=true '*) echo \"$p|stopped\";; ")
+                   .append("*' stopped=false '*) echo \"$p|not_stopped\";; ")
+                   .append("*) echo \"$p|unknown\";; esac; ");
             }
-            cmd.append("*' stopped=false '*) echo \"$p|not_stopped\";; ")
-               .append("*) echo \"$p|unknown\";; esac; ");
         }
         return cmd.toString();
     }

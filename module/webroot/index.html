@@ -119,11 +119,11 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
   <div class="status"><span class="dot" id="drecv"></span><span>GMS 广播接收器（诊断）</span><span class="value" id="vrecv">—</span></div>
 </details></section>
 <section class="card" id="fcmTimeline"><div class="head"><h2><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-history"></use></svg>最新事件</h2><button id="loadEvents"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-refresh"></use></svg><span data-label>刷新记录</span></button></div>
-  <p class="hint">显示最近 6 条 GMS 原生事件。</p><ul class="native-events" id="nativeEvents"><li>正在读取 GMS 原生事件…</li></ul><details><summary>历史事件</summary><pre id="nativeHistory">暂无历史记录</pre></details><details><summary>连接时间线</summary><div class="timeline-grid">
+  <p class="hint">最近的连接、断联与恢复记录。</p><ul class="native-events" id="nativeEvents"><li>正在读取事件…</li></ul><details><summary>历史事件</summary><pre id="nativeHistory">暂无历史记录</pre></details><details><summary>连接时间线</summary><div class="timeline-grid">
     <div class="status"><span>本次连接开始</span><span class="value" id="tSince">—</span></div>
     <div class="status"><span>GMS 连接计时</span><span class="value" id="tConnected">—</span></div>
     <div class="status"><span>最近断开时间</span><span class="value" id="tDown">—</span></div>
-    <div class="status"><span>GMS 未连接计时</span><span class="value" id="tMissing">—</span></div>
+    <div class="status"><span>FCM 长连接未建立计时</span><span class="value" id="tMissing">—</span></div>
     <div class="status"><span>最近恢复连接</span><span class="value" id="tRestore">—</span></div>
     <div class="status"><span>最近重连请求</span><span class="value" id="tTry">—</span></div>
     <div class="status"><span>最近请求结果</span><span class="value" id="tResult">—</span></div>
@@ -131,7 +131,7 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
     <div class="status"><span>最近采样</span><span class="value" id="tSample">—</span></div>
     <div class="status"><span>累计断联次数</span><span class="value" id="tOutages">—</span></div>
   </div>
-  </details><details><summary>恢复与异常记录</summary><pre id="fcmEvents">正在读取恢复记录…</pre></details>
+  </details>
 </section>
 
 </section>
@@ -235,9 +235,9 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
  function renderTimeline(j){
    const state=j.fcm_state||'unknown',connected=state==='connected';
    $('tSince').textContent=fullTime(j.fcm_connection_since);
-   $('tConnected').textContent=connected&&j.fcm_native_duration>=0?durationText(j.fcm_native_duration):'—';
+   $('tConnected').textContent=connected?durationText(j.fcm_connected_seconds):'—';
    $('tDown').textContent=fullTime(j.fcm_disconnect_since);
-   $('tMissing').textContent=(state==='disconnected'||state==='connecting')&&j.fcm_native_duration>=0?durationText(j.fcm_native_duration):'—';
+   $('tMissing').textContent=(state==='disconnected'||state==='connecting')&&j.fcm_missing_seconds>0?durationText(j.fcm_missing_seconds):'—';
    $('tRestore').textContent=fullTime(j.fcm_last_restore);
    $('tTry').textContent=fullTime(j.fcm_last_try);
    const results={none:'尚无请求',requested:'已发送，等待连接',failed:'广播未确认',restored:'请求后观察到连接恢复'};
@@ -247,10 +247,10 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
  }
  async function loadEvents(){
    const recoveryLabels={sample_gap:"采样空档",sample_unknown:"原生状态未返回",sample_dump:"原生输出摘要",down_reconfirmed:"再次确认断联",tcp_absence_started:"TCP 缺失计时开始",tcp_absence_confirmed:"TCP 缺失确认断联",socket_connected:"TCP 观察到连接",socket_connecting:"TCP 正在连接",native_timer_stalled:"GMS 计时停滞",native_timer_check_cancelled:"计时复核后取消恢复",recovery_decision:"恢复决策",recovery_confirmed:"断联二次确认",recovery_socket_confirmed:"TCP 辅助确认断联",recovery_confirmation_unavailable:"恢复复核未通过",connection_down:"发现断联",connection_restored:"恢复连接",reconnect_requested:"已请求重连",reconnect_failed:"重连请求失败",reconnect_skipped:"跳过重连",reboot:"设备重启"};
-   const nativeLabels={gms_connected:"连接成功",gms_close:"连接关闭",gms_network_attempt:"尝试连接",gms_failed:"连接失败",gms_heartbeat_delay:"心跳闹钟延迟"};
-   for(const [action,id,labels] of [["native-events","nativeEvents",nativeLabels],["events","fcmEvents",recoveryLabels]]){
+   const labels=recoveryLabels;
+   {
      try{
-       const r=await exec("/system/bin/sh "+MON+" "+action);
+       const r=await exec("/system/bin/sh "+MON+" events");
        if(r.code!==0)throw Error(r.stderr||("退出码 "+r.code));
        const lines=r.stdout.trim().split(/\r?\n/).filter(Boolean).reverse();
        const records=lines.map(line=>{
@@ -259,14 +259,11 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
            title:kind?(labels[kind]||kind):line,detail:message.join("|")};
        });
        const plain=records.map(e=>[e.time,e.title,e.detail].join("  ")).join("\n")||"暂无记录";
-       if(id==="nativeEvents"){
-         $("nativeHistory").textContent=plain;
-         renderNativeEvents(records.slice(0,6),"暂无记录");
-       }else $(id).textContent=plain;
+       $("nativeHistory").textContent=plain;
+       renderNativeEvents(records.slice(0,6),"暂无记录");
      }catch(error){
        const message="读取记录失败："+error.message;
-       if(id==="nativeEvents"){renderNativeEvents([],message);$("nativeHistory").textContent=message}
-       else $(id).textContent=message;
+       renderNativeEvents([],message);$("nativeHistory").textContent=message;
      }
    }
  }
@@ -301,16 +298,13 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
    row('proc',j.gcm_persistent===1?'good':'bad',j.gcm_persistent===1?'运行中':'未运行');
    const fstate=j.fcm_state||'unknown',connected=fstate==='connected';
    const down=fstate==='disconnected'||fstate==='connecting';
-   const labels={connected:'FCM 已连接',connecting:'FCM 正在重连（尚未连接）',disconnected:'FCM 已断开',unknown:'本次没有有效连接样本',stale:'等待有效检查'};
-   const socketObserved=j.fcm_source==='gms_socket';
-   const socketFallback=j.fcm_source==='gms_socket_fallback';
+   const labels={connected:'FCM 长连接已建立',connecting:'FCM 长连接建立中',disconnected:'FCM 长连接未建立',unknown:'状态未知，等待下次采样',stale:'等待有效检查'};
+   const socketSrc=String(j.fcm_source||'').startsWith('gms_socket');
    const failed=j.fcm_check_exit!==0&&j.fcm_check_exit!==13;
-   const stateLabel=connected&&socketObserved?'GMS MCS TCP 已建立（FCM 认证未证实）'
-     :fstate==='disconnected'&&socketFallback?'FCM TCP 持续缺失（Root 观察）'
-     :(labels[fstate]||labels.unknown);
+   const stateLabel=labels[fstate]||labels.unknown;
    const label=failed?'连接检查失败':stateLabel,color=connected?'good':fstate==='disconnected'?'bad':'warn';
    row('mcs',color,connected&&j.fcm_transport?label+' · '+j.fcm_transport:label);
-   row('miss',color,connected?'0 秒':down&&j.fcm_native_duration>=0?durationText(j.fcm_native_duration):'—');
+   row('miss',color,connected?'0 秒':down&&j.fcm_missing_seconds>0?durationText(j.fcm_missing_seconds):'—');
    row('recv',j.receivers>0?'good':'warn',String(j.receivers));
    $('verdict').textContent=j.gms_stopped===1?'GMS 已被停止':label;
    $('verdict').dataset.state=j.gms_stopped===1?'bad':color;
@@ -320,25 +314,22 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
    $("bridge").textContent="KernelSU Root";
    $("bridgeNote").textContent=failed?`UID 0 已授权，连接检查退出码：${j.fcm_check_exit}。详见检查日志。`:"UID 0 已授权";
    $('overviewStatus').dataset.state=$('verdict').dataset.state;
-   const canRecover=down&&(j.fcm_source==='gms'||socketObserved||socketFallback)&&!failed&&j.gms_stopped!==1;
+   const canRecover=down&&socketSrc&&!failed&&j.gms_stopped!==1;
    const recent=j.fcm_sample_time>0?fullTime(j.fcm_sample_time):'暂无';
-   const nativeSeconds=Number(j.fcm_native_duration);
-   const observedSeconds=Number(j.fcm_observed_up_seconds);
-   const duration=connected?(nativeSeconds>0?'GMS 计时：'+durationText(nativeSeconds)
-       :observedSeconds>0?'已观察在线：'+durationText(observedSeconds):'连接时长：待确认')
-     :down&&nativeSeconds>=0?'未连接计时：'+durationText(nativeSeconds):'';
+   const duration=connected?'已连接：'+durationText(j.fcm_connected_seconds)
+     :down&&j.fcm_missing_seconds>0?'未连接：'+durationText(j.fcm_missing_seconds):'';
    const background=j.guard===1?'后台监控已开启':'后台监控未开启';
    const detail=failed?$("bridgeNote").textContent
      :j.fcm_check_exit===13?"后台正在检查，当前显示最近采样。"
-     :connected?(socketObserved?'原生状态字段暂缺；UID0 已观察到精确的 GMS MCS TCP 连接。TCP 建立不等于消息送达。':'')
+     :connected?''
      :fstate==='stale'?'采样已过期。深睡期间巡检可能延迟。'
-     :down?(socketFallback?'原生状态字段暂缺；UID0 连续未看到 GMS MCS TCP。':socketObserved?'原生字段暂缺；依据 GMS UID 的 MCS TCP 连接尝试判断。':'')+'退避剩余：'+durationText(j.fcm_retry_in)
+     :down?'退避剩余：'+durationText(j.fcm_retry_in)
      :(reasons[j.fcm_native_reason]||'等待 GMS 原生读数')+'。'+(hints[j.fcm_tcp_hint]||'');
    $('overviewMeta').textContent=[background,'最近检查：'+recent,duration,detail].filter(Boolean).join('\n');
    $('connNote').textContent=['最近检查：'+recent,duration,background,
      connected&&j.fcm_transport?'连接方式：'+j.fcm_transport.toUpperCase().replace('TCP','TCP '):'',detail].filter(Boolean).join('\n');
    $('reconnect').hidden=!canRecover;
-   $('reconnectHint').textContent=canRecover?(socketFallback?'原生状态字段暂缺；UID0 连续缺少 GMS MCS TCP，可请求恢复。':socketObserved?'已看到 GMS MCS TCP 仍在连接，可请求恢复。':'仅向 Google 推送请求恢复，结果见下方记录。')
+   $('reconnectHint').textContent=canRecover?'可请求恢复。'
      :connected?'当前已连接，无需恢复。':'尚未确认断开，可先点「立即检查」。';
    row('doze',j.doze===1?'good':'warn',j.doze===1?'已放行':j.doze===0?'未放行':'无法读取');
    row('data',j.data_saver===1?'warn':j.data_saver===0?'good':'warn',j.data_saver===1?'已启用':j.data_saver===0?'未启用':'未知');

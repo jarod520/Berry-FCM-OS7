@@ -1,13 +1,6 @@
 name: Build KernelSU ZIP
 
 on:
-  push:
-    branches: [main, release/1.0-rc.1]
-    paths:
-      - 'module/**'
-      - 'module-src/**'
-      - 'tests/**'
-      - '.github/workflows/build-ksu.yml'
   workflow_dispatch:
 
 permissions:
@@ -28,6 +21,7 @@ jobs:
           for script in module/*.sh module/bin/*.sh; do sh -n "$script"; done
           sh tests/fcm-monitor-smoke.sh
           sh tests/ksu-wake-smoke.sh
+          sh tests/apk-no-dump-smoke.sh
       - name: Validate embedded WebUI JavaScript
         run: |
           python3 - <<'PY'

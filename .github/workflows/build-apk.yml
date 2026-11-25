@@ -2,15 +2,8 @@ name: Build Android APK
 
 on:
   push:
-    branches: [main, release/1.0-rc.1]
-    paths:
-      - 'app/**'
-      - 'version.properties'
-      - 'tests/**'
-      - 'build.gradle'
-      - 'settings.gradle'
-      - 'gradle.properties'
-      - '.github/workflows/build-apk.yml'
+    branches:
+      - fix/rc5-mcs-patrol-20261122
   workflow_dispatch:
 
 permissions:
@@ -59,6 +52,7 @@ jobs:
         run: |
           sh -n app/src/main/assets/fcm-monitor.sh
           sh tests/apk-native-fcm-smoke.sh
+          sh tests/apk-no-dump-smoke.sh
 
       - name: Verify complete APK module and permission scope
         run: sh tests/apk-module-smoke.sh

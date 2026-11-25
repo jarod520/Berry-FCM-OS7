@@ -177,8 +177,8 @@ need 'persistentWakeLock.release()' "$src/FcmMonitorService.java"
 need 'resumeIfNeeded' "$src/MainActivity.java"
 need 'sampleAgeSeconds' "$src/MonitorActivity.java"
 need 'android.permission.WAKE_LOCK' "$manifest"
-need 'job.get(45, TimeUnit.SECONDS)' "$src/AdbConnectionManager.java"
-need 'process.waitFor(45, TimeUnit.SECONDS)' "$src/RootShell.java"
+need 'job.get(75, TimeUnit.SECONDS)' "$src/AdbConnectionManager.java"
+need 'process.waitFor(75, TimeUnit.SECONDS)' "$src/RootShell.java"
 need 'PrivilegeAccess.probe' "$src/AuthActivity.java"
 need 'prefs.activateMode' "$src/AuthActivity.java"
 need 'connectionKey' "$src/AppPrefs.java"
@@ -294,6 +294,10 @@ fi
 # Shared state and UI lifecycle regression.
 need 'MonitorStatus.resolve' "$src/MainActivity.java"
 need 'MonitorStatus.resolve' "$src/MonitorActivity.java"
+need '"gms_socket".equals(latest.optString("fcm_source"))' "$src/FcmMonitorService.java"
+if grep -Fq '"gms".equals(latest.optString("fcm_source"))' "$src/FcmMonitorService.java"; then
+  echo 'Manual recovery UI must not accept legacy dump-derived source' >&2; exit 1
+fi
 need 'Notification.DecoratedCustomViewStyle()' "$src/FcmMonitorService.java"
 need 'MonitorStatus.resolve(true, true, isRunning(), age,' "$src/FcmMonitorService.java"
 need 'syncChecked(enabled, prefs.monitorEnabled())' "$src/MonitorActivity.java"
@@ -355,7 +359,7 @@ assert "synchronized String executeOnce" in static_adb
 assert "@Override public String execute(String command)" in shizuku
 assert "@Override public synchronized String execute" not in shizuku
 assert "Binder.getCallingUid() != ownerUid" in shizuku
-assert "process.waitFor(45, TimeUnit.SECONDS)" in shizuku
+assert "process.waitFor(75, TimeUnit.SECONDS)" in shizuku
 assert "requestHeartbeat()" in guard and "shell.execute(GuardOps.heartbeatCommand())" in guard
 assert 'if (result.contains("|restored"))' not in guard
 print("PASS: parallel privileged commands with serialized lifecycle, static ADB, UID checks and bounded shell execution")
@@ -496,7 +500,7 @@ must('confirmationLock.acquire(90000L)' in svc
      and 'resetConfirmationWindow()' in svc, "finite one-shot outage confirmation")
 must('updateConfirmationWindow(parsed)' in svc
      and 'MonitorStatus.hasStateEvidence(sample.optString("fcm_source"))' in svc,
-     "native GMS or explicitly qualified socket evidence")
+     "GMS UID kernel Socket evidence")
 must(svc.count('releaseConfirmationWakeLock();') >= 3
      and svc.count('releasePersistentWakeLock();') >= 3, "lifecycle cleanup")
 must('holdForService(context)' in wd and 'handoff.acquire(90000L)' in wd
@@ -619,7 +623,7 @@ assert 'SystemClock.elapsedRealtime() + 50000L >= deadline' in episode
 assert 'queueCheck(false, "rescue_followup")' in episode
 assert episode.index('if ("requested".equals(decision)') < episode.index('.putLong("rescue_started_elapsed"')
 assert '    rescue)' in script and 'request_reconnect rescue' in script
-assert '[ "${BERRY_AUTO_GATE:-ready}" != ready ]' in script and '[ "$source" = gms ]' in script
+assert '[ "${BERRY_AUTO_GATE:-ready}" != ready ]' in script and '[ "$source" = gms_socket ]' in script and '[ "$source" = gms_socket_absence ]' in script
 assert '(normalRecovery ? "monitor" : "status")' in service
 print("PASS: single wake-gap request, shared backoff and nonblocking follow-up")
 PY_RESCUE
@@ -665,3 +669,9 @@ assert body[0].attrib[a+"src"] == "@drawable/ic_bf_heartbeat"
 assert body[1].attrib[a+"id"] == "@+id/berry_status_text"
 print("PASS: outlined vector assets, minute-only notification and preserved app icon with inline heartbeat")
 PY_VISUAL
+
+# Guard command generation is pure Java; execute its batching and dump-isolation contract.
+guard_classes="$(mktemp -d)"
+javac -d "$guard_classes" "$src/GuardOps.java" "$root/tests/GuardOpsSmoke.java"
+java -cp "$guard_classes" top.zesun.berryfcm.GuardOpsSmoke
+rm -rf "$guard_classes"

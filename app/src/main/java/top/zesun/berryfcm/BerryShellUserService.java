@@ -39,7 +39,7 @@ public final class BerryShellUserService extends IBerryShell.Stub {
                     "berry-fcm-", ".log").toFile();
             process = new ProcessBuilder("/system/bin/sh", "-c", command)
                     .redirectErrorStream(true).redirectOutput(output).start();
-            if (!process.waitFor(45, TimeUnit.SECONDS))
+            if (!process.waitFor(75, TimeUnit.SECONDS))
                 throw new IOException("Shell command timeout");
             if (output.length() > 200000) throw new IOException("Shell output limit");
             return new String(Files.readAllBytes(output.toPath()), StandardCharsets.UTF_8);

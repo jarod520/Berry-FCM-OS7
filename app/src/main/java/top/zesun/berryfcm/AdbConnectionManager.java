@@ -112,10 +112,10 @@ final class AdbConnectionManager extends AbsAdbConnectionManager {
         // the shared transport serialized and cancel a stalled command.
         Future<String> job = shellWorker.submit(() -> readCommand(command));
         try {
-            return job.get(45, TimeUnit.SECONDS);
+            return job.get(75, TimeUnit.SECONDS);
         } catch (TimeoutException timeout) {
             job.cancel(true);
-            throw new IOException("ADB Shell 命令 45 秒超时，后台将重新连接", timeout);
+            throw new IOException("ADB Shell 命令 75 秒超时，后台将重新连接", timeout);
         } catch (InterruptedException interrupted) {
             job.cancel(true);
             Thread.currentThread().interrupt();

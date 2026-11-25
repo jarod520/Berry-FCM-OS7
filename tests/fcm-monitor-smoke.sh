@@ -1,215 +1,326 @@
 #!/bin/sh
 set -eu
+
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 MON="${BERRY_MONITOR_SCRIPT:-$ROOT/module/bin/fcm-monitor.sh}"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT HUP INT TERM
+cleanup() {
+    [ -z "${monitor_pid:-}" ] || { kill "$monitor_pid" 2>/dev/null || :; wait "$monitor_pid" 2>/dev/null || :; }
+    rm -rf "$TMP"
+}
+trap cleanup EXIT
+trap 'cleanup; exit 1' HUP INT TERM
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+grep -Fq 'kernel-visible GMS UID MCS sockets are the sole connection-state evidence' "$MON" ||
+    fail "monitor must declare kernel socket evidence as its only state source"
+if grep -Eiq 'dumpsys|parse_mcs|native_close_fallback|force_native|gms_stopped' "$MON"; then
+    fail "dumpsys/native state decision path remains in monitor"
+fi
+
 mkdir -p "$TMP/bin" "$TMP/data"
-cat > "$TMP/bin/dumpsys" <<'MOCK'
+cat > "$TMP/bin/id" <<'MOCK'
 #!/bin/sh
-case "$*" in
-  *"activity service"*)
-    if [ -n "${MCS_NEXT_FIXTURE:-}" ] && [ -f "$MCS_NEXT_FIXTURE" ]; then
-      cat "$MCS_FIXTURE"
-      mv "$MCS_NEXT_FIXTURE" "$MCS_FIXTURE"
-    else cat "$MCS_FIXTURE"; fi;;
-  *"package"*) echo "    User 0: ceDataInode=1 installed=true stopped=${MCS_STOPPED:-false} suspended=false hidden=false";;
-esac
+if [ "$1" = "-u" ]; then echo 0; else exec /usr/bin/id "$@"; fi
 MOCK
 cat > "$TMP/bin/cmd" <<'MOCK'
 #!/bin/sh
-echo 'package:com.google.android.gms uid:10200'
+case "$*" in
+  "package list packages -U com.google.android.gms")
+    echo 'package:com.google.android.gms uid:10200';;
+  *) exit 1;;
+esac
 MOCK
 cat > "$TMP/bin/ss" <<'MOCK'
 #!/bin/sh
-if [ "${MCS_SS_MODE:-connected}" = unknown ]; then
-    echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228'
-elif [ "${MCS_SS_MODE:-connected}" = absent ]; then
-    echo 'ESTAB 0 0 192.168.1.8:45000 1.1.1.1:443 uid:1000 ino:202'
-else
-    echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:101'
-fi
+mode="$(cat "$MCS_MODE_FILE")"
+case "$mode" in
+  connected) echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:100';;
+  connecting) echo 'SYN-SENT 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:101';;
+  absent) echo 'TIME-WAIT 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:102';;
+  stalled)
+    echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:103 unacked:0 retrans:0/0'
+    echo ' cubic wscale:7,7 rto:204 rtt:20/2 unacked:1 retrans:3/10'
+    ;;
+  idle)
+    echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:104 unacked:0 retrans:0/0'
+    echo ' cubic wscale:7,7 rto:204 rtt:20/2 lastrcv:1800001'
+    ;;
+  unknown|proc_connected) echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228';;
+  unknown_uid) echo 'ESTAB 0 0 192.168.1.8:45000 1.1.1.1:443 uid:10200 ino:106';;
+  unverified443) echo 'ESTAB 0 0 192.168.1.8:45000 1.1.1.1:443 uid:10200 ino:105';;
+  *) exit 2;;
+esac
 MOCK
 cat > "$TMP/bin/am" <<'MOCK'
 #!/bin/sh
+case "$1" in set-inactive|set-standby-bucket) exit 0;; esac
 echo "$*" >> "$MCS_AM_LOG"
-if [ "${MCS_AM_FAIL:-0}" = 1 ]; then
-    echo 'Permission Denial: fixture'
-    echo 'Broadcast completed: result=0'
+if [ "${MCS_AM_FAIL:-0}" = 1 ] ||
+   { [ -n "${MCS_AM_FAIL_ACTION:-}" ] && printf '%s' "$*" | grep -Fq "$MCS_AM_FAIL_ACTION"; }; then
+    echo 'Permission Denial: fixture' >&2
     exit 1
 fi
-echo 'Broadcast completed: result=0'
-# Model a reconnect that actually leads to a new native connected sample.
-if [ -n "${MCS_AM_CONNECTED_FIXTURE:-}" ]; then
-    cp "$MCS_AM_CONNECTED_FIXTURE" "$MCS_FIXTURE"
+if [ -n "${MCS_AM_UNKNOWN_ON_ACTION:-}" ] && printf '%s' "$*" | grep -Fq "$MCS_AM_UNKNOWN_ON_ACTION"; then
+    echo unknown_uid > "$MCS_MODE_FILE"
 fi
+if [ -n "${MCS_AM_CONNECT_ON_ACTION:-}" ] && printf '%s' "$*" | grep -Fq "$MCS_AM_CONNECT_ON_ACTION"; then
+    echo connected > "$MCS_MODE_FILE"
+fi
+if [ "${MCS_AM_INCREMENT_UPTIME:-0}" = 1 ]; then
+    current_uptime="$(cat "$MCS_UPTIME_FILE")"
+    echo "$((current_uptime+1))" > "$MCS_UPTIME_FILE"
+elif [ -n "${MCS_AM_ADVANCE_UPTIME:-}" ]; then
+    printf '%s\n' "$MCS_AM_ADVANCE_UPTIME" > "$MCS_UPTIME_FILE"
+fi
+echo 'Broadcast completed: result=0'
 MOCK
-cat > "$TMP/bin/id" <<'MOCK'
+cat > "$TMP/bin/nslookup" <<'MOCK'
 #!/bin/sh
-if [ "$*" = "-u" ]; then
-    echo "${MCS_UID:-0}"
-else /usr/bin/id "$@"; fi
+exit 1
+MOCK
+cat > "$TMP/bin/dumpsys" <<'MOCK'
+#!/bin/sh
+echo "$*" >> "$MCS_DUMPSYS_LOG"
+exit 91
 MOCK
 cat > "$TMP/bin/date" <<'MOCK'
 #!/bin/sh
-if [ "$*" = '+%s' ]; then cat "$MCS_CLOCK"; else /bin/date "$@"; fi
+if [ "$1" = "+%s" ]; then cat "$MCS_CLOCK"; else exec /bin/date "$@"; fi
 MOCK
 chmod +x "$TMP/bin/"*
+
+echo 1 > "$TMP/data/enabled"
 echo 10000 > "$TMP/uptime"
 echo test-boot > "$TMP/bootid"
-echo 1 > "$TMP/data/enabled"
+echo connected > "$TMP/mode"
 : > "$TMP/am.log"
+: > "$TMP/dumpsys.log"
+echo 1700010000 > "$TMP/epoch"
+
 export PATH="$TMP/bin:/usr/bin:/bin"
 export BERRY_FCM_TEST_MODE=1 BERRY_FCM_DATA="$TMP/data"
 export BERRY_UPTIME_FILE="$TMP/uptime" BERRY_BOOT_ID_FILE="$TMP/bootid"
-export MCS_FIXTURE="$TMP/dump" MCS_AM_LOG="$TMP/am.log" MCS_CLOCK="$TMP/epoch"
-settime() { printf '%s\n' "$1" > "$TMP/uptime"; printf '%s\n' "$((1700000000+$1))" > "$MCS_CLOCK"; }
-settime 10000
+export BERRY_PROC_NET_DIR="$TMP/proc-unavailable"
+export BERRY_SS_BIN="$TMP/bin/ss" BERRY_CMD_BIN="$TMP/bin/cmd" BERRY_AM_BIN="$TMP/bin/am"
+export MCS_MODE_FILE="$TMP/mode" MCS_AM_LOG="$TMP/am.log"
+export MCS_DUMPSYS_LOG="$TMP/dumpsys.log" MCS_CLOCK="$TMP/epoch"
+
+settime() {
+    printf '%s\n' "$1" > "$TMP/uptime"
+    printf '%s\n' "$((1700010000+$1-10000))" > "$TMP/epoch"
+}
 run() { sh "$MON" "$1"; }
-requests() { [ "$(wc -l < "$MCS_AM_LOG" | tr -d ' ')" = "$1" ]; }
+requests() { [ "$(wc -l < "$TMP/am.log" | tr -d ' ')" = "$1" ] || fail "expected $1 recovery commands"; }
 assert_json() {
     python3 - "$1" "$2" <<'PY'
 import json,sys
-j=json.loads(sys.argv[1]); k,v=sys.argv[2].split('=',1)
-assert str(j[k])==v,(k,j[k],v,j)
+data=json.loads(sys.argv[1])
+key,value=sys.argv[2].split("=",1)
+assert str(data[key]) == value, (key,data.get(key),value)
 PY
 }
-printf "%s\n" "DeviceID: [fixture]" "connected=mtalk.google.com/142.250.157.188,port=5228" "connectTime=03:22/00:00" > "$MCS_FIXTURE"
-j="$(run status)"; assert_json "$j" fcm_state=connected; assert_json "$j" fcm_native_duration=202
-printf '%s\n' 'DeviceID: [fixture]' 'connected=mtalk.google.com/[2001:db8::1],port=443' 'connectTime=00:03/00:00' > "$MCS_FIXTURE"
-j="$(run status)"; assert_json "$j" fcm_state=connected; assert_json "$j" 'fcm_remote=mtalk.google.com/[2001:db8::1]:443'
-run reconnect; requests 0
 
-export MCS_SS_MODE=unknown
-printf "%s\n" "Permission Denial" > "$MCS_FIXTURE"
-j="$(run status)"; assert_json "$j" fcm_state=unknown; assert_json "$j" fcm_tcp_hint=unknown
-run monitor; run reconnect; requests 0
-echo "PASS: native state is authoritative; TCP alone is auxiliary"
-
-settime 10030
-printf "%s\n" "DeviceID: [fixture]" "Not connected" > "$MCS_FIXTURE"
-run monitor; requests 0
-settime 10060
-export MCS_NEXT_FIXTURE="$TMP/next"
-printf "%s\n" "DeviceID: [fixture]" "connected=mtalk.google.com/142.250.157.188,port=5228" "connectTime=00:01/00:00" > "$MCS_NEXT_FIXTURE"
-run monitor; requests 0
-j="$(run snapshot)"; assert_json "$j" fcm_recovery_decision=confirmation_changed
-unset MCS_NEXT_FIXTURE
-
-# A fresh native timer after resume permits a double check in the same window.
-settime 10360
-printf "%s\n" "DeviceID: [fixture]" "Not connected" "disconnectTime=02:00/00:00" > "$MCS_FIXTURE"
-run monitor; requests 1
-test "$(tail -n 1 "$MCS_AM_LOG")" = "broadcast --user 0 -a com.google.android.intent.action.GCM_RECONNECT -p com.google.android.gms"
-j="$(run snapshot)"; assert_json "$j" fcm_recovery_decision=requested; assert_json "$j" fcm_state=disconnected
-run events | grep -q "|sample_gap|"
-settime 10390; run reconnect; requests 1
-settime 10660; run monitor; requests 2
-settime 10720; run monitor; requests 2
-settime 11260; run monitor; requests 3
-printf "%s\n" "DeviceID: [fixture]" "connected=mtalk.google.com/142.250.157.188,port=5228" "connectTime=00:01/00:00" > "$MCS_FIXTURE"
-settime 11290
-j="$(run status)"; assert_json "$j" fcm_last_result=restored; assert_json "$j" fcm_retry_streak=0
-echo "PASS: suspend gap, double confirmation, UID 0 broadcast, shared backoff and native restoration"
-
-settime 11600
-printf "%s\n" "DeviceID: [fixture]" "Not connected" "disconnectTime=01:00/00:00" > "$MCS_FIXTURE"
-export MCS_STOPPED=true; run monitor; requests 3
-unset MCS_STOPPED
-echo 0 > "$BERRY_FCM_DATA/enabled"; run monitor; requests 3
-echo 1 > "$BERRY_FCM_DATA/enabled"
-export MCS_UID=2000
-if run reconnect; then echo "non-root request unexpectedly accepted" >&2; exit 1; fi
-unset MCS_UID
-requests 3
-export MCS_AM_FAIL=1; run monitor; requests 4
-j="$(run snapshot)"; assert_json "$j" fcm_recovery_decision=request_failed
-unset MCS_AM_FAIL
-echo "PASS: stopped GMS, opt-out, non-root rejection and failed-broadcast classification"
-
-(
-    flock -xn 9
-    if run reconnect; then echo "concurrent request unexpectedly acquired lock" >&2; exit 1; fi
-) 9>"$BERRY_FCM_DATA/mcs-monitor.lock"
-requests 4
-echo "PASS: daemon and WebUI share a single lock"
-# A manager-provided BusyBox can exist while omitting the flock applet.
-# With no system flock on PATH, the same monitor must still read GMS.
-mkdir -p "$TMP/compatible"
-for bin in awk cat cp cut grep head mkdir mv rmdir tail tr wc; do
-    ln -s "$(command -v "$bin")" "$TMP/compatible/$bin"
-done
-cat > "$TMP/bin/busybox-minimal" <<'MOCK'
-#!/bin/sh
-[ "$1" = --list ] && printf '%s\n' awk mkdir
-MOCK
-chmod +x "$TMP/bin/busybox-minimal"
-export BERRY_KSU_BUSYBOX="$TMP/bin/busybox-minimal"
-printf '%s\n' 'DeviceID: [fixture]' 'connected=mtalk.google.com/142.250.157.188,port=5228' 'connectTime=00:30/00:00' > "$MCS_FIXTURE"
-settime 11630
-j="$(PATH="$TMP/bin:$TMP/compatible" /bin/sh "$MON" status)"
-assert_json "$j" fcm_state=connected
-[ ! -e "$BERRY_FCM_DATA/mcs-monitor-test-boot.lockdir" ]
-echo "PASS: native reading works with a KernelSU BusyBox lacking flock"
-
-# ActivityManager can return only wrapper lines with exit code zero.
-export MCS_NEXT_FIXTURE="$TMP/next-state-dump"
-printf '%s\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
-printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService' 'Server: Connected' > "$MCS_NEXT_FIXTURE"
+# A live GMS-owned MCS TCP socket is positive transport evidence.
 j="$(run status)"
 assert_json "$j" fcm_state=connected
-grep -q 'sample_retry|first=no_current_state retry_rc=0 state=connected' "$BERRY_FCM_DATA/mcs-monitor-events.log"
-unset MCS_NEXT_FIXTURE
-echo 'PASS: wrapper-only dump retries once and uses fresh GMS state'
+assert_json "$j" fcm_source=gms_socket
+assert_json "$j" fcm_native_duration=-1
+assert_json "$j" fcm_native_reason=not_used
+requests 0
 
-# When a wrapper-only dump has no current fields, a Root-visible exact MCS
-# socket supplies positive connected evidence instead of leaving the card blank.
-settime 11700
-printf '%s\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
-export MCS_SS_MODE=connected
+# A persistent SYN-SENT connection must not remain "unknown" forever.
+# One failed native trigger must immediately escalate through the remaining
+# triggers in the same confirmed-outage recovery sequence.
+echo connecting > "$TMP/mode"
+settime 10001
+j="$(run status)"
+assert_json "$j" fcm_state=connecting
+settime 10061
+export MCS_AM_FAIL_ACTION=GCM_RECONNECT
+run monitor >/dev/null
+unset MCS_AM_FAIL_ACTION
+requests 7
+grep -Fq 'GCM_RECONNECT' "$TMP/am.log" || fail "first recovery stage missing"
+grep -Fq 'MCS_HEARTBEAT' "$TMP/am.log" || fail "second recovery stage missing after first failure"
+grep -Fq 'ACTION_HEARTBEAT_NOW' "$TMP/am.log" || fail "third recovery stage missing"
+grep -Fq 'GTALK_HEARTBEAT' "$TMP/am.log" || fail "fourth recovery stage missing"
+line_gcm="$(grep -nF 'GCM_RECONNECT' "$TMP/am.log" | head -n 1 | cut -d: -f1)"
+line_mcs="$(grep -nF 'MCS_HEARTBEAT' "$TMP/am.log" | head -n 1 | cut -d: -f1)"
+line_action="$(grep -nF 'ACTION_HEARTBEAT_NOW' "$TMP/am.log" | head -n 1 | cut -d: -f1)"
+line_gtalk="$(grep -nF 'GTALK_HEARTBEAT' "$TMP/am.log" | head -n 1 | cut -d: -f1)"
+[ "$line_gcm" -lt "$line_mcs" ] && [ "$line_mcs" -lt "$line_action" ] && [ "$line_action" -lt "$line_gtalk" ] ||
+    fail "native recovery triggers were not issued in escalation order"
+j="$(run status)"
+assert_json "$j" fcm_last_result=requested
+
+# A second patrol inside the backoff window must not repeat the whole sequence.
+settime 10062
+run monitor >/dev/null
+requests 7
+j="$(sh "$MON" snapshot)"
+assert_json "$j" fcm_recovery_decision=cooldown
+
+# A later kernel socket observation, not broadcast exit status, confirms recovery.
+echo connected > "$TMP/mode"
+settime 10063
+run monitor >/dev/null
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_last_result=restored
+requests 7
+
+# If an intermediate trigger restores the socket, stop the sequence immediately.
+echo connecting > "$TMP/mode"
+settime 10064
+j="$(run status)"
+assert_json "$j" fcm_state=connecting
+settime 10124
+export MCS_AM_CONNECT_ON_ACTION=MCS_HEARTBEAT
+run monitor >/dev/null
+unset MCS_AM_CONNECT_ON_ACTION
+requests 9
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_last_result=restored
+
+# TCP_INFO can identify an established-but-blackholed MCS socket.
+echo stalled > "$TMP/mode"
+settime 10198
+j="$(run status)"
+assert_json "$j" fcm_state=disconnected
+assert_json "$j" fcm_tcp_hint=stalled
+settime 10213
+run monitor >/dev/null
+requests 16
+echo connected > "$TMP/mode"
+settime 10214
+run monitor >/dev/null
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+requests 16
+
+# A connected socket with no TCP data received for 30 minutes is also suspected stalled.
+echo idle > "$TMP/mode"
+settime 10215
+j="$(run status)"
+assert_json "$j" fcm_state=disconnected
+assert_json "$j" fcm_tcp_hint=stalled
+settime 10230
+run monitor >/dev/null
+requests 23
+echo connected > "$TMP/mode"
+settime 10231
+run monitor >/dev/null
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+requests 23
+
+# Continuous, successfully-readable absence is timed; one absent sample is not enough.
+echo absent > "$TMP/mode"
+settime 10257
+j="$(run status)"
+assert_json "$j" fcm_state=disconnected
+requests 23
+settime 10302
+j="$(run status)"
+assert_json "$j" fcm_state=disconnected
+settime 10317
+run monitor >/dev/null
+requests 30
+
+# An unreadable ownership/source sample is unavailable, not falsely disconnected.
+echo unknown > "$TMP/mode"
+settime 10318
+j="$(run status)"
+assert_json "$j" fcm_state=unknown
+requests 30
+
+# When ss cannot expose UID, the root-readable /proc TCP tables are the fallback.
+mkdir -p "$TMP/proc"
+cat > "$TMP/proc/tcp" <<'PROC'
+  sl  local_address rem_address   st tx_queue:rx_queue tr:tm->when retrnsmt   uid  timeout inode
+   0: 0801A8C0:C350 8EFA9D8E:146C 01 00000000:00000000 00:00000000 00000000 10200 0 12345
+PROC
+cat > "$TMP/proc/tcp6" <<'PROC'
+  sl  local_address rem_address   st tx_queue:rx_queue tr:tm->when retrnsmt   uid  timeout inode
+PROC
+export BERRY_PROC_NET_DIR="$TMP/proc"
+echo proc_connected > "$TMP/mode"
+settime 10319
 j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=gms_socket
 assert_json "$j" fcm_tcp_hint=established
-echo 'PASS: exact GMS MCS TCP evidence resolves wrapper-only state'
+requests 30
 
-# A recent explicit GMS down sample plus root-visible MCS socket absence must
-# still recover when subsequent dumps contain only ActivityManager wrappers.
-settime 11800
-printf '%s\n' 'SERVICE com.google.android.gms/.gcm.GcmService' 'Server: Not connected' > "$MCS_FIXTURE"
-run monitor; requests 4
-export MCS_SS_MODE=absent
-settime 11820
-printf '%s\n' 'ACTIVITY MANAGER SERVICES' '  (service wrapper)' '  (no client detail)' > "$MCS_FIXTURE"
-j="$(run monitor)"; requests 4
-assert_json "$(run snapshot)" fcm_state=unknown
-settime 11860
-j="$(run monitor)"; requests 5
-j="$(run snapshot)"
-assert_json "$j" fcm_state=disconnected
-assert_json "$j" fcm_source=gms_socket_fallback
-assert_json "$j" fcm_recovery_decision=requested
-grep -q '|recovery_socket_confirmed|' "$BERRY_FCM_DATA/mcs-monitor-events.log"
-grep -q '|reconnect_requested|auto UID=0 GCM_RECONNECT' "$BERRY_FCM_DATA/mcs-monitor-events.log"
-unset MCS_SS_MODE
-echo 'PASS: recent native down + root TCP absence recovers through unreadable dumps'
+# A GMS-owned HTTPS socket to an unrelated peer must remain unknown even when
+# mtalk DNS candidates are available; it must never age into false absence.
+printf '%s\n' '142.250.157.188' > "$TMP/data/mcs-mtalk-dns-ips.txt"
+echo 1700010000 > "$TMP/data/mcs-mtalk-dns-time"
+echo unverified443 > "$TMP/mode"
+settime 10320
+j="$(run status)"
+assert_json "$j" fcm_state=unknown
+assert_json "$j" fcm_source=unavailable
+requests 30
 
-# A frozen positive native GMS connection timer is checked twice, then receives
-# one targeted reconnect request. It does not force-stop the GMS package.
-export BERRY_FCM_DATA="$TMP/timer-data"
-mkdir -p "$BERRY_FCM_DATA"
-echo 1 > "$BERRY_FCM_DATA/enabled"
-: > "$MCS_AM_LOG"
-settime 20000
-printf '%s\n' 'DeviceID: [fixture]' 'connected=mtalk.google.com/142.250.157.188,port=5228' 'connectTime=10:00/00:00' > "$MCS_FIXTURE"
-run monitor; requests 0
-settime 20299
-run monitor; requests 0
-settime 20300
-run monitor; requests 1
-j="$(run snapshot)"; assert_json "$j" fcm_state=connected; assert_json "$j" fcm_recovery_decision=requested
-grep -q '|native_timer_stalled|GMS 原生仍报告 Connected' "$BERRY_FCM_DATA/mcs-monitor-events.log"
-grep -q '|reconnect_requested|stalled_timer UID=0 GCM_RECONNECT' "$BERRY_FCM_DATA/mcs-monitor-events.log"
-settime 20330
-run monitor; requests 1
-echo 'PASS: stalled native connection timer gets one confirmed, targeted reconnect request'
+# If a recovery follow-up cannot atomically publish evidence, it must not
+# save the in-memory sample state and create a false state/evidence generation.
+echo connecting > "$TMP/mode"
+settime 10320
+j="$(run status)"
+assert_json "$j" fcm_state=connecting
+settime 10380
+REAL_MV="$(command -v mv)"
+export REAL_MV MCS_DATA="$TMP/data" MCS_UPTIME_FILE="$TMP/uptime"
+cat > "$TMP/bin/mv" <<'MOCK'
+#!/bin/sh
+if [ "${MCS_FAIL_EVIDENCE_MV:-0}" = 1 ] && [ "$3" = "$MCS_DATA/mcs-evidence" ]; then
+    n="$(cat "$MCS_DATA/evidence-mv-count" 2>/dev/null || echo 0)"
+    n=$((n + 1))
+    echo "$n" > "$MCS_DATA/evidence-mv-count"
+    [ "$n" -eq "${MCS_FAIL_EVIDENCE_MV_AT:-0}" ] && exit 1
+fi
+exec "$REAL_MV" "$@"
+MOCK
+chmod +x "$TMP/bin/mv"
+echo 0 > "$TMP/data/evidence-mv-count"
+export MCS_FAIL_EVIDENCE_MV=1 MCS_FAIL_EVIDENCE_MV_AT=8 MCS_AM_INCREMENT_UPTIME=1
+run monitor >/dev/null
+unset MCS_FAIL_EVIDENCE_MV MCS_FAIL_EVIDENCE_MV_AT MCS_AM_INCREMENT_UPTIME
+requests 37
+test "$(cat "$TMP/data/evidence-mv-count")" = 9
+state_sample_uptime="$(awk -F'|' '{print $28}' "$TMP/data/mcs-monitor.state")"
+evidence_sample_uptime="$(awk -F'|' '{print $7}' "$TMP/data/mcs-evidence")"
+[ "$state_sample_uptime" = 10385 ] || fail "failed final follow-up evidence publish advanced state sample"
+[ "$evidence_sample_uptime" = "$state_sample_uptime" ] || fail "failed follow-up overwrote last committed evidence generation"
+j="$(sh "$MON" snapshot)"
+assert_json "$j" fcm_state=connecting
+assert_json "$j" fcm_recovery_decision=recovery_exhausted
+rm -f "$TMP/bin/mv"
+
+# Unknown follow-up evidence is not proof of recovery, so the bounded sequence
+# continues through the remaining triggers; only a positive connected sample stops it.
+: > "$TMP/am.log"
+echo connecting > "$TMP/mode"
+settime 10400
+j="$(run status)"
+assert_json "$j" fcm_state=connecting
+settime 10460
+export MCS_AM_UNKNOWN_ON_ACTION=GCM_RECONNECT
+run monitor >/dev/null
+unset MCS_AM_UNKNOWN_ON_ACTION
+requests 7
+for action in GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT; do
+    grep -Fq "$action" "$TMP/am.log" || fail "unknown follow-up stopped recovery before $action"
+done
+j="$(sh "$MON" snapshot)"
+assert_json "$j" fcm_state=unknown
+assert_json "$j" fcm_recovery_decision=recovery_exhausted
+
+[ ! -s "$TMP/dumpsys.log" ] || fail "dumpsys was invoked by the monitor"
+# Android's Toybox/BusyBox flock cannot run a program under a lock, so the monitor must
+# never depend on flock: it uses the atomic mkdir lock with owner identity checks.
+! grep -q 'flock' "$ROOT/module/bin/fcm-monitor.sh" || fail "monitor must not depend on flock"
+echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO stall recovery, same-cycle seven-trigger escalation, evidence-first commit protection, and dump independence"
