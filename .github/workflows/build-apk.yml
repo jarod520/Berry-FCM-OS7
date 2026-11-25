@@ -167,7 +167,7 @@ jobs:
         id: artifact
         run: |
           set -euo pipefail
-          source version.properties
+          source <(sed 's/\r$//' version.properties)
           mkdir -p dist
           APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
