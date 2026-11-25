@@ -274,7 +274,10 @@ need 'if (!resumed) return' "$src/UpdateActivity.java"
 need 'code != expectedVersion' "$src/UpdateActivity.java"
 
 # Concentrated regression: identity, optional vendor permission evidence and release promotion.
-need 'source version.properties' "$root/.github/workflows/build-apk.yml"
+grep -Fq "source <(sed 's/\\r\$//' version.properties)" "$root/.github/workflows/build-apk.yml" || {
+  echo 'MISSING: CRLF-safe version.properties loading in build-apk.yml' >&2
+  exit 1
+}
 need 'versionName releaseVersion.getProperty' "$root/app/build.gradle"
 need 'prefs.watchdogMinutes() [*] 60_000L' "$src/MonitorWatchdog.java"
 need 'MonitorWatchdog.reschedule(this)' "$src/BackgroundActivity.java"
