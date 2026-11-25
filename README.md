@@ -1,56 +1,33 @@
 # Berry-FCM-OS7 · BerryFCM
 
-面向 Android / OriginOS 的 **FCM 连接观察、受控重连、应用 stopped 状态守护与后台设置诊断**。同一个 GitHub 仓库维护 **APK** 和 **KernelSU** 两个独立交付物：优先完善 APK，实机稳定后将通用改进回移 KernelSU。
+面向 Android / OriginOS 的 FCM 连接观察、受控重连、应用 stopped 状态守护与后台设置诊断。
+同一个仓库维护两个独立交付物：
 
-## 开发入口
+- **APK**（`app/`）：面向无 Root 用户，无线 ADB / Root / Shizuku 任选一种方式获取受限
+  Shell 权限。当前版本 `v1.0-rc.4`（见 [version.properties](version.properties)）。
+- **KernelSU 模块**（`module/`）：Root 环境下的 Shell 实现，功能更完整、已在真机验证
+  断联判定和多步恢复序列。当前版本 `v1.0-rc.16`（见 [module/module.prop](module/module.prop)）。
 
-- [**完整目标、权限架构、所有页面功能和测试准入**](docs/PRODUCT_PLAN.md) — 项目单一需求基线
-- [**实时开发交接、已验证构建与下一步**](docs/HANDOFF.md) — 新会话直接接续
-- [APK 架构、无线配对操作与技术限制](app/README.md) · [固定签名及 Release 约定](docs/SIGNING.md)
-- [KernelSU 模块功能](module/README.md)
+两线各自独立编译，互不阻塞；KSU 端验证过的判定逻辑会逐步回移到 APK。
 
-## APK 当前代码
+## 文档导航
 
-| 页面 | 已实现的操作 |
-| --- | --- |
-| 概览 | 连接状态、采样新鲜度、授权入口、功能导航 |
-| Root / ADB 授权 | mDNS 配对端口自动发现、通知栏输入六位码、mDNS 失败时通知栏输入 \`端口:六位码\`、Priv Kit 独立 Binder 服务、静态端口/Root Shell、可选 Shizuku |
-| FCM 监控 | GMS MCS 原生状态与历史、连接时间线、unknown/stale、后台采样、受控重连 |
-| 应用守护 | 已安装应用搜索/多选/系统应用选项、stopped 检测与修复、90 秒巡检和心跳 |
-| 后台保活 | FGS/开机恢复、标准 Doze/AppOps、GMS 后台网络放行及受控撤销、OriginOS 设置跳转、最近任务隐藏 |
-| 诊断 | Google 原生 FCM Diagnostics、mtalk TCP 检测、GMS 策略和事件分享 |
-| 设置 / 更新 | 原生深浅色主题、FCM 快捷磁贴、项目主页、GitHub Release 检查/下载/固定签名校验安装 |
+- [产品目标、权限边界、开源参考](docs/PRODUCT_PLAN.md) — 不常变化的产品定位
+- [当前版本、已验证事实、未解决事项](docs/HANDOFF.md) — 开发现状快照
+- [APK 架构、无线配对操作](app/README.md) · [固定签名与 Release 约定](docs/SIGNING.md)
+- [KernelSU 模块功能与手动诊断命令](module/README.md)
 
-**原先的第三方无障碍服务扫描/开关/自动恢复已删除**。FCM 自动恢复与下拉快捷磁贴均使用 Android 原生机制，不需要 AccessibilityService。
+## 构建
 
-## 已验证和未验证
+GitHub Actions 中手动触发（均为 `workflow_dispatch`，不自动运行）：
+- [Build Android APK](.github/workflows/build-apk.yml) — 编译并用固定签名打包 APK
+- [Build KernelSU ZIP](.github/workflows/build-ksu.yml) — 编译 ARM64 唤醒定时器并打包模块 ZIP
 
-- 最新已通过的 APK： [Actions #44197684568](https://github.com/jarod360/Berry-FCM-OS7/actions/runs/44197684568)（alpha.42，主分支历史构建），包括 FCM 监控模拟、模块结构测试、Gradle 编译、固定 P12 签名、apksigner 验证及 Artifact 上传。无线配对在 OriginOS 真机上仍需验证。
-- KernelSU 仍为 v0.5.4-test，源码与数据目录独立，不受 APK UI 迁移影响。
-- **GitHub Releases 目前尚无正式 APK**；普通 push 只发布 Actions Artifact。\`workflow_dispatch.publish_release\` 明确手动勾选后才创建预发布版本，应用内更新只读取正式 Release。
-- 未完成的 **真机验证**：OriginOS 系统通知栏是否呈现 RemoteInput、ADB Shell 能否看到 GMS UID Socket、stopped 修复权限、锁屏过夜采样、用户授权和系统安装器覆盖升级。**CI 绿灯不代表这些已经通过。**
+普通 push 不会自动构建或发布；GitHub Release 需要手动批准后才会创建。
 
-## 设计和安全原则
+## 设计原则
 
-Android API 优先，Root/ADB Shell 只做确有权限需求的功能。无法验证时显示未知、不误报连接恢复，不重启/杀死 GMS，不擅自修改 DNS/VPN/代理/路由。OriginOS 自启动、关联启动、高耗电、任务锁定若没有可靠 API 则跳系统设置，不能提供虚假的成功开关。隐藏最近任务卡片不是隐藏后台进程。所有固定签名材料留在 GitHub Secrets 和用户 D 盘，不提交私钥或密码。
-
-**开发只通过当前对话及 GitHub 仓库/Actions 进行，不切换 Work；每次更新同步产品计划和实时交接 Markdown。**
-
-## 开源参考
-
-[Shizuku](https://github.com/RikkaApps/Shizuku)（通知栏无线 ADB 配对）、[GKD](https://github.com/gkd-kit/gkd) 与 [Priv Kit](https://github.com/priv-kit/priv-kit/tree/v0.20.0)（一次 ADB 启动、独立 Binder 命令服务）、[FCMFix ColorOS](https://github.com/ByteJuno/fcmfix-coloros)（mtalk Socket 识别边界）、[vivo-guardian](https://github.com/Lokside/vivo-guardian)（OriginOS 后台限制）、[libadb-android](https://github.com/MuntashirAkon/libadb-android)（ADB 客户端）。借鉴适用实现，不直接照搬界面。
-
-## 新版外观与在线更新兼容
-
-APP 桌面名称及新版安装包文件名已缩短为 **BerryFCM**。底部导航与各功能模块使用 Apache-2.0 的 [Google Material Icons](https://github.com/google/material-design-icons) 矢量图标，启动器是原创的 FCM 消息通知图形，不再使用 Wi-Fi 弧线。
-
-旧 alpha.36 的在线更新检查器只认 `BerryFCM-Guardian-v...`，因此**首个新正式 prerelease 会同时附上旧名字兼容文件和 `BerryFCM-v...` 短名字文件，两份 APK 内容与固定签名相同**；新版本更新器兼容两者并优先使用新名字。GitHub Actions 普通构建仅提供测试 Artifact；未人工发布 GitHub Release 前，现有 APP 无法发现更新。
-
-## 2026-11-18 进度简述
-
-按产品计划，APK 已具备大部分页面和对应后端逻辑，功能代码完成度约 75%（主观估算，非验收通过率）；无线 ADB / GMS Socket 可见性、OriginOS 后台恢复、Release 在线覆盖升级仍需手机验证，APK 稳定后才开展 KernelSU 回移。本轮已将不需特权的 mtalk TCP 检测从 Shell 改为 App 原生 Socket，并为 BerryFCM 自身 Doze/AppOps 配置加入原值记录与安全回滚。旧版缺少原值记录的历史更改不会盲目撤销。
-
-
-## 独立授权服务开发版
-
-开发分支 `dev/native-fcm-state` 已切换至 GKD 同款 Priv Kit 0.20.0：无线 ADB 只用于启动本项目独立服务，后续日常采样、应用守护走 Binder。保留现有配对密钥，启动失败不回退至逐次 ADB。已成功构建 [alpha.47 #44228547705](https://github.com/jarod360/Berry-FCM-OS7/actions/runs/44228547705)；需真机确认后才可作为正式版本。主分支、KernelSU 和 Release 未变更。
+Android API 优先，Root/ADB Shell 只用于确有权限需求的功能，不使用 AccessibilityService。
+无法验证时显示未知，不误报连接恢复；不重启/杀死 GMS；不修改 DNS/VPN/代理/路由。厂商私有
+设置（OriginOS 自启动、关联启动、高耗电、任务锁定）没有可靠 API 时跳转系统设置页，不提供
+虚假的"已生效"开关。固定签名材料只存在 GitHub Secrets，不提交私钥或密码到仓库。
