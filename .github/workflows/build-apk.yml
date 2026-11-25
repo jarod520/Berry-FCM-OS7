@@ -1,9 +1,6 @@
 name: Build Android APK
 
 on:
-  push:
-    branches:
-      - fix/rc5-mcs-patrol-20261122
   workflow_dispatch:
 
 permissions:
