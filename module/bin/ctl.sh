@@ -192,11 +192,9 @@ heartbeat() {
     fi
 }
 fix() {
-    changed=0; failed=0; count=0
+    changed=0; failed=0
     for pkg in $(target_list); do
         installed "$pkg" || { echo "$pkg 未安装，跳过"; continue; }
-        [ "$count" -lt 10 ] || { echo '本轮最多修复 10 个应用'; break; }
-        count=$((count + 1))
         # Package-state diagnostics must not decide whether to issue unstop.
         # The package command itself is the operation result; a failed diagnostic
         # must never prevent the independent MCS heartbeat below.

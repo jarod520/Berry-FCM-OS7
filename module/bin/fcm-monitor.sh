@@ -239,13 +239,22 @@ scan_sockets() {
     raw=
     if command -v "$SS_BIN" >/dev/null 2>&1; then
         raw="$("$SS_BIN" -tinpe 2>/dev/null)" || raw=
-        if [ -z "$raw" ] || ! printf '%s\n' "$raw" | grep -Eq "uid:${uid}([^0-9]|$)"; then
+        # A large socket table as a single printf argument can exceed the
+        # kernel's execve() ARG_MAX ("Argument list too long"). A here-document
+        # hands the same text to grep's stdin without that limit.
+        if [ -z "$raw" ] || ! grep -Eq "uid:${uid}([^0-9]|$)" <<EOF_RAW
+$raw
+EOF_RAW
+        then
             raw="$("$SS_BIN" -tnpe 2>/dev/null)" || raw=
         fi
     fi
 
     # If ss does not expose GMS UID ownership, use the root-readable kernel tables.
-    if [ -z "$raw" ] || ! printf '%s\n' "$raw" | grep -Eq "uid:${uid}([^0-9]|$)"; then
+    if [ -z "$raw" ] || ! grep -Eq "uid:${uid}([^0-9]|$)" <<EOF_RAW
+$raw
+EOF_RAW
+    then
         [ -r "$PROC_NET_DIR/tcp" ] || { printf 'unknown||||proc_net_tcp_unreadable\n'; return; }
         if { [ -e "$PROC_NET_DIR/tcp6" ] || [ -r "$PROC_NET_DIR/if_inet6" ]; } &&
            [ ! -r "$PROC_NET_DIR/tcp6" ]; then
@@ -298,7 +307,9 @@ scan_sockets() {
 
     # ss -i exposes TCP_INFO counters where supported. A socket is considered
     # stalled when it has unacked data with at least three retransmissions, or no received TCP data for 30 minutes.
-    printf '%s\n' "$raw" | awk -v u="$uid" -v ips="|$ips|" -v ip_count="$ip_count" '
+    # A here-document avoids passing a potentially large socket table as a
+    # single execve() argument (observed "Argument list too long" in the field).
+    awk -v u="$uid" -v ips="|$ips|" -v ip_count="$ip_count" '
       function normip(v){sub(/:[0-9]+$/, "", v);gsub(/^\[|\]$/, "", v);sub(/^::ffff:/, "", v);return tolower(v)}
       function known(v){return index(ips,"|" normip(v) "|")>0}
       function field_number(name, text, value) {
@@ -347,7 +358,9 @@ scan_sockets() {
         else if(rank==2) printf "stalled|%s|%s|%s|tcp_info_unacked_retrans\n",transport,remote,bestkey
         else if(untrusted) print "unknown||||unverified_443_no_mtalk_dns"
         else print "absent||||no_fcm_socket_observed"
-      }'
+      }' <<EOF_RAW
+$raw
+EOF_RAW
 }
 
 auto_enabled() {
