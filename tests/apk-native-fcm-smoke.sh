@@ -73,6 +73,7 @@ echo 1 > "$TMP/data/enabled"
 : > "$TMP/dumpsys.log"
 export PATH="$TMP/bin:/usr/bin:/bin"
 export BERRY_FCM_TEST_MODE=1 BERRY_FCM_DATA="$TMP/data"
+export BERRY_PROC_NET_DIR="$TMP/proc-unavailable"
 export BERRY_UPTIME_FILE="$TMP/uptime" BERRY_BOOT_ID_FILE="$TMP/bootid"
 export MCS_AM_LOG="$TMP/am.log" MCS_DUMP_LOG="$TMP/dumpsys.log" MCS_CLOCK="$TMP/epoch"
 export BERRY_FCM_AUTO=1 BERRY_AUTO_GATE=ready
@@ -150,7 +151,7 @@ assert_json "$j" fcm_state=connected
 printf '%s\n' '  sl  local_address rem_address   st' > "$TMP/procnet/tcp"
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
-unset BERRY_PROC_NET_DIR
+export BERRY_PROC_NET_DIR="$TMP/proc-unavailable"
 
 # Legacy dump-derived connected/disconnected state is invalidated on upgrade.
 printf 'test-boot|connected|old|0|10000|1700010000|0|0|0|0|0|none|0|0|tcp5228|old-peer|10000|none|0|0|0|0|0\n' > "$TMP/data/mcs-monitor.state"
@@ -182,10 +183,11 @@ assert_json "$j" fcm_state=disconnected
 settime 11075
 run monitor
 # Staged recovery: first trigger is GCM_RECONNECT; kernel stays disconnected so later triggers follow.
-test "$(grep -c '^broadcast' "$MCS_AM_LOG")" -ge 2
+test "$(grep -Ec '^(broadcast|startservice)' "$MCS_AM_LOG")" -eq 5
 test "$(grep '^broadcast' "$MCS_AM_LOG" | head -n 1)" = 'broadcast --user 0 -a com.google.android.intent.action.GCM_RECONNECT -p com.google.android.gms'
 grep -q 'broadcast --user 0 -a com.google.android.gms.INITIALIZE -p com.google.android.gms' "$MCS_AM_LOG"
-grep -q 'broadcast --user 0 -a com.google.android.intent.action.GTALK_RECONNECT -p com.google.android.gms' "$MCS_AM_LOG"
+if grep -q 'GTALK_' "$MCS_AM_LOG"; then exit 1; fi
+grep -q '本轮复采均未观察到已建立的 FCM 长连接' "$TMP/data/mcs-monitor-events.log"
 grep -q 'set-standby-bucket --user 0 com.google.android.gms active' "$MCS_AM_LOG"
 j="$(run snapshot)"
 assert_json "$j" fcm_last_result=requested
@@ -214,6 +216,13 @@ run monitor
 j="$(run snapshot)"
 assert_json "$j" fcm_state=disconnected
 assert_json "$j" fcm_source=gms_socket_absence
+settime 12610
+run monitor
+test "$(grep -E '^(broadcast|startservice)' "$MCS_AM_LOG" | sed -E 's/^broadcast.*[.]([A-Z_]+) -p .*/\1/;s/^startservice.*/GCM_SERVICE_START/')" = 'MCS_HEARTBEAT
+ACTION_HEARTBEAT_NOW
+INITIALIZE
+GCM_RECONNECT
+GCM_SERVICE_START'
 export MCS_SS_MODE=absent
 
 # UID lookup failure and failed broadcasts do not invoke dump or fabricate recovery.
@@ -232,5 +241,20 @@ settime 13175
 run monitor
 j="$(run snapshot)"
 assert_json "$j" fcm_last_result=failed
+
+# Missing kernel evidence may trigger only two heartbeat commands, once per 15 minutes.
+rm -f "$TMP/data/mcs-monitor.state" "$TMP/data/mcs-evidence"
+: > "$MCS_AM_LOG"
+export MCS_SS_MODE=no_uid MCS_SENDER_UID=2000
+for tick in 14000 14060 14120 14180 14240 14300 14360; do
+    settime "$tick"
+    run monitor
+done
+requests 2
+test "$(grep -c 'HEARTBEAT' "$MCS_AM_LOG")" -eq 2
+grep -q '系统接受 0 条，当前连接状态未知' "$TMP/data/mcs-monitor-events.log"
+j="$(run snapshot)"
+assert_json "$j" fcm_state=unknown
+assert_json "$j" fcm_attempts=0
 test ! -s "$MCS_DUMP_LOG"
 echo 'PASS: APK monitor uses kernel socket evidence only; dumpsys is never invoked'

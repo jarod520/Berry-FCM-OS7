@@ -32,7 +32,8 @@ public final class DiagnosticsActivity extends Ui {
                 R.drawable.ic_bf_history, () -> go(MonitorActivity.class));
         LinearLayout extra = disclosure(diagnostics, "高级 · 策略检查 / 分享日志", false);
         button(extra, "检查 GMS Doze / 后台网络 / 通知策略", this::checkPolicies, false);
-        button(extra, "分享监控事件与错误", this::shareEvents, false);
+        button(extra, "分享最近事件与错误", this::shareEvents, false);
+        button(extra, "导出完整诊断日志", this::exportLogs, false);
     }
 
     static void openGoogle(Activity activity) {
@@ -98,14 +99,50 @@ public final class DiagnosticsActivity extends Ui {
                 + "监控错误：" + (FcmMonitorService.currentError(this).isEmpty()
                         ? "无" : FcmMonitorService.currentError(this)) + "\n"
                 + FcmMonitorService.lastSnapshot(this).toString() + "\n"
-                + "\n== GMS 原生连接事件 ==\n" + FcmMonitorService.lastEvents(this)
-                + "\n== BerryFCM 恢复与采样事件 ==\n" + FcmMonitorService.lastEvents(this)
-                + "\n== BerryFCM 熄屏巡检与唤醒 ==\n" + FcmMonitorService.lastRuntimeEvents(this)
-                + "\n== 采样环境变化（不代表 GMS 实际路由） ==\n" + FcmMonitorService.lastEnvironmentEvents(this);
+                + "\n== BerryFCM 恢复与采样事件 ==\n" + readableEvents(FcmMonitorService.lastEvents(this))
+                + "\n== BerryFCM 熄屏巡检与唤醒 ==\n" + readableEvents(FcmMonitorService.lastRuntimeEvents(this))
+                + "\n== 采样环境变化（应用视角） ==\n" + readableEvents(FcmMonitorService.lastEnvironmentEvents(this));
         Intent share = new Intent(Intent.ACTION_SEND);
         share.setType("text/plain");
         share.putExtra(Intent.EXTRA_TEXT, report);
         startActivity(Intent.createChooser(share, "分享 BerryFCM 诊断"));
     }
+    private static final int EXPORT_DIAGNOSTICS = 712;
+
+    private static String readableEvents(String events) {
+        return MonitorActivity.eventText(events.split("\\n"), Integer.MAX_VALUE);
+    }
+
+    private void exportLogs() {
+        Intent create = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        create.addCategory(Intent.CATEGORY_OPENABLE);
+        create.setType("text/plain");
+        create.putExtra(Intent.EXTRA_TITLE, "BerryFCM-诊断日志.txt");
+        startActivityForResult(create, EXPORT_DIAGNOSTICS);
+    }
+
+    @Override protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (request != EXPORT_DIAGNOSTICS || result != RESULT_OK || data == null || data.getData() == null) return;
+        worker.execute(() -> {
+            String events;
+            try {
+                events = FcmMonitorService.fullMonitorEvents(this);
+            } catch (Exception error) {
+                events = "未能读取完整 FCM 事件。以下是上次采样缓存：\n" + FcmMonitorService.lastEvents(this);
+            }
+            try (java.io.OutputStream output = getContentResolver().openOutputStream(data.getData(), "wt")) {
+                if (output == null) throw new java.io.IOException("无法打开目标文件");
+                String report = "== FCM 恢复与采样事件 ==\n" + readableEvents(events)
+                        + "\n== 后台巡检与唤醒 ==\n" + readableEvents(FcmMonitorService.diagnosticHistory(this, "runtime_events", 0))
+                        + "\n== 采样环境变化 ==\n" + readableEvents(FcmMonitorService.diagnosticHistory(this, "environment_events", 0));
+                output.write(report.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                runOnUiThread(() -> { if (!isDestroyed()) results.setText("诊断日志已导出"); });
+            } catch (Exception error) {
+                runOnUiThread(() -> { if (!isDestroyed()) results.setText("诊断日志导出失败：" + error.getMessage()); });
+            }
+        });
+    }
+
     @Override protected void onDestroy() { worker.shutdownNow(); super.onDestroy(); }
 }

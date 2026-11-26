@@ -226,22 +226,37 @@ public final class FcmMonitorService extends Service {
         return context.getSharedPreferences(SNAPSHOT, MODE_PRIVATE).getString("events", "");
     }
     static String lastEnvironmentEvents(Context context) {
-        return context.getSharedPreferences(SNAPSHOT, MODE_PRIVATE).getString("environment_events", "");
+        return diagnosticHistory(context, "environment_events", 24);
     }
     static String lastRuntimeEvents(Context context) {
-        return context.getSharedPreferences(SNAPSHOT, MODE_PRIVATE).getString("runtime_events", "");
+        return diagnosticHistory(context, "runtime_events", 36);
     }
-    static synchronized void logRuntime(Context context, String event, String details) {
+    static synchronized String diagnosticHistory(Context context, String stream, int limit) {
+        SharedPreferences stored = context.getSharedPreferences(SNAPSHOT, MODE_PRIVATE);
+        String legacy = stored.getString(stream, "");
+        try {
+            return DiagnosticHistory.read(context.getDir("diagnostic_logs", MODE_PRIVATE), stream, legacy, limit);
+        } catch (java.io.IOException error) {
+            android.util.Log.w("BerryFCM", "读取诊断日志失败", error);
+            return legacy;
+        }
+    }
+    private static synchronized boolean appendDiagnostic(Context context, String stream, String event, String details) {
         SharedPreferences stored = context.getSharedPreferences(SNAPSHOT, MODE_PRIVATE);
         String safe = details.replace('\r', ' ').replace('\n', ' ').replace('|', '/');
-        if (safe.length() > 220) safe = safe.substring(0, 220);
-        String[] lines = stored.getString("runtime_events", "").split("\\n");
-        StringBuilder history = new StringBuilder();
-        for (int i = Math.max(0, lines.length - 179); i < lines.length; i++)
-            if (!lines[i].isEmpty()) history.append(lines[i]).append('\n');
-        history.append(System.currentTimeMillis() / 1000L).append('|').append(event)
-                .append('|').append(safe);
-        stored.edit().putString("runtime_events", history.toString()).apply();
+        long epoch = System.currentTimeMillis() / 1000L;
+        try {
+            DiagnosticHistory.append(context.getDir("diagnostic_logs", MODE_PRIVATE), stream, epoch,
+                    stored.getString(stream, ""), epoch + "|" + event + "|" + safe);
+            if (stored.contains(stream)) stored.edit().remove(stream).commit();
+            return true;
+        } catch (java.io.IOException error) {
+            android.util.Log.w("BerryFCM", "保存诊断日志失败", error);
+            return false;
+        }
+    }
+    static void logRuntime(Context context, String event, String details) {
+        appendDiagnostic(context, "runtime_events", event, details);
     }
     static String lastError(Context context) {
         return context.getSharedPreferences(SNAPSHOT, MODE_PRIVATE).getString("error", "");
@@ -373,9 +388,9 @@ public final class FcmMonitorService extends Service {
                     .putString("attempt_state", "pending").apply();
             scheduled = true;
             logRuntime(this, "service_started", "pid=" + android.os.Process.myPid()
-                    + "; mode=" + prefs.mode()
-                    + "; source=" + (intent != null && WATCHDOG_CHECK.equals(intent.getAction())
-                            ? "watchdog" : "service_start"));
+                    + "，版本=" + appVersion(this) + "，授权模式=" + prefs.mode()
+                    + "，启动来源=" + (intent != null && WATCHDOG_CHECK.equals(intent.getAction())
+                            ? "系统兜底闹钟" : "服务启动"));
         }
         updatePersistentWakeLock(prefs.monitorEnabled());
         // The guard may continue after FCM monitoring is disabled. A pending
@@ -953,6 +968,9 @@ public final class FcmMonitorService extends Service {
             String message;
             switch (decision) {
                 case "requested": message = "广播已返回，尚未确认 FCM 恢复"; break;
+                case "confirmation_recovered": message = "复采已观察到 FCM 长连接建立"; break;
+                case "recovery_exhausted": message = "本轮恢复流程已结束，复采未确认 FCM 恢复"; break;
+                case "state_save_failed": message = "恢复状态保存失败，请查看恢复记录"; break;
                 case "request_failed": message = "广播请求失败，请查看恢复记录中的 UID 和错误"; break;
                 case "cooldown": message = "未发送广播：距上次请求不足60秒"; break;
                 case "network_gate": message = "未发送广播：当前无活动网络"; break;
@@ -1027,23 +1045,29 @@ public final class FcmMonitorService extends Service {
         env.put("gms_doze_exempt", gmsExempt);
         snapshot.put("app_environment", env);
         String state = snapshot.optString("fcm_state", "unknown");
-        String description = "FCM=" + state + "; AppNetwork=" + network
-                + "; AndroidValidated=" + validated + "; screen=" + screen
-                + "; idle=" + idle + "; powerSave=" + powerSave + "; GMSDozeExempt=" + gmsExempt;
+        String description = "FCM 状态=" + MonitorActivity.connectionLabel(state) + "，应用网络=" + network
+                + "，系统已验证网络=" + yesNo(validated) + "，屏幕=" + ("on".equals(screen) ? "亮" : "off".equals(screen) ? "熄" : "未知")
+                + "，设备闲置=" + yesNo(idle) + "，省电模式=" + yesNo(powerSave)
+                + "，GMS 在电池优化白名单=" + yesNo(gmsExempt);
         SharedPreferences stored = getSharedPreferences(SNAPSHOT, MODE_PRIVATE);
         if (description.equals(stored.getString("environment_key", ""))
                 && session.equals(stored.getString("environment_session", ""))) return;
-        String event = (System.currentTimeMillis() / 1000) + "|environment|" + description;
-        String history = stored.getString("environment_events", "");
-        String[] lines = history.split("\\n");
-        StringBuilder bounded = new StringBuilder();
-        for (int i = Math.max(0, lines.length - 79); i < lines.length; i++) {
-            if (!lines[i].isEmpty()) bounded.append(lines[i]).append('\n');
+        if (appendDiagnostic(this, "environment_events", "environment", description)) {
+            stored.edit().putString("environment_key", description)
+                    .putString("environment_session", session).apply();
         }
-        bounded.append(event);
-        stored.edit().putString("environment_key", description)
-                .putString("environment_session", session)
-                .putString("environment_events", bounded.toString()).apply();
+    }
+
+    private static String yesNo(String value) {
+        return "yes".equals(value) ? "是" : "no".equals(value) ? "否" : "未知";
+    }
+
+    private static String appVersion(Context context) {
+        try {
+            return context.getPackageManager().getPackageInfo(context.getPackageName(), 0).versionName;
+        } catch (android.content.pm.PackageManager.NameNotFoundException error) {
+            return "未知";
+        }
     }
 
     private static String safeError(Exception error) {
@@ -1097,25 +1121,40 @@ public final class FcmMonitorService extends Service {
                 + (AppPrefs.ROOT.equals(mode) ? "" : " BERRY_FCM_ADB_SHELL=1")
                 + " /system/bin/sh " + dir + "/fcm-monitor.sh ";
     }
-    private void installScript(AppPrefs prefs, String mode) throws Exception {
+    private String stageScript(String directory, String name) throws java.io.IOException {
         byte[] script;
-        try (InputStream input = getAssets().open("fcm-monitor.sh");
+        try (InputStream input = getAssets().open(name);
                 java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
             int read;
             while ((read = input.read(buffer)) >= 0) out.write(buffer, 0, read);
             script = out.toByteArray();
         }
-        String dir = workDir(mode);
-        String encoded = Base64.encodeToString(script, Base64.NO_WRAP);
-        String temp = dir + "/fcm-monitor.sh.new";
-        String result = execute(prefs, mode, "umask 077; mkdir -p " + dir
-                + " && printf '%s' '" + encoded + "' | base64 -d > " + temp
+        String dest = directory + "/" + name;
+        String temp = dest + ".new";
+        return "printf '%s' '" + Base64.encodeToString(script, Base64.NO_WRAP) + "' | base64 -d > " + temp
                 + " && /system/bin/sh -n " + temp + " && chmod 700 " + temp
-                + " && mv -f " + temp + " " + dir + "/fcm-monitor.sh"
+                + " && mv -f " + temp + " " + dest;
+    }
+
+    private void installScript(AppPrefs prefs, String mode) throws Exception {
+        String dir = workDir(mode);
+        String result = execute(prefs, mode, "umask 077; mkdir -p " + dir
+                + " && " + stageScript(dir, "diagnostic-logs.sh")
+                + " && " + stageScript(dir, "fcm-monitor.sh")
                 + " && echo 1 > " + dir + "/enabled && echo BERRY_INSTALL_OK");
         if (!result.trim().endsWith("BERRY_INSTALL_OK"))
             throw new IllegalStateException("监测脚本安装未通过确认");
+    }
+
+    static String fullMonitorEvents(Context context) throws Exception {
+        AppPrefs prefs = new AppPrefs(context);
+        try (PrivilegeShell shell = PrivilegeAccess.open(context)) {
+            String dir = workDir(prefs.mode());
+            String script = dir + "/fcm-monitor.sh";
+            return shell.execute("if [ -f " + script + " ]; then BERRY_FCM_DATA=" + dir
+                    + " BERRY_FCM_ADB_SHELL=1 /system/bin/sh " + script + " events all; fi");
+        }
     }
 
     private String execute(AppPrefs prefs, String mode, String command) throws Exception {

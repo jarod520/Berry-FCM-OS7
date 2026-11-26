@@ -49,6 +49,7 @@ jobs:
         run: |
           sh -n app/src/main/assets/fcm-monitor.sh
           sh tests/apk-native-fcm-smoke.sh
+          sh tests/diagnostic-logs-smoke.sh
           sh tests/apk-no-dump-smoke.sh
 
       - name: Verify complete APK module and permission scope

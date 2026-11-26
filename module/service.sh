@@ -1,6 +1,7 @@
 #!/system/bin/sh
 # KernelSU late_start service. Does nothing if the current boot lost temporary Root.
 MODDIR="${0%/*}"
+. "$MODDIR/bin/diagnostic-logs.sh" || exit 1
 DATA=/data/adb/berry_fcm_ksu
 mkdir -p "$DATA" || exit 0
 [ "$(id -u)" = 0 ] || exit 0
@@ -69,11 +70,11 @@ stop_stale_patrol() {
         done
     fi
     if patrol_identity_for_lock && [ "$(proc_state "$stale_patrol_pid" 2>/dev/null)" != Z ]; then
-        printf '[%s] stale_patrol_stop_unconfirmed pid=%s start=%s; refusing a duplicate patrol\n' \
+        printf '[%s] stale_patrol_stop_unconfirmed pid=%s start=%s; refusing a duplicate patrol  无法确认遗留巡检进程已退出\n' \
             "$(date '+%F %T')" "$stale_patrol_pid" "$stale_patrol_stamp" >> "$DATA/guard.log"
         return 1
     fi
-    printf '[%s] stale_patrol_stopped pid=%s start=%s before service restart\n' \
+    printf '[%s] stale_patrol_stopped pid=%s start=%s before service restart  已结束遗留巡检进程\n' \
         "$(date '+%F %T')" "$stale_patrol_pid" "$stale_patrol_stamp" >> "$DATA/guard.log"
     return 0
 }
@@ -129,10 +130,10 @@ stop_monitor_owner() {
     case "$monitor_pid:$monitor_stamp" in *[!0-9:]*|:*|*:)
         if ! monitor_process_exists; then
             rm -f "$DATA/mcs-monitor.lock.owner"
-            printf '[%s] stale_monitor_owner_record_cleared reason=no_monitor_process\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+            printf '[%s] stale_monitor_owner_record_cleared reason=no_monitor_process  已清理无对应进程的监控锁记录\n' "$(date '+%F %T')" >> "$DATA/guard.log"
             return 0
         fi
-        printf '[%s] monitor_owner_identity_invalid; monitor process still exists, preserving owner lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+        printf '[%s] monitor_owner_identity_invalid; monitor process still exists, preserving owner lock  仍有监控进程，但无法核实锁归属，保留锁\n' "$(date '+%F %T')" >> "$DATA/guard.log"
         return 1
         ;;
     esac
@@ -145,7 +146,7 @@ stop_monitor_owner() {
             monitor_pgid="$monitor_pid"
             monitor_isolated=1
             monitor_group_stamp="$monitor_stamp"
-            printf '[%s] monitor_legacy_group_inferred pid=%s pgid=%s\n' "$(date '+%F %T')" "$monitor_pid" "$monitor_pgid" >> "$DATA/guard.log"
+            printf '[%s] monitor_legacy_group_inferred pid=%s pgid=%s  已识别旧版记录的监控进程组\n' "$(date '+%F %T')" "$monitor_pid" "$monitor_pgid" >> "$DATA/guard.log"
         fi
     fi
     case "$monitor_isolated" in
@@ -159,19 +160,19 @@ stop_monitor_owner() {
             [ "$monitor_pgid" -gt 1 ] && [ "$monitor_group_stamp" -gt 0 ] || return 1
             monitor_group_tool="$(monitor_group_tool)"
             [ -n "$monitor_group_tool" ] || {
-                printf '[%s] monitor_group_tool_unavailable pid=%s; preserving owner lock\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
+                printf '[%s] monitor_group_tool_unavailable pid=%s; preserving owner lock  缺少清理监控进程组的命令，保留锁\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
                 return 1
             }
             if kill -0 "$monitor_pgid" 2>/dev/null; then
                 [ "$(proc_start_time "$monitor_pgid")" = "$monitor_group_stamp" ] &&
                     [ "$(proc_group_id "$monitor_pgid")" = "$monitor_pgid" ] || {
-                    printf '[%s] monitor_group_leader_reused_or_moved pgid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pgid" >> "$DATA/guard.log"
+                    printf '[%s] monitor_group_leader_reused_or_moved pgid=%s; refusing group signal  监控进程组主进程编号已复用或进程已换组\n' "$(date '+%F %T')" "$monitor_pgid" >> "$DATA/guard.log"
                     return 1
                 }
                 if [ "$(proc_state "$monitor_pgid" 2>/dev/null)" != Z ]; then
                     group_cmdline="$(tr -d '\000' < "/proc/$monitor_pgid/cmdline" 2>/dev/null)"
                     case "$group_cmdline" in *timeout*|*fcm-monitor.sh*) :;; *)
-                        printf '[%s] monitor_group_leader_cmdline_mismatch pgid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pgid" >> "$DATA/guard.log"
+                        printf '[%s] monitor_group_leader_cmdline_mismatch pgid=%s; refusing group signal  监控进程组主进程命令不匹配，已停止清理\n' "$(date '+%F %T')" "$monitor_pgid" >> "$DATA/guard.log"
                         return 1
                         ;;
                     esac
@@ -180,18 +181,18 @@ stop_monitor_owner() {
             if kill -0 "$monitor_pid" 2>/dev/null; then
                 [ "$(proc_start_time "$monitor_pid")" = "$monitor_stamp" ] &&
                     [ "$(proc_group_id "$monitor_pid")" = "$monitor_pgid" ] || {
-                    printf '[%s] monitor_owner_pid_reused_or_moved pid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
+                    printf '[%s] monitor_owner_pid_reused_or_moved pid=%s; refusing group signal  监控进程编号已复用或进程已换组\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
                     return 1
                 }
                 if [ "$(proc_state "$monitor_pid" 2>/dev/null)" != Z ] &&
                    ! tr -d '\000' < "/proc/$monitor_pid/cmdline" 2>/dev/null | grep -Fq 'fcm-monitor.sh'; then
-                    printf '[%s] monitor_owner_cmdline_mismatch pid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
+                    printf '[%s] monitor_owner_cmdline_mismatch pid=%s; refusing group signal  监控进程运行命令不匹配，已停止清理\n' "$(date '+%F %T')" "$monitor_pid" >> "$DATA/guard.log"
                     return 1
                 fi
             fi
             if process_group_alive "$monitor_pgid"; then
                 monitor_group_identity_alive || {
-                    printf '[%s] monitor_group_identity_unverified_before_term pgid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pgid" >> "$DATA/guard.log"
+                    printf '[%s] monitor_group_identity_unverified_before_term pgid=%s; refusing group signal  结束前未能核实监控进程组\n' "$(date '+%F %T')" "$monitor_pgid" >> "$DATA/guard.log"
                     return 1
                 }
                 "$monitor_group_tool" kill -TERM "-$monitor_pgid" 2>/dev/null || :
@@ -201,7 +202,7 @@ stop_monitor_owner() {
                 done
                 if process_group_alive "$monitor_pgid"; then
                     monitor_group_identity_alive || {
-                        printf '[%s] monitor_group_identity_unverified_before_kill pgid=%s; refusing group signal\n' "$(date '+%F %T')" "$monitor_pgid" >> "$DATA/guard.log"
+                        printf '[%s] monitor_group_identity_unverified_before_kill pgid=%s; refusing group signal  强制结束前未能核实监控进程组\n' "$(date '+%F %T')" "$monitor_pgid" >> "$DATA/guard.log"
                         return 1
                     }
                     "$monitor_group_tool" kill -KILL "-$monitor_pgid" 2>/dev/null || :
@@ -212,7 +213,7 @@ stop_monitor_owner() {
                 fi
             fi
             if process_group_alive "$monitor_pgid"; then
-                printf '[%s] monitor_group_stop_unconfirmed pid=%s start=%s pgid=%s\n' \
+                printf '[%s] monitor_group_stop_unconfirmed pid=%s start=%s pgid=%s  无法确认监控进程组已退出\n' \
                     "$(date '+%F %T')" "$monitor_pid" "$monitor_stamp" "$monitor_pgid" >> "$DATA/guard.log"
                 return 1
             fi
@@ -236,7 +237,7 @@ stop_monitor_owner() {
         done
     fi
     if monitor_owner_alive && [ "$(proc_state "$monitor_pid" 2>/dev/null)" != Z ]; then
-        printf '[%s] monitor_owner_stop_unconfirmed pid=%s start=%s\n' \
+        printf '[%s] monitor_owner_stop_unconfirmed pid=%s start=%s  无法确认持有监控锁的进程已退出\n' \
             "$(date '+%F %T')" "$monitor_pid" "$monitor_stamp" >> "$DATA/guard.log"
         return 1
     fi
@@ -271,14 +272,14 @@ stop_maintenance_child() {
     IFS=' ' read -r child_file_pid child_file_stamp child_file_pgid child_file_tool < "$MAINTENANCE_LOCK/child" 2>/dev/null || :
     case "$child_file_pid:$child_file_stamp:$child_file_pgid" in
         *[!0-9:]*|:*|*:)
-            printf '[%s] maintenance_child_identity_invalid; refusing to clear maintenance lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+            printf '[%s] maintenance_child_identity_invalid; refusing to clear maintenance lock  修复子进程身份无法确认，保留锁\n' "$(date '+%F %T')" >> "$DATA/guard.log"
             return 1
             ;;
     esac
     [ "$child_file_pid" -gt 1 ] && [ "$child_file_stamp" -gt 0 ] &&
         [ "$child_file_pgid" = "$child_file_pid" ] || return 1
     case "$child_file_tool" in "$TOYBOX_BIN"|"$KSU_BUSYBOX") :;; *)
-        printf '[%s] maintenance_child_tool_invalid; refusing to clear maintenance lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+        printf '[%s] maintenance_child_tool_invalid; refusing to clear maintenance lock  修复子进程的运行命令不匹配，保留锁\n' "$(date '+%F %T')" >> "$DATA/guard.log"
         return 1
         ;;
     esac
@@ -287,7 +288,7 @@ stop_maintenance_child() {
     if kill -0 "$child_file_pid" 2>/dev/null; then
         [ "$(proc_start_time "$child_file_pid")" = "$child_file_stamp" ] &&
             [ "$(proc_group_id "$child_file_pid")" = "$child_file_pgid" ] || {
-                printf '[%s] maintenance_child_pid_reused_or_moved pid=%s; refusing group signal\n' "$(date '+%F %T')" "$child_file_pid" >> "$DATA/guard.log"
+                printf '[%s] maintenance_child_pid_reused_or_moved pid=%s; refusing group signal  修复子进程编号已复用或进程已换组，已停止清理\n' "$(date '+%F %T')" "$child_file_pid" >> "$DATA/guard.log"
                 return 1
             }
     fi
@@ -297,7 +298,7 @@ stop_maintenance_child() {
     maintenance_child_tool="$child_file_tool"
     if maintenance_child_group_alive; then
         maintenance_child_group_identity_alive || {
-            printf '[%s] maintenance_child_group_identity_unverified_before_term pgid=%s; refusing group signal\n' "$(date '+%F %T')" "$maintenance_child_pgid" >> "$DATA/guard.log"
+            printf '[%s] maintenance_child_group_identity_unverified_before_term pgid=%s; refusing group signal  结束前未能核实修复进程组，已停止清理\n' "$(date '+%F %T')" "$maintenance_child_pgid" >> "$DATA/guard.log"
             return 1
         }
         "$maintenance_child_tool" kill -TERM "-$maintenance_child_pgid" 2>/dev/null || :
@@ -307,7 +308,7 @@ stop_maintenance_child() {
         done
         if maintenance_child_group_alive; then
             maintenance_child_group_identity_alive || {
-                printf '[%s] maintenance_child_group_identity_unverified_before_kill pgid=%s; refusing group signal\n' "$(date '+%F %T')" "$maintenance_child_pgid" >> "$DATA/guard.log"
+                printf '[%s] maintenance_child_group_identity_unverified_before_kill pgid=%s; refusing group signal  强制结束前未能核实修复进程组，已停止清理\n' "$(date '+%F %T')" "$maintenance_child_pgid" >> "$DATA/guard.log"
                 return 1
             }
             "$maintenance_child_tool" kill -KILL "-$maintenance_child_pgid" 2>/dev/null || :
@@ -318,7 +319,7 @@ stop_maintenance_child() {
         fi
     fi
     if maintenance_child_group_alive; then
-        printf '[%s] maintenance_child_stop_unconfirmed pid=%s start=%s pgid=%s\n' \
+        printf '[%s] maintenance_child_stop_unconfirmed pid=%s start=%s pgid=%s  无法确认修复子进程已退出\n' \
             "$(date '+%F %T')" "$maintenance_child_stop_pid" "$maintenance_child_stop_stamp" "$maintenance_child_pgid" >> "$DATA/guard.log"
         return 1
     fi
@@ -335,19 +336,19 @@ stop_maintenance_owner() {
         sleep 1; n=$((n + 1))
     done
     if [ ! -s "$MAINTENANCE_LOCK/owner" ]; then
-        printf '[%s] maintenance_owner_unpublished; refusing to clear maintenance lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+        printf '[%s] maintenance_owner_unpublished; refusing to clear maintenance lock  未找到持有修复锁的进程身份记录\n' "$(date '+%F %T')" >> "$DATA/guard.log"
         return 1
     fi
     maintenance_pid=; maintenance_stamp=
     IFS=' ' read -r maintenance_pid maintenance_stamp < "$MAINTENANCE_LOCK/owner" 2>/dev/null || :
     case "$maintenance_pid:$maintenance_stamp" in
         *[!0-9:]*|:*|*:)
-            printf '[%s] maintenance_owner_identity_invalid; refusing to clear maintenance lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+            printf '[%s] maintenance_owner_identity_invalid; refusing to clear maintenance lock  持有修复锁的进程身份无法确认\n' "$(date '+%F %T')" >> "$DATA/guard.log"
             return 1
             ;;
     esac
     [ "$maintenance_pid" -gt 1 ] && [ "$maintenance_stamp" -gt 0 ] || {
-        printf '[%s] maintenance_owner_identity_invalid; refusing to clear maintenance lock\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+        printf '[%s] maintenance_owner_identity_invalid; refusing to clear maintenance lock  持有修复锁的进程身份无法确认\n' "$(date '+%F %T')" >> "$DATA/guard.log"
         return 1
     }
     stop_maintenance_child || return 1
@@ -378,7 +379,7 @@ stop_maintenance_owner() {
     if maintenance_owner_identity &&
        [ "$maintenance_pid" = "$maintenance_stop_pid" ] &&
        [ "$maintenance_stamp" = "$maintenance_stop_stamp" ]; then
-        printf '[%s] maintenance_owner_stop_unconfirmed pid=%s start=%s\n' \
+        printf '[%s] maintenance_owner_stop_unconfirmed pid=%s start=%s  无法确认持有修复锁的进程已退出\n' \
             "$(date '+%F %T')" "$maintenance_stop_pid" "$maintenance_stop_stamp" >> "$DATA/guard.log"
         return 1
     fi
@@ -387,7 +388,7 @@ stop_maintenance_owner() {
        [ "$(awk '{print $2}' "$MAINTENANCE_LOCK/owner" 2>/dev/null)" = "$maintenance_stop_stamp" ]; then
         rm -rf "$MAINTENANCE_LOCK"
     fi
-    printf '[%s] maintenance_owner_stopped pid=%s start=%s\n' \
+    printf '[%s] maintenance_owner_stopped pid=%s start=%s  已结束持有修复锁的进程\n' \
         "$(date '+%F %T')" "$maintenance_stop_pid" "$maintenance_stop_stamp" >> "$DATA/guard.log"
     return 0
 }
@@ -402,7 +403,7 @@ if ! mkdir "$LOCK" 2>/dev/null; then
     fi
     service_identity "$old" "$stamp" && exit 0
     if service_process_matches "$old"; then
-        printf '[%s] service_lock_identity_unverified pid=%s start=%s; refusing duplicate supervisor\n' \
+        printf '[%s] service_lock_identity_unverified pid=%s start=%s; refusing duplicate supervisor  无法核实持有守护锁的进程身份\n' \
             "$(date '+%F %T')" "$old" "$stamp" >> "$DATA/guard.log"
         exit 0
     fi
@@ -428,7 +429,7 @@ if ! stop_monitor_owner; then
        [ "$(proc_start_time "$service_pid")" = "$service_start_stamp" ]; then
         rm -rf "$LOCK"
     fi
-    printf '[%s] service_start_aborted reason=monitor_owner_cleanup_unconfirmed pid=%s\n' \
+    printf '[%s] service_start_aborted reason=monitor_owner_cleanup_unconfirmed pid=%s  启动检查未通过，守护服务未启动\n' \
         "$(date '+%F %T')" "$service_pid" >> "$DATA/guard.log"
     exit 0
 fi
@@ -448,10 +449,10 @@ case "$group" in
         # Move only this service; workers inherit the verified group.
         if { printf '%s\n' "$service_pid" > /sys/fs/cgroup/cgroup.procs; } 2>/dev/null &&
            [ "$(cgroup_path)" = / ]; then
-            printf '[%s] service_cgroup_detached pid=%s from=%s to=/\n' "$(date '+%F %T')" "$service_pid" "$group" >> "$DATA/guard.log"
+            printf '[%s] service_cgroup_detached pid=%s from=%s to=/  守护服务已退出专用控制组\n' "$(date '+%F %T')" "$service_pid" "$group" >> "$DATA/guard.log"
         else
             cgroup_ready=0
-            printf '[%s] service_cgroup_detach_failed pid=%s group=%s\n' "$(date '+%F %T')" "$service_pid" "$group" >> "$DATA/guard.log"
+            printf '[%s] service_cgroup_detach_failed pid=%s group=%s  守护服务退出专用控制组失败\n' "$(date '+%F %T')" "$service_pid" "$group" >> "$DATA/guard.log"
         fi
         ;;
 esac
@@ -475,7 +476,7 @@ stop_timer() {
         done
     fi
     if kill -0 "$timer_pid" 2>/dev/null && [ "$(proc_state "$timer_pid" 2>/dev/null)" != Z ]; then
-        printf '[%s] timer_stop_unconfirmed pid=%s; refusing to start a duplicate timer worker\n' \
+        printf '[%s] timer_stop_unconfirmed pid=%s; refusing to start a duplicate timer worker  无法确认定时唤醒任务已退出\n' \
             "$(date '+%F %T')" "$timer_pid" >> "$DATA/guard.log"
         return 1
     fi
@@ -487,7 +488,7 @@ timer_worker() {
     trap - EXIT USR1 USR2
     alarm_pid=
     log="$DATA/wake-timer.log"
-    printf '[%s] timer_worker_started service_pid=%s interval_min=%s\n' \
+    printf '[%s] timer_worker_started service_pid=%s interval_min=%s  定时唤醒任务已启动\n' \
         "$(date -u '+%FT%TZ')" "$service_pid" "$1" >> "$log"
     timer_worker_cleanup() {
         worker_rc=$?
@@ -495,7 +496,7 @@ timer_worker() {
             kill "$alarm_pid" 2>/dev/null || :
             wait "$alarm_pid" 2>/dev/null || :
         fi
-        printf '[%s] timer_worker_exited service_pid=%s rc=%s\n' \
+        printf '[%s] timer_worker_exited service_pid=%s rc=%s  定时唤醒任务已退出\n' \
             "$(date -u '+%FT%TZ')" "$service_pid" "$worker_rc" >> "$log"
     }
     trap timer_worker_cleanup EXIT
@@ -513,7 +514,6 @@ timer_worker() {
         alarm_pid=
         [ "$(proc_start_time "$service_pid")" = "$service_stamp" ] || return 0
         kill -USR2 "$service_pid" 2>/dev/null || return 0
-        tail -n 120 "$log" > "$log.tmp" && mv -f "$log.tmp" "$log"
     done
 }
 
@@ -539,9 +539,20 @@ n=0
 while [ "$(getprop sys.boot_completed)" != 1 ] && [ "$n" -lt 120 ]; do
     sleep 3; n=$((n + 1))
 done
-printf '[%s] service_started pid=%s wake_mode=%s enabled=%s cgroup_ready=%s\n' \
+rotate_service_logs() {
+    rotation_epoch="$(date +%s)"
+    case "$rotation_epoch" in ''|*[!0-9]*) return;; esac
+    [ "${service_log_day:-}" != "$((rotation_epoch / 86400))" ] || return 0
+    rotate_diagnostic_log "$DATA/guard.log" "$rotation_epoch" &&
+        rotate_diagnostic_log "$DATA/wake-timer.log" "$rotation_epoch" &&
+        service_log_day=$((rotation_epoch / 86400))
+    return 0
+}
+rotate_service_logs
+module_version="$(sed -n 's/^version=//p' "$MODDIR/module.prop")"
+printf '[%s] service_started pid=%s wake_mode=%s enabled=%s cgroup_ready=%s  守护服务已启动，模块版本=%s\n' \
     "$(date '+%F %T')" "$service_pid" "$(cat "$DATA/wake-mode" 2>/dev/null || echo passive)" \
-    "$(cat "$DATA/enabled" 2>/dev/null || echo 0)" "$cgroup_ready" >> "$DATA/guard.log"
+    "$(cat "$DATA/enabled" 2>/dev/null || echo 0)" "$cgroup_ready" "$module_version" >> "$DATA/guard.log"
 PATROL_RESTART_DELAY="${BERRY_PATROL_RESTART_DELAY_SECONDS:-5}"
 case "$PATROL_RESTART_DELAY" in ""|*[!0-9]*) PATROL_RESTART_DELAY=5;; esac
 patrol_pid=
@@ -563,7 +574,7 @@ prepare_patrol_start() {
     # has been identity-checked and cleaned; otherwise repeated rc=13 lock
     # contention can create a restart loop with no fresh sample heartbeat.
     if [ -s "$DATA/mcs-monitor.lock.owner" ] && ! stop_monitor_owner; then
-        printf '[%s] patrol_restart_blocked reason=monitor_owner_cleanup_unconfirmed\n' \
+        printf '[%s] patrol_restart_blocked reason=monitor_owner_cleanup_unconfirmed  尚未确认旧监控进程退出，暂缓重启巡检\n' \
             "$(date '+%F %T')" >> "$DATA/guard.log"
         return 1
     fi
@@ -585,7 +596,7 @@ start_patrol() {
     case "$patrol_started" in ""|*[!0-9]*) patrol_started=0;; esac
     if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]; then patrol_sample_started="$patrol_started"; else patrol_sample_started=0; fi
     printf "%s %s\n" "$patrol_pid" "$patrol_stamp" > "$LOCK/patrol"
-    printf '[%s] patrol_supervisor_start pid=%s start=%s\n' "$(date '+%F %T')" "$patrol_pid" "$patrol_stamp" >> "$DATA/guard.log"
+    printf '[%s] patrol_supervisor_start pid=%s start=%s  守护服务已拉起巡检进程\n' "$(date '+%F %T')" "$patrol_pid" "$patrol_stamp" >> "$DATA/guard.log"
 }
 stop_patrol() {
     [ -n "$patrol_pid" ] || return 0
@@ -604,7 +615,7 @@ stop_patrol() {
         fi
     fi
     if patrol_identity_alive && [ "$(proc_state "$patrol_pid" 2>/dev/null)" != Z ]; then
-        printf '[%s] patrol_stop_unconfirmed pid=%s start=%s; supervisor will not spawn a duplicate\n' \
+        printf '[%s] patrol_stop_unconfirmed pid=%s start=%s; supervisor will not spawn a duplicate  无法确认巡检进程已退出\n' \
             "$(date '+%F %T')" "$patrol_pid" "$patrol_stamp" >> "$DATA/guard.log"
         return 1
     fi
@@ -621,13 +632,13 @@ service_cleanup() {
         stop_maintenance_owner || cleanup_ok=0
     else
         cleanup_ok=0
-        printf '[%s] service_cleanup_blocked reason=patrol_stop_unconfirmed; preserving owner locks\n' \
+        printf '[%s] service_cleanup_blocked reason=patrol_stop_unconfirmed; preserving owner locks  守护服务退出时清理受阻\n' \
             "$(date '+%F %T')" >> "$DATA/guard.log"
     fi
     if [ "$cleanup_ok" = 1 ]; then
         rm -rf "$LOCK"
     else
-        printf '[%s] service_cleanup_incomplete; preserving lock to block duplicate workers\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+        printf '[%s] service_cleanup_incomplete; preserving lock to block duplicate workers  仍有后台任务未确认退出，保留守护锁\n' "$(date '+%F %T')" >> "$DATA/guard.log"
     fi
 }
 stop_service() { stop_wait; exit 0; }
@@ -651,6 +662,7 @@ trap on_timer USR2
 
 mode_changed=1
 while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ]; do
+    rotate_service_logs
     if [ "$mode_changed" = 1 ]; then mode_changed=0; sync_timer; fi
     if ! patrol_alive; then
         if [ -n "$patrol_pid" ]; then
@@ -697,7 +709,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ]; do
             watchdog_reason=patrol_heartbeat
             [ "$sample_stale" = 1 ] && watchdog_reason=monitor_sample
             [ "$patrol_stale" = 1 ] && [ "$sample_stale" = 1 ] && watchdog_reason=patrol_and_monitor
-            printf '[%s] patrol_watchdog_stale reason=%s pid=%s heartbeat=%s sample=%s started=%s uptime=%s\n' \
+            printf '[%s] patrol_watchdog_stale reason=%s pid=%s heartbeat=%s sample=%s started=%s uptime=%s  看门狗发现巡检或有效采样超时\n' \
                 "$(date '+%F %T')" "$watchdog_reason" "$patrol_pid" "$hb" "$sample_hb" "$patrol_started" "$now_up" >> "$DATA/guard.log"
             # Stop patrol first so it cannot publish a monitor owner after cleanup.
             watchdog_cleanup_ok=1
@@ -717,7 +729,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ]; do
                 patrol_started="$now_up"
                 if [ "$(cat "$DATA/enabled" 2>/dev/null)" = 1 ]; then patrol_sample_started="$now_up"; else patrol_sample_started=0; fi
             else
-                printf '[%s] patrol_watchdog_cleanup_blocked reason=%s; preserving stale heartbeat for retry\n' \
+                printf '[%s] patrol_watchdog_cleanup_blocked reason=%s; preserving stale heartbeat for retry  看门狗清理未确认，本次暂缓重启\n' \
                     "$(date '+%F %T')" "$watchdog_cleanup_reason" >> "$DATA/guard.log"
             fi
         fi

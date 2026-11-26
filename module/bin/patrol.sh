@@ -189,7 +189,7 @@ trap 'exit 0' HUP INT TERM
 trap on_wake USR2
 trap on_mode USR1
 register_patrol_identity || exit 1
-printf '[%s] patrol_started pid=%s service_pid=%s\n' "$(date '+%F %T')" "$$" "$SERVICE_PID" >> "$DATA/guard.log"
+printf '[%s] patrol_started pid=%s service_pid=%s  巡检进程已启动\n' "$(date '+%F %T')" "$$" "$SERVICE_PID" >> "$DATA/guard.log"
 while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive; do
     reap_maintenance_worker
     now="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
@@ -219,7 +219,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
             ''|*[!0-9]*) previous_sample_snapshot_valid=0; previous_sample_uptime=0;;
         esac
         check_wake_mode="$(cat "$DATA/wake-mode" 2>/dev/null || echo passive)"
-        printf '[%s] fcm_check_start pid=%s uptime=%s wake=%s mode=%s\n' \
+        printf '[%s] fcm_check_start pid=%s uptime=%s wake=%s mode=%s  开始 FCM 巡检\n' \
             "$(date '+%F %T')" "$$" "$now" "$wake_event" "$check_wake_mode" >> "$DATA/guard.log"
         result="$(run_bounded "$MONITOR_TIMEOUT" sh "$MODDIR/bin/fcm-monitor.sh" monitor 2>&1)"
         monitor_rc=$?
@@ -252,11 +252,11 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     mv -f "$DATA/patrol.sample.heartbeat.tmp" "$DATA/patrol.sample.heartbeat"
             fi
         else
-            printf '[%s] sample_heartbeat_not_refreshed rc=%s sample_epoch=%s sample_uptime=%s previous_sample_uptime=%s previous_snapshot_valid=%s check_started_uptime=%s\n' \
+            printf '[%s] sample_heartbeat_not_refreshed rc=%s sample_epoch=%s sample_uptime=%s previous_sample_uptime=%s previous_snapshot_valid=%s check_started_uptime=%s  本轮没有生成有效的新采样，看门狗计时未刷新\n' \
                 "$(date '+%F %T')" "$monitor_rc" "$observed_sample_epoch" "$observed_sample_uptime" "$previous_sample_uptime" "$previous_sample_snapshot_valid" "$check_started_uptime" >> "$DATA/guard.log"
         fi
         if [ "$wake_event" = 1 ]; then
-            printf '[%s] wake_gms_check_finished rc=%s %s\n' "$(date '+%F %T')" "$monitor_rc" "${summary:-snapshot=unavailable}" >> "$DATA/guard.log"
+            printf '[%s] wake_gms_check_finished rc=%s %s  唤醒后的 GMS 检查结束\n' "$(date '+%F %T')" "$monitor_rc" "${summary:-snapshot=unavailable}" >> "$DATA/guard.log"
         fi
         check_finished_epoch="$(date +%s 2>/dev/null)"
         case "$check_finished_epoch" in ''|*[!0-9]*) check_finished_epoch=0;; esac
@@ -264,7 +264,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
         if [ "$check_started_epoch" -gt 0 ] && [ "$check_finished_epoch" -ge "$check_started_epoch" ]; then
             check_elapsed=$((check_finished_epoch-check_started_epoch))
         fi
-        printf '[%s] fcm_check_end rc=%s elapsed_s=%s %s\n' \
+        printf '[%s] fcm_check_end rc=%s elapsed_s=%s %s  本次 FCM 巡检结束\n' \
             "$(date '+%F %T')" "$monitor_rc" "$check_elapsed" "${summary:-snapshot=unavailable}" >> "$DATA/guard.log"
         [ -z "$result" ] || printf '[%s] %s\n' "$(date '+%F %T')" "$result" >> "$DATA/guard.log"
         if [ "$last_fix" = 0 ] || [ "$now" -lt "$last_fix" ] || [ $((now - last_fix)) -ge 300 ]; then
@@ -276,17 +276,17 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                 fi
                 if maintenance_owner_alive || maintenance_child_alive; then
                     maintenance_busy=1
-                    printf '[%s] maintenance_skip reason=owner_or_child_running\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+                    printf '[%s] maintenance_skip reason=owner_or_child_running  跳过本次后台策略修复\n' "$(date '+%F %T')" >> "$DATA/guard.log"
                 elif [ ! -s "$MAINTENANCE_LOCK/owner" ]; then
                     maintenance_busy=1
-                    printf '[%s] maintenance_skip reason=owner_unpublished\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+                    printf '[%s] maintenance_skip reason=owner_unpublished  跳过本次后台策略修复\n' "$(date '+%F %T')" >> "$DATA/guard.log"
                 else
                     stale_owner_pid=; stale_owner_stamp=
                     IFS=' ' read -r stale_owner_pid stale_owner_stamp < "$MAINTENANCE_LOCK/owner" 2>/dev/null || :
                     case "$stale_owner_pid:$stale_owner_stamp" in
                         *[!0-9:]*|:*|*:)
                             maintenance_busy=1
-                            printf '[%s] maintenance_skip reason=owner_identity_invalid\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+                            printf '[%s] maintenance_skip reason=owner_identity_invalid  跳过本次后台策略修复\n' "$(date '+%F %T')" >> "$DATA/guard.log"
                             ;;
                         *)
                             if [ -s "$MAINTENANCE_LOCK/child" ]; then
@@ -295,12 +295,12 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                                 case "$stale_child_pid:$stale_child_stamp:$stale_child_pgid" in
                                     *[!0-9:]*|:*|*:)
                                         maintenance_busy=1
-                                        printf '[%s] maintenance_skip reason=child_identity_invalid\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+                                        printf '[%s] maintenance_skip reason=child_identity_invalid  跳过本次后台策略修复\n' "$(date '+%F %T')" >> "$DATA/guard.log"
                                         ;;
                                     *)
                                         case "$stale_child_tool" in "$TOYBOX_BIN"|"$KSU_BUSYBOX") :;; *)
                                             maintenance_busy=1
-                                            printf '[%s] maintenance_skip reason=child_tool_invalid\n' "$(date '+%F %T')" >> "$DATA/guard.log"
+                                            printf '[%s] maintenance_skip reason=child_tool_invalid  跳过本次后台策略修复\n' "$(date '+%F %T')" >> "$DATA/guard.log"
                                             ;;
                                         esac
                                         [ "$stale_child_pgid" = "$stale_child_pid" ] &&
@@ -393,7 +393,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     trap 'maintenance_stop_child; exit 143' HUP INT TERM
                     fix_started_epoch="$(date +%s 2>/dev/null)"
                     case "$fix_started_epoch" in ''|*[!0-9]*) fix_started_epoch=0;; esac
-                    printf '[%s] maintenance_start pid=%s uptime=%s operation=guard_fix\n' \
+                    printf '[%s] maintenance_start pid=%s uptime=%s operation=guard_fix  开始修复 GMS 后台策略\n' \
                         "$(date '+%F %T')" "$service_pid" "$now" >> "$DATA/guard.log"
                     HEARTBEAT_MODE=auto
                     export HEARTBEAT_MODE
@@ -430,7 +430,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                         # before identity sampling; nothing remains to track or signal.
                         wait "$maintenance_child_pid" 2>/dev/null
                         fix_rc=$?
-                        printf '[%s] maintenance_end pid=%s operation=guard_fix rc=%s elapsed_s=0\n' \
+                        printf '[%s] maintenance_end pid=%s operation=guard_fix rc=%s elapsed_s=0  GMS 后台策略修复结束\n' \
                             "$(date '+%F %T')" "$service_pid" "$fix_rc" >> "$DATA/guard.log"
                         maintenance_child_pid=; maintenance_child_stamp=; maintenance_child_pgid=
                         exit "$fix_rc"
@@ -493,7 +493,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                     if [ "$fix_started_epoch" -gt 0 ] && [ "$fix_finished_epoch" -ge "$fix_started_epoch" ]; then
                         fix_elapsed=$((fix_finished_epoch-fix_started_epoch))
                     fi
-                    printf '[%s] maintenance_end pid=%s operation=guard_fix rc=%s elapsed_s=%s\n' \
+                    printf '[%s] maintenance_end pid=%s operation=guard_fix rc=%s elapsed_s=%s  GMS 后台策略修复结束\n' \
                         "$(date '+%F %T')" "$service_pid" "$fix_rc" "$fix_elapsed" >> "$DATA/guard.log"
                     exit "$fix_rc"
                 ) &
@@ -501,11 +501,6 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
                 maintenance_worker_stamp="$(proc_start_time "$maintenance_worker_pid")"
             fi
             last_fix="$now"
-        fi
-        bytes="$(wc -c < "$DATA/guard.log" 2>/dev/null)"
-        case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
-        if [ "$bytes" -gt 131072 ]; then
-            tail -n 160 "$DATA/guard.log" > "$DATA/guard.log.tmp" && mv -f "$DATA/guard.log.tmp" "$DATA/guard.log"
         fi
     fi
     if [ "$mode_changed" = 1 ] || [ "$wake_count" != "$wake_seen" ]; then mode_changed=0; continue; fi
@@ -515,5 +510,5 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
     wait "$wait_pid" 2>/dev/null || :
     wait_pid=
 done
-printf '[%s] patrol_exited pid=%s\n' "$(date '+%F %T')" "$$" >> "$DATA/guard.log"
+printf '[%s] patrol_exited pid=%s  巡检进程已退出\n' "$(date '+%F %T')" "$$" >> "$DATA/guard.log"
 exit 0

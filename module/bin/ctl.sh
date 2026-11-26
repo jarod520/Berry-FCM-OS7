@@ -3,6 +3,7 @@
 set -u
 MODDIR="$(cd "$(dirname "$0")/.." && pwd)"
 DATA=/data/adb/berry_fcm_ksu
+. "$MODDIR/bin/diagnostic-logs.sh" || exit 11
 TARGETS="$DATA/targets.txt"
 ENABLED="$DATA/enabled"
 GMS=com.google.android.gms
@@ -326,12 +327,12 @@ case "${1:-}" in
     policy) policy "${2:-}" "${3:-}" ;;
     links) link "${2:-}" "${3:-}" ;;
     log)
-        [ ! -f "$DATA/wake-timer.log" ] || {
-            echo '== 定时器记录（UTC） =='
-            tail -n 45 "$DATA/wake-timer.log"
-        }
+        echo '== 定时器记录（UTC） =='
+        if [ "${2:-}" = all ]; then read_diagnostic_log "$DATA/wake-timer.log"
+        else read_diagnostic_log "$DATA/wake-timer.log" | tail -n 45; fi
         echo '== GMS 巡检记录（本地时间） =='
-        [ -f "$DATA/guard.log" ] && tail -n 100 "$DATA/guard.log" || echo '暂无守护日志'
+        if [ "${2:-}" = all ]; then read_diagnostic_log "$DATA/guard.log"
+        else read_diagnostic_log "$DATA/guard.log" | tail -n 100; fi
         ;;
     *) echo 'check|netdiag|fcm-monitor|reconnect|fix|watch|targets|guard|wake-mode|wake-minutes|policy|links|log' >&2; exit 2 ;;
 esac

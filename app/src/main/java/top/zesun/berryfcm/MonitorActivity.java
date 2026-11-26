@@ -264,11 +264,23 @@ public final class MonitorActivity extends Ui {
         }
     }
 
-    private String eventText(String[] lines, int maximum) {
+    static String connectionLabel(String state) {
+        switch (state) {
+            case "connected": return "已连接";
+            case "connecting": return "连接建立中";
+            case "disconnected": return "未连接";
+            default: return "状态未知";
+        }
+    }
+
+    static String eventText(String[] lines, int maximum) {
         StringBuilder result = new StringBuilder();
         for (int i = lines.length - 1; i >= Math.max(0, lines.length - maximum); i--) {
             String[] parts = lines[i].split("\\|", 3);
-            if (parts.length != 3) continue;
+            if (parts.length != 3) {
+                if (!lines[i].trim().isEmpty()) result.append(lines[i]).append('\n');
+                continue;
+            }
             String stamp;
             try { stamp = time(Long.parseLong(parts[0])); }
             catch (NumberFormatException ignored) { stamp = parts[0]; }
@@ -281,7 +293,6 @@ public final class MonitorActivity extends Ui {
                     : parts[1].equals("reconnect_failed") ? "恢复请求失败"
                     : parts[1].equals("recovery_confirmed") ? "二次采样确认仍未连接"
                     : parts[1].equals("recovery_socket_confirmed") ? "TCP 缺失确认断联"
-                    : parts[1].equals("recovery_confirmation_unavailable") ? "复核未通过，未发送恢复"
                     : parts[1].equals("recovery_decision") ? "恢复决策"
                     : parts[1].equals("sample_unknown") ? "原生状态未返回"
                     : parts[1].equals("sample_dump") ? "原生输出摘要"
@@ -302,7 +313,40 @@ public final class MonitorActivity extends Ui {
                     : parts[1].equals("shell_duration") ? "Shell 执行耗时"
                     : parts[1].equals("sample_failed") ? "后台采样失败"
                     : parts[1].equals("sample_gap") ? "采样空档"
-                    : parts[1].equals("environment") ? "检查环境变化（非 GMS 路由证据）" : parts[1];
+                    : parts[1].equals("recovery_sequence_recovered") ? "恢复后复采已连接"
+                    : parts[1].equals("recovery_sequence_still_down") ? "恢复后复采仍未连接"
+                    : parts[1].equals("recovery_sequence_unverified") ? "恢复后复采证据不可用"
+                    : parts[1].equals("recovery_confirmation_unavailable") ? "恢复复采失败"
+                    : parts[1].equals("reconnect_sequence_exhausted") ? "本轮恢复结束"
+                    : parts[1].equals("reconnect_sequence_failed") ? "本轮命令全部失败"
+                    : parts[1].equals("reconnect_aborted") ? "未能启动恢复"
+                    : parts[1].equals("reconnect_state_commit_failed") ? "保存恢复结果失败"
+                    : parts[1].equals("manual_reconnect_unverified") ? "证据不足时手动恢复"
+                    : parts[1].equals("keepalive_nudge") ? "仅发送保活心跳"
+                    : parts[1].equals("keepalive_state_commit_failed") ? "保存保活状态失败"
+                    : parts[1].equals("legacy_dump_state_discarded") ? "清理旧版监控状态"
+                    : parts[1].equals("socket_evidence_unavailable") ? "内核连接证据不可用"
+                    : parts[1].equals("tcp_stalled") ? "TCP 长连接疑似卡住"
+                    : parts[1].equals("connection_observed_after_unknown") ? "重新读到已建立的连接"
+                    : parts[1].equals("recovery_confirmation_recovered") ? "二次复采已连接"
+                    : parts[1].equals("recovery_confirmation_changed") ? "二次复采结果变化"
+                    : parts[1].equals("rescue_confirmed") ? "空档后复采确认需恢复"
+                    : parts[1].equals("reboot") ? "检测到设备重启"
+                    : parts[1].equals("service_created") ? "创建后台服务"
+                    : parts[1].equals("wake_mode_changed") ? "唤醒方式已切换"
+                    : parts[1].equals("wake_lock_failed") ? "获取唤醒锁失败"
+                    : parts[1].equals("wake_lock_release_error") ? "释放唤醒锁失败"
+                    : parts[1].equals("wake_lock_released") ? "已释放唤醒锁"
+                    : parts[1].equals("wake_confirmation_started") ? "开始断联复采唤醒窗口"
+                    : parts[1].equals("wake_confirmation_finished") ? "结束断联复采唤醒窗口"
+                    : parts[1].equals("wake_transaction") ? "单次巡检唤醒统计"
+                    : parts[1].equals("watchdog_wakelock_failed") ? "兜底任务获取唤醒锁失败"
+                    : parts[1].equals("watchdog_skipped") ? "跳过兜底任务"
+                    : parts[1].equals("watchdog_failed") ? "兜底任务启动失败"
+                    : parts[1].equals("rescue_skipped") ? "跳过空档后恢复"
+                    : parts[1].equals("rescue_finished") ? "空档后恢复流程完成"
+                    : parts[1].equals("rescue_failed") ? "空档后恢复失败"
+                    : "诊断事件（" + parts[1] + "）";
             result.append(stamp).append("  ").append(label).append("\n")
                     .append(parts[2]).append("\n\n");
         }
@@ -333,7 +377,7 @@ public final class MonitorActivity extends Ui {
             }
         });
     }
-    private String time(long seconds) {
+    private static String time(long seconds) {
         if (seconds <= 0) return "无";
         return new SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault())
                 .format(new Date(seconds * 1000));

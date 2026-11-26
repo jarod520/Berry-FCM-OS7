@@ -8,6 +8,7 @@ GMS=com.google.android.gms
 DATA="${BERRY_FCM_DATA:-/data/adb/berry_fcm_apk}"
 STATE="$DATA/mcs-monitor.state"
 EVENTS="$DATA/mcs-monitor-events.log"
+. "$(dirname "$0")/diagnostic-logs.sh" || exit 11
 EVIDENCE="$DATA/mcs-evidence"
 DNS_IPS="$DATA/mtalk-dns-ips.txt"
 LEARNED_IPS="$DATA/mtalk-learned-ips.txt"
@@ -91,8 +92,6 @@ record_event() {
     e="${1:-event}"; msg="${2:-}"
     msg="$(printf '%s' "$msg" | tr '\r\n|' '   ' | cut -c1-220)"
     printf '%s|%s|%s\n' "$(now_epoch)" "$e" "$msg" >> "$EVENTS"
-    lines="$(wc -l < "$EVENTS" 2>/dev/null | tr -d ' ')"; lines="$(num "$lines")"
-    if [ "$lines" -gt 120 ]; then tail -n 120 "$EVENTS" > "$EVENTS.tmp" && mv -f "$EVENTS.tmp" "$EVENTS"; fi
 }
 
 # Resolve Google's documented mtalk hostnames. These addresses are candidates
@@ -286,14 +285,14 @@ retry_interval() {
 # Recovery triggers. Each stage is independent: a rejected command falls through to
 # the next one at once; an accepted one is followed by a kernel-socket re-sample and
 # "connected" ends the sequence. Verified-on-device triggers come first for the shell.
-#   MCS_HEARTBEAT / ACTION_HEARTBEAT_NOW / GTALK_HEARTBEAT  heartbeat broadcasts
+#   MCS_HEARTBEAT / ACTION_HEARTBEAT_NOW heartbeat broadcasts
 #   GCM_RECONNECT       reconnect broadcast (not exported on OriginOS 7; tried as a last resort)
 #   GCM_SERVICE_START   best-effort explicit start of GMS's own GcmService (unverified)
 # Never force-stops/restarts GMS and never alters DNS/VPN/proxy/routing.
 recovery_actions() {
     case "$(id -u 2>/dev/null)" in
-      0) echo "GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT GTALK_RECONNECT GMS_INITIALIZE GCM_SERVICE_START";;
-      2000) echo "MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT GTALK_RECONNECT GMS_INITIALIZE GCM_RECONNECT GCM_SERVICE_START";;
+      0) echo "GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GMS_INITIALIZE GCM_SERVICE_START";;
+      2000) echo "MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GMS_INITIALIZE GCM_RECONNECT GCM_SERVICE_START";;
       *) return 1;;
     esac
 }
@@ -317,8 +316,6 @@ send_recovery_action() {
       GCM_RECONNECT) trigger_action=com.google.android.intent.action.GCM_RECONNECT;;
       MCS_HEARTBEAT) trigger_action=com.google.android.intent.action.MCS_HEARTBEAT;;
       ACTION_HEARTBEAT_NOW) trigger_action=com.google.android.gms.gcm.ACTION_HEARTBEAT_NOW;;
-      GTALK_HEARTBEAT) trigger_action=com.google.android.intent.action.GTALK_HEARTBEAT;;
-      GTALK_RECONNECT) trigger_action=com.google.android.intent.action.GTALK_RECONNECT;;
       GMS_INITIALIZE) trigger_action=com.google.android.gms.INITIALIZE;;
       GCM_SERVICE_START) trigger_action=;;
       *) return 1;;
@@ -420,7 +417,11 @@ request_reconnect() {
         decision=confirmation_recovered
     elif [ "$sequence_requested" = 1 ]; then
         decision=recovery_exhausted
-        record_event reconnect_sequence_exhausted "全部触发已执行但内核仍未确认恢复${confirmation_unavailable:+（至少一次复采不可用）}；按退避间隔再次巡检"
+        if [ "$confirmation_unavailable" = 1 ]; then
+            record_event reconnect_sequence_exhausted "本轮未确认恢复，至少一次内核复采不可用。达到退避间隔后再尝试"
+        else
+            record_event reconnect_sequence_exhausted "本轮复采均未观察到已建立的 FCM 长连接。达到退避间隔后再尝试"
+        fi
     else
         decision=request_failed
         record_event reconnect_sequence_failed "全部触发均未被系统接受；按退避间隔再次巡检"
@@ -433,7 +434,7 @@ request_reconnect() {
 
 # Evidence-unavailable keepalive (the open-source heartbeat-fixer approach). It never
 # marks the connection down and never claims recovery: while the kernel socket table
-# stays unreadable for 5 minutes it sends the three heartbeat broadcasts at most once
+# stays unreadable for 5 minutes it sends the two heartbeat broadcasts at most once
 # every 15 minutes. Reconnect broadcasts and service starts stay reserved for confirmed
 # outages.
 keepalive_nudge() {
@@ -445,14 +446,22 @@ keepalive_nudge() {
         decision=sample_unavailable; return 0
     fi
     case "$(id -u 2>/dev/null)" in 0|2000) :;; *) decision=sample_unavailable; return 0;; esac
+    last_nudge_mono="$nowm"
+    if ! save_state; then
+        decision=state_save_failed
+        record_event keepalive_state_commit_failed '无法保存保活间隔，本轮未发送心跳'
+        return 0
+    fi
     nudge_accepted=0
-    for nudge_label in MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT; do
+    for nudge_label in MCS_HEARTBEAT ACTION_HEARTBEAT_NOW; do
         if send_recovery_action "$nudge_label"; then nudge_accepted=$((nudge_accepted+1)); fi
     done
-    last_nudge_mono="$nowm"
-    decision=keepalive_nudged
-    record_event keepalive_nudge "内核 Socket 证据连续 $((nowm-unknown_since_mono)) 秒不可用；未判定断联，仅发送心跳保活（被系统接受 ${nudge_accepted}/3）"
-    save_state || { decision=state_save_failed; record_event keepalive_state_commit_failed "保活心跳已发送但状态写入失败"; }
+    if [ "$nudge_accepted" -gt 0 ]; then
+        decision=keepalive_nudged
+    else
+        decision=request_failed
+    fi
+    record_event keepalive_nudge "连续 $((nowm-unknown_since_mono)) 秒无法读取内核连接证据。本轮尝试两种保活心跳，系统接受 ${nudge_accepted} 条，当前连接状态未知"
 }
 
 observe() {
@@ -685,6 +694,10 @@ status_json() {
 }
 
 case "${1:-status}" in
+    status|monitor|rescue|reconnect) rotate_diagnostic_log "$EVENTS" || :;;
+esac
+
+case "${1:-status}" in
     status)
         observe || exit $?
         status_json
@@ -699,7 +712,7 @@ case "${1:-status}" in
         fi
         observe || exit $?
         auto_recovery || exit $?
-        write_evidence
+        write_evidence || exit $?
         case "$state" in
           unknown|connecting|disconnected)
             if [ "$decision" != "$prior_decision" ]; then
@@ -750,10 +763,11 @@ case "${1:-status}" in
         write_evidence
         ;;
     events)
-        [ -f "$EVENTS" ] && tail -n 80 "$EVENTS" || :
+        if [ "${2:-}" = all ]; then read_diagnostic_log "$EVENTS"
+        else read_diagnostic_log "$EVENTS" | tail -n 80; fi
         ;;
     reset-history)
-        : > "$EVENTS"; echo 'FCM 事件历史已清空（连接状态未更改）'
+        rm -f "$EVENTS" "$EVENTS".[0-9]* && echo '已清空 FCM 事件历史，当前连接状态保留'
         ;;
     *) echo 'status|snapshot|monitor|rescue|reconnect|events|reset-history' >&2; exit 2;;
 esac

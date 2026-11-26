@@ -140,24 +140,22 @@ settime 10061
 export MCS_AM_FAIL_ACTION=GCM_RECONNECT
 run monitor >/dev/null
 unset MCS_AM_FAIL_ACTION
-requests 7
-grep -Fq 'GCM_RECONNECT' "$TMP/am.log" || fail "first recovery stage missing"
-grep -Fq 'MCS_HEARTBEAT' "$TMP/am.log" || fail "second recovery stage missing after first failure"
-grep -Fq 'ACTION_HEARTBEAT_NOW' "$TMP/am.log" || fail "third recovery stage missing"
-grep -Fq 'GTALK_HEARTBEAT' "$TMP/am.log" || fail "fourth recovery stage missing"
-line_gcm="$(grep -nF 'GCM_RECONNECT' "$TMP/am.log" | head -n 1 | cut -d: -f1)"
-line_mcs="$(grep -nF 'MCS_HEARTBEAT' "$TMP/am.log" | head -n 1 | cut -d: -f1)"
-line_action="$(grep -nF 'ACTION_HEARTBEAT_NOW' "$TMP/am.log" | head -n 1 | cut -d: -f1)"
-line_gtalk="$(grep -nF 'GTALK_HEARTBEAT' "$TMP/am.log" | head -n 1 | cut -d: -f1)"
-[ "$line_gcm" -lt "$line_mcs" ] && [ "$line_mcs" -lt "$line_action" ] && [ "$line_action" -lt "$line_gtalk" ] ||
-    fail "native recovery triggers were not issued in escalation order"
+requests 5
+cat > "$TMP/expected-recovery.log" <<'EXPECTED'
+broadcast --user 0 -a com.google.android.intent.action.GCM_RECONNECT -p com.google.android.gms
+broadcast --user 0 -a com.google.android.intent.action.MCS_HEARTBEAT -p com.google.android.gms
+broadcast --user 0 -a com.google.android.gms.gcm.ACTION_HEARTBEAT_NOW -p com.google.android.gms
+broadcast --user 0 -a com.google.android.gms.INITIALIZE -p com.google.android.gms
+startservice --user 0 -n com.google.android.gms/.gcm.GcmService
+EXPECTED
+diff -u "$TMP/expected-recovery.log" "$TMP/am.log" || fail "unexpected recovery commands or escalation order"
 j="$(run status)"
 assert_json "$j" fcm_last_result=requested
 
 # A second patrol inside the backoff window must not repeat the whole sequence.
 settime 10062
 run monitor >/dev/null
-requests 7
+requests 5
 j="$(sh "$MON" snapshot)"
 assert_json "$j" fcm_recovery_decision=cooldown
 
@@ -168,7 +166,7 @@ run monitor >/dev/null
 j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_last_result=restored
-requests 7
+requests 5
 
 # If an intermediate trigger restores the socket, stop the sequence immediately.
 echo connecting > "$TMP/mode"
@@ -179,7 +177,7 @@ settime 10124
 export MCS_AM_CONNECT_ON_ACTION=MCS_HEARTBEAT
 run monitor >/dev/null
 unset MCS_AM_CONNECT_ON_ACTION
-requests 9
+requests 7
 j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_last_result=restored
@@ -192,13 +190,13 @@ assert_json "$j" fcm_state=disconnected
 assert_json "$j" fcm_tcp_hint=stalled
 settime 10213
 run monitor >/dev/null
-requests 16
+requests 12
 echo connected > "$TMP/mode"
 settime 10214
 run monitor >/dev/null
 j="$(run status)"
 assert_json "$j" fcm_state=connected
-requests 16
+requests 12
 
 # A connected socket with no TCP data received for 30 minutes is also suspected stalled.
 echo idle > "$TMP/mode"
@@ -208,33 +206,33 @@ assert_json "$j" fcm_state=disconnected
 assert_json "$j" fcm_tcp_hint=stalled
 settime 10230
 run monitor >/dev/null
-requests 23
+requests 17
 echo connected > "$TMP/mode"
 settime 10231
 run monitor >/dev/null
 j="$(run status)"
 assert_json "$j" fcm_state=connected
-requests 23
+requests 17
 
 # Continuous, successfully-readable absence is timed; one absent sample is not enough.
 echo absent > "$TMP/mode"
 settime 10257
 j="$(run status)"
 assert_json "$j" fcm_state=disconnected
-requests 23
+requests 17
 settime 10302
 j="$(run status)"
 assert_json "$j" fcm_state=disconnected
 settime 10317
 run monitor >/dev/null
-requests 30
+requests 22
 
 # An unreadable ownership/source sample is unavailable, not falsely disconnected.
 echo unknown > "$TMP/mode"
 settime 10318
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
-requests 30
+requests 22
 
 # When ss cannot expose UID, the root-readable /proc TCP tables are the fallback.
 mkdir -p "$TMP/proc"
@@ -252,7 +250,7 @@ j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=gms_socket
 assert_json "$j" fcm_tcp_hint=established
-requests 30
+requests 22
 
 # A GMS-owned HTTPS socket to an unrelated peer must remain unknown even when
 # mtalk DNS candidates are available; it must never age into false absence.
@@ -263,7 +261,7 @@ settime 10320
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
 assert_json "$j" fcm_source=unavailable
-requests 30
+requests 22
 
 # If a recovery follow-up cannot atomically publish evidence, it must not
 # save the in-memory sample state and create a false state/evidence generation.
@@ -286,14 +284,14 @@ exec "$REAL_MV" "$@"
 MOCK
 chmod +x "$TMP/bin/mv"
 echo 0 > "$TMP/data/evidence-mv-count"
-export MCS_FAIL_EVIDENCE_MV=1 MCS_FAIL_EVIDENCE_MV_AT=8 MCS_AM_INCREMENT_UPTIME=1
+export MCS_FAIL_EVIDENCE_MV=1 MCS_FAIL_EVIDENCE_MV_AT=6 MCS_AM_INCREMENT_UPTIME=1
 run monitor >/dev/null
 unset MCS_FAIL_EVIDENCE_MV MCS_FAIL_EVIDENCE_MV_AT MCS_AM_INCREMENT_UPTIME
-requests 37
-test "$(cat "$TMP/data/evidence-mv-count")" = 9
+requests 27
+test "$(cat "$TMP/data/evidence-mv-count")" = 7
 state_sample_uptime="$(awk -F'|' '{print $28}' "$TMP/data/mcs-monitor.state")"
 evidence_sample_uptime="$(awk -F'|' '{print $7}' "$TMP/data/mcs-evidence")"
-[ "$state_sample_uptime" = 10385 ] || fail "failed final follow-up evidence publish advanced state sample"
+[ "$state_sample_uptime" = 10383 ] || fail "failed final follow-up evidence publish advanced state sample"
 [ "$evidence_sample_uptime" = "$state_sample_uptime" ] || fail "failed follow-up overwrote last committed evidence generation"
 j="$(sh "$MON" snapshot)"
 assert_json "$j" fcm_state=connecting
@@ -311,10 +309,8 @@ settime 10460
 export MCS_AM_UNKNOWN_ON_ACTION=GCM_RECONNECT
 run monitor >/dev/null
 unset MCS_AM_UNKNOWN_ON_ACTION
-requests 7
-for action in GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT; do
-    grep -Fq "$action" "$TMP/am.log" || fail "unknown follow-up stopped recovery before $action"
-done
+requests 5
+diff -u "$TMP/expected-recovery.log" "$TMP/am.log" || fail "unexpected recovery sequence after unknown follow-up"
 j="$(sh "$MON" snapshot)"
 assert_json "$j" fcm_state=unknown
 assert_json "$j" fcm_recovery_decision=recovery_exhausted
@@ -323,4 +319,4 @@ assert_json "$j" fcm_recovery_decision=recovery_exhausted
 # Android's Toybox/BusyBox flock cannot run a program under a lock, so the monitor must
 # never depend on flock: it uses the atomic mkdir lock with owner identity checks.
 ! grep -q 'flock' "$ROOT/module/bin/fcm-monitor.sh" || fail "monitor must not depend on flock"
-echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO stall recovery, same-cycle seven-trigger escalation, evidence-first commit protection, and dump independence"
+echo "PASS: kernel-only detection, bounded absence confirmation, TCP_INFO stall recovery, same-cycle five-trigger escalation, evidence-first commit protection, and dump independence"

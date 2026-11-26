@@ -1,5 +1,16 @@
 # Berry-FCM-OS7 交接（现状快照）
 
+## 2026-11-26 恢复命令与诊断日志
+
+本次源码版本为 KernelSU 1.0-rc.17、APK 1.0-rc.5，便于从启动日志区分新旧版本。
+
+- KernelSU 与 APK 均移除 `GTALK_HEARTBEAT` 和 `GTALK_RECONNECT`。V2505A 当次动态广播登记未出现这两个接收器，记录中两种命令各出现 4 次，共 7 次下一次采样仍未连接，1 次缺少后续结果。恢复序列保留 5 种动作。APK 权限为 ADB Shell 时先尝试心跳，证据连续不可用的保活路径只发送两种心跳。
+- 两端按 UTC 日期轮转诊断日志。保留至少 48 小时，归档最近一次写入满 48 小时后才清理，默认界面仍只显示最近一部分。KernelSU 可用 `ctl.sh log all` 和 `fcm-monitor.sh events all` 读取所有归档。APK 可从「诊断 → 高级 → 导出完整诊断日志」保存文本。导出跨权限模式时以当前授权模式的 FCM 事件为准。
+- KernelSU 和 APK 的启动记录新增版本。老版本没有版本字段的记录只按已核对的安装时间和服务 PID 辅助归属。历史累计计数跨版本共享，旧版已截断的日志无法从当前文件恢复。
+- FCM 恢复日志区分系统接受命令、复采仍未连接、证据不可用、复采已连接。保留事件代码、返回码和系统原文以便检索。APK 补齐手动恢复结果提示，移除分享报告中重复的 FCM 事件段。
+- APK 在发送保活心跳前先保存 15 分钟退避时间，保存失败时不发送。两条均未被系统接受时记录失败，连接状态仍为未知。巡检写入证据失败会向上层返回失败。真机隔离回归覆盖 Root 与 ADB Shell 的完整触发顺序、双心跳保活和退避。
+- V2505A 无线 ADB 验证了两端脚本的恢复序列和 48 小时轮转边界。真实内核只读采样均识别到 GMS 已建立 TCP 5228 长连接。JVM 验证了 APK 运行日志迁移、排序与清理边界。模拟轮转通过推进测试时间完成。
+
 > 更新：2026-11-25。本文件只记录当前状态、已验证事实和未解决事项；不保留逐次迭代的过程记录
 > （历史记录可在 git log 中查到）。唯一产品基线：[PRODUCT_PLAN.md](PRODUCT_PLAN.md)。
 
@@ -26,14 +37,13 @@
   （`confirm_recovery()`，间隔 2 秒）仍保持断联/连接中才进入恢复。
 - **采样空档**：超过 90 秒未成功采样，重置连续性锚点，不把空档当作连续断联证据
   （`observe()` 的 `sample_gap_age` 检查）。
-- **恢复序列**（`recovery_actions()`，共 7 个动作，不是早期文档写的 4 个）：
-  - Root（UID 0）：`GCM_RECONNECT → MCS_HEARTBEAT → ACTION_HEARTBEAT_NOW → GTALK_HEARTBEAT
-    → GTALK_RECONNECT → GMS_INITIALIZE → GCM_SERVICE_START`
+- **恢复序列**（`recovery_actions()`，共 5 个动作）：
+  - Root（UID 0）：`GCM_RECONNECT → MCS_HEARTBEAT → ACTION_HEARTBEAT_NOW → GMS_INITIALIZE → GCM_SERVICE_START`
   - ADB shell（UID 2000）：顺序不同，`GCM_RECONNECT` 挪到倒数第二位（因为该广播在
     OriginOS 7 上对 UID 2000 可能不导出；对 Root 广播已实测确认可被系统接受，见下）。
   - 每个动作被系统接受后等待最多 5 秒复采（`settle_wait`），`connected` 立即停止整个序列；
     `connecting`/`disconnected` 继续下一动作；`unknown`（证据暂不可用）不当断联也不当恢复，
-    同样继续下一动作。全部 7 个动作执行完仍未恢复才记为 `recovery_exhausted`，按退避重试。
+    同样继续下一动作。全部 5 个动作执行完仍未恢复才记为 `recovery_exhausted`，按退避重试。
   - 退避间隔由 `retry_streak` 驱动：第 1-2 次 30 秒，第 3 次 45 秒，第 4 次 60 秒，之后
     固定 90 秒；恢复后清零。
 - **`ctl.sh`**：仍调用 `dumpsys` 读取应用 `stopped`/`suspended`/`hidden` 状态和广播接收者

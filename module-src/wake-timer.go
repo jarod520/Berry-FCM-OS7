@@ -32,7 +32,7 @@ func clockSeconds(id uintptr) (float64, error) {
 func waitForAlarm(intervalSeconds int64) error {
 	fd, _, errno := syscall.Syscall(syscall.SYS_TIMERFD_CREATE, clockBoottimeAlarm, syscall.O_CLOEXEC, 0)
 	if errno != 0 {
-		return fmt.Errorf("timerfd_create: %w", errno)
+		return fmt.Errorf("创建唤醒定时器失败：%w", errno)
 	}
 	defer syscall.Close(int(fd))
 
@@ -41,7 +41,7 @@ func waitForAlarm(intervalSeconds int64) error {
 	timer := intervalTimer{value: syscall.Timespec{Sec: intervalSeconds}}
 	_, _, errno = syscall.Syscall6(syscall.SYS_TIMERFD_SETTIME, fd, 0, uintptr(unsafe.Pointer(&timer)), 0, 0, 0)
 	if errno != 0 {
-		return fmt.Errorf("timerfd_settime: %w", errno)
+		return fmt.Errorf("设置唤醒定时器失败：%w", errno)
 	}
 	var armed intervalTimer
 	_, _, errno = syscall.Syscall(syscall.SYS_TIMERFD_GETTIME, fd, uintptr(unsafe.Pointer(&armed)), 0)
@@ -49,7 +49,7 @@ func waitForAlarm(intervalSeconds int64) error {
 	if errno == 0 {
 		remaining = fmt.Sprintf("%.3f", float64(armed.value.Sec)+float64(armed.value.Nsec)/1e9)
 	}
-	fmt.Printf("[%s] wake_timer_armed pid=%d delay_s=%d remaining_s=%s\n",
+	fmt.Printf("[%s] wake_timer_armed pid=%d delay_s=%d remaining_s=%s  已设置唤醒定时器\n",
 		time.Now().UTC().Format(time.RFC3339), os.Getpid(), intervalSeconds, remaining)
 	var event [8]byte
 	for {
@@ -58,10 +58,10 @@ func waitForAlarm(intervalSeconds int64) error {
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("timerfd read: %w", err)
+			return fmt.Errorf("读取唤醒定时器失败：%w", err)
 		}
 		if n != len(event) {
-			return fmt.Errorf("timerfd read: got %d bytes", n)
+			return fmt.Errorf("读取唤醒定时器数据长度异常：%d 字节", n)
 		}
 		break
 	}
@@ -76,22 +76,22 @@ func waitForAlarm(intervalSeconds int64) error {
 			suspended = fmt.Sprintf("%.3f", max(0, delta-(endActive-startActive)))
 		}
 	}
-	fmt.Printf("[%s] wake_timer_fired pid=%d expirations=%d elapsed_s=%s suspend_s=%s late_s=%s\n",
+	fmt.Printf("[%s] wake_timer_fired pid=%d expirations=%d elapsed_s=%s suspend_s=%s late_s=%s  唤醒定时器已触发\n",
 		time.Now().UTC().Format(time.RFC3339), os.Getpid(), binary.LittleEndian.Uint64(event[:]), elapsed, suspended, late)
 	if reason, err := os.ReadFile("/sys/kernel/wakeup_reasons/last_resume_reason"); err == nil {
-		fmt.Printf("wake_timer_last_kernel_reason pid=%d reason=%q\n", os.Getpid(), strings.TrimSpace(string(reason)))
+		fmt.Printf("wake_timer_last_kernel_reason pid=%d reason=%q  内核最后一次唤醒原因\n", os.Getpid(), strings.TrimSpace(string(reason)))
 	}
 	return nil
 }
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: wake-timer-arm64 <minutes: 1–10>")
+		fmt.Fprintln(os.Stderr, "用法：wake-timer-arm64 <分钟数 1–10>")
 		os.Exit(2)
 	}
 	minutes, err := strconv.ParseInt(os.Args[1], 10, 64)
 	if err != nil || minutes < 1 || minutes > 10 {
-		fmt.Fprintln(os.Stderr, "wake interval must be between 1 and 10 minutes")
+		fmt.Fprintln(os.Stderr, "唤醒间隔必须在 1 至 10 分钟之间")
 		os.Exit(2)
 	}
 	if err := waitForAlarm(minutes * 60); err != nil {

@@ -8,6 +8,7 @@ GMS=com.google.android.gms
 DATA="${BERRY_FCM_DATA:-/data/adb/berry_fcm_ksu}"
 STATE="$DATA/mcs-monitor.state"
 EVENTS="$DATA/mcs-monitor-events.log"
+. "$(dirname "$0")/diagnostic-logs.sh" || exit 11
 EVIDENCE="$DATA/mcs-evidence"
 DNS_IPS="$DATA/mcs-mtalk-dns-ips.txt"
 LEARNED_IPS="$DATA/mcs-mtalk-learned-ips.txt"
@@ -130,8 +131,6 @@ record_event() {
     e="${1:-event}"; msg="${2:-}"
     msg="$(printf '%s' "$msg" | tr '\r\n|' '   ' | cut -c1-220)"
     printf '%s|%s|%s\n' "$(now_epoch)" "$e" "$msg" >> "$EVENTS"
-    lines="$(wc -l < "$EVENTS" 2>/dev/null | tr -d ' ')"; lines="$(num "$lines")"
-    if [ "$lines" -gt 120 ]; then tail -n 120 "$EVENTS" > "$EVENTS.tmp" && mv -f "$EVENTS.tmp" "$EVENTS"; fi
 }
 
 # Resolve Google's documented mtalk hostnames. These addresses are candidates
@@ -374,14 +373,14 @@ retry_interval() {
 # Recovery triggers. Each stage is independent: a rejected command falls through to
 # the next one at once; an accepted one is followed by a kernel-socket re-sample and
 # "connected" ends the sequence. Verified-on-device triggers come first for the shell.
-#   MCS_HEARTBEAT / ACTION_HEARTBEAT_NOW / GTALK_HEARTBEAT  heartbeat broadcasts
+#   MCS_HEARTBEAT / ACTION_HEARTBEAT_NOW  heartbeat broadcasts
 #   GCM_RECONNECT       reconnect broadcast (not exported on OriginOS 7; tried as a last resort)
 #   GCM_SERVICE_START   best-effort explicit start of GMS's own GcmService (unverified)
 # Never force-stops/restarts GMS and never alters DNS/VPN/proxy/routing.
 recovery_actions() {
     case "$(id -u 2>/dev/null)" in
-      0) echo "GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT GTALK_RECONNECT GMS_INITIALIZE GCM_SERVICE_START";;
-      2000) echo "MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GTALK_HEARTBEAT GTALK_RECONNECT GMS_INITIALIZE GCM_RECONNECT GCM_SERVICE_START";;
+      0) echo "GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GMS_INITIALIZE GCM_SERVICE_START";;
+      2000) echo "MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GMS_INITIALIZE GCM_RECONNECT GCM_SERVICE_START";;
       *) return 1;;
     esac
 }
@@ -405,8 +404,6 @@ send_recovery_action() {
       GCM_RECONNECT) trigger_action=com.google.android.intent.action.GCM_RECONNECT;;
       MCS_HEARTBEAT) trigger_action=com.google.android.intent.action.MCS_HEARTBEAT;;
       ACTION_HEARTBEAT_NOW) trigger_action=com.google.android.gms.gcm.ACTION_HEARTBEAT_NOW;;
-      GTALK_HEARTBEAT) trigger_action=com.google.android.intent.action.GTALK_HEARTBEAT;;
-      GTALK_RECONNECT) trigger_action=com.google.android.intent.action.GTALK_RECONNECT;;
       GMS_INITIALIZE) trigger_action=com.google.android.gms.INITIALIZE;;
       GCM_SERVICE_START) trigger_action=;;
       *) return 1;;
@@ -810,8 +807,8 @@ case "${1:-status}" in
         write_decision_evidence
         case "$decision" in
           requested) echo "已请求 GMS 恢复，等待下一次连接采样确认";;
-          request_failed) echo "四种恢复广播均未被系统接受，请查看恢复事件";;
-          recovery_exhausted) echo "四种恢复动作已依次执行，内核仍未确认恢复；将按退避周期重试";;
+          request_failed) echo "本轮恢复动作均未被系统接受，请查看恢复事件";;
+          recovery_exhausted) echo "本轮恢复动作已依次执行，内核仍未确认恢复；将按退避周期重试";;
           confirmation_unavailable) echo "恢复请求已发送，但后续内核复采不可用；等待下一轮巡检";;
           cooldown) echo "仍在重连冷却期";;
           confirmation_recovered) echo "内核复采已观察到 MCS TCP，停止后续恢复动作";;
@@ -820,10 +817,11 @@ case "${1:-status}" in
         esac
         ;;
     events)
-        [ -f "$EVENTS" ] && tail -n 80 "$EVENTS" || :
+        if [ "${2:-}" = all ]; then read_diagnostic_log "$EVENTS"
+        else read_diagnostic_log "$EVENTS" | tail -n 80; fi
         ;;
     reset-history)
-        : > "$EVENTS"; echo 'FCM 事件历史已清空（连接状态未更改）'
+        rm -f "$EVENTS" "$EVENTS".[0-9]* && echo '已清空 FCM 事件历史，当前连接状态保留'
         ;;
     *) echo 'status|snapshot|monitor|reconnect|events|reset-history' >&2; exit 2;;
 esac
@@ -869,7 +867,8 @@ case "$command" in
             echo "无法登记 GMS monitor 进程身份，拒绝启动未受监管的检查" >&2
             exit 14
         fi
-        run_monitor_command "$command"
+        [ "$command" = reset-history ] || rotate_diagnostic_log "$EVENTS" || :
+        run_monitor_command "$command" "${2:-}"
         ;;
-    *) run_monitor_command "$command";;
+    *) run_monitor_command "$command" "${2:-}";;
 esac
