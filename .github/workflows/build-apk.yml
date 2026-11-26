@@ -52,6 +52,12 @@ jobs:
           sh tests/diagnostic-logs-smoke.sh
           sh tests/apk-no-dump-smoke.sh
 
+      - name: Verify APK diagnostic history with empty and populated logs
+        run: |
+          scratch="$(mktemp -d)"
+          javac -encoding UTF-8 -d "$scratch" app/src/main/java/top/zesun/berryfcm/DiagnosticHistory.java tests/DiagnosticHistorySmoke.java
+          java -cp "$scratch" top.zesun.berryfcm.DiagnosticHistorySmoke "$scratch/logs"
+
       - name: Verify complete APK module and permission scope
         run: sh tests/apk-module-smoke.sh
 

@@ -36,7 +36,7 @@ final class DiagnosticHistory {
             if (history.length() > 0) history.append('\n');
             history.append(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8).trim());
         }
-        if (limit == 0) return history.toString();
+        if (limit == 0 || history.length() == 0) return history.toString();
         int start = history.length();
         for (int remaining = limit; remaining > 0 && start > 0; remaining--)
             start = history.lastIndexOf("\n", start - 1);
