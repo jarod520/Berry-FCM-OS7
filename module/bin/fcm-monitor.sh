@@ -127,6 +127,35 @@ save_state() {
     return 0
 }
 
+recovery_decision_message() (
+    case "$decision" in
+        not_evaluated) explanation='等待评估';;
+        not_disconnected) explanation='未确认断联，暂不恢复';;
+        sample_unavailable) explanation='内核连接证据不可用，暂不恢复';;
+        disabled) explanation='自动恢复已关闭';;
+        network_gate) explanation='当前网络条件不满足，暂不恢复';;
+        cooldown) explanation='等待上次请求的退避间隔结束';;
+        requested) explanation='系统已接受请求，等待复采';;
+        request_failed) explanation='系统未接受恢复请求';;
+        recovery_exhausted) explanation='本轮已结束，复采未确认恢复';;
+        confirmation_unavailable) explanation='复采证据不可用，暂不恢复';;
+        waiting_duration) explanation='尚未达到断联等待时长';;
+        waiting_confirmation) explanation='等待二次采样确认';;
+        confirmation_changed) explanation='二次采样结果变化，本轮暂不恢复';;
+        confirmation_recovered) explanation='复采已观察到长连接建立';;
+        keepalive_nudged) explanation='已请求保活心跳，连接状态仍未知';;
+        state_save_failed) explanation='恢复状态保存失败';;
+        *) explanation='恢复结果未知';;
+    esac
+    case "$state" in
+        connected) connection='已连接';;
+        connecting) connection='连接建立中';;
+        disconnected) connection='未连接';;
+        *) connection='未知';;
+    esac
+    printf '%s。连接状态：%s。连续恢复尝试：%s 次。' "$explanation" "$connection" "$retry_streak"
+)
+
 record_event() {
     e="${1:-event}"; msg="${2:-}"
     msg="$(printf '%s' "$msg" | tr '\r\n|' '   ' | cut -c1-220)"
@@ -791,7 +820,7 @@ case "${1:-status}" in
         case "$state" in
           unknown|connecting|disconnected)
             if [ "$decision" != "$prior_decision" ]; then
-                record_event recovery_decision "decision=$decision state=$state source=$source tcp=$tcp_hint evidence=${parse_detail:-none} retry_streak=$retry_streak"
+                record_event recovery_decision "$(recovery_decision_message)"
             fi;;
           connected) :;;
         esac

@@ -245,6 +245,14 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
    $('tAttempts').textContent=String(j.fcm_attempts||0);$('tOutages').textContent=String(j.fcm_outages||0);
    $('tSample').textContent=j.fcm_sample_time>0?fullTime(j.fcm_sample_time):'暂无';
  }
+ function eventDetail(kind, detail){
+   if(kind!=="recovery_decision")return detail;
+   const legacy=/^decision=(\S+) state=(\S+).*\bretry_streak=(\d+)(?:\s|$)/.exec(detail);
+   if(!legacy)return detail;
+   const decisions={"not_evaluated":"等待评估","not_disconnected":"未确认断联，暂不恢复","sample_unavailable":"内核连接证据不可用，暂不恢复","disabled":"自动恢复已关闭","network_gate":"当前网络条件不满足，暂不恢复","cooldown":"等待上次请求的退避间隔结束","requested":"系统已接受请求，等待复采","request_failed":"系统未接受恢复请求","recovery_exhausted":"本轮已结束，复采未确认恢复","confirmation_unavailable":"复采证据不可用，暂不恢复","waiting_duration":"尚未达到断联等待时长","waiting_confirmation":"等待二次采样确认","confirmation_changed":"二次采样结果变化，本轮暂不恢复","confirmation_recovered":"复采已观察到长连接建立","keepalive_nudged":"已请求保活心跳，连接状态仍未知","state_save_failed":"恢复状态保存失败"};
+   const states={"connected":"已连接","connecting":"连接建立中","disconnected":"未连接","unknown":"未知"};
+   return (decisions[legacy[1]]||"恢复结果未知")+"。连接状态："+(states[legacy[2]]||"未知")+"。连续恢复尝试："+legacy[3]+" 次。";
+ }
  async function loadEvents(){
    const recoveryLabels={reconnect_aborted:"未能启动恢复",reconnect_state_commit_failed:"保存恢复结果失败",reconnect_sequence_exhausted:"本轮恢复结束",reconnect_sequence_failed:"本轮命令全部失败",recovery_sequence_recovered:"恢复后复采已连接",recovery_sequence_still_down:"恢复后复采仍未连接",recovery_sequence_unverified:"恢复后复采证据不可用",recovery_confirmation_recovered:"二次复采已连接",recovery_decision_not_persisted:"恢复决策未保存",recovery_decision_persist_failed:"保存恢复决策失败",recovery_confirmation_changed:"二次复采结果变化",socket_evidence_unavailable:"内核连接证据不可用",tcp_stalled:"TCP 长连接疑似卡住",connection_observed_after_unknown:"重新读到已建立的连接",sample_gap:"采样空档",sample_unknown:"原生状态未返回",sample_dump:"原生输出摘要",down_reconfirmed:"再次确认断联",tcp_absence_started:"TCP 缺失计时开始",tcp_absence_confirmed:"TCP 缺失确认断联",socket_connected:"TCP 观察到连接",socket_connecting:"TCP 正在连接",native_timer_stalled:"GMS 计时停滞",native_timer_check_cancelled:"计时复核后取消恢复",recovery_decision:"恢复决策",recovery_confirmed:"断联二次确认",recovery_socket_confirmed:"TCP 辅助确认断联",recovery_confirmation_unavailable:"恢复复核未通过",connection_down:"发现断联",connection_restored:"恢复连接",reconnect_requested:"已请求重连",reconnect_failed:"重连请求失败",reconnect_skipped:"跳过重连",reboot:"设备重启"};
    const labels=recoveryLabels;
@@ -256,7 +264,7 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
        const records=lines.map(line=>{
          const [time,kind,...message]=line.split("|");
          return {time:/^\d+$/.test(time)?fullTime(Number(time)):time,
-           title:kind?(labels[kind]||("诊断事件（"+kind+"）")):line,detail:message.join("|")};
+           title:kind?(labels[kind]||("诊断事件（"+kind+"）")):line,detail:eventDetail(kind,message.join("|"))};
        });
        const plain=records.map(e=>[e.time,e.title,e.detail].join("  ")).join("\n")||"暂无记录";
        $("nativeHistory").textContent=plain;

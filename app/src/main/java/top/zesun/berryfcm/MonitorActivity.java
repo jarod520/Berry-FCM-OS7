@@ -273,6 +273,35 @@ public final class MonitorActivity extends Ui {
         }
     }
 
+    private static String eventDetail(String kind, String detail) {
+        if (!"recovery_decision".equals(kind) || !detail.startsWith("decision=")) return detail;
+        java.util.regex.Matcher legacy = java.util.regex.Pattern
+                .compile("^decision=(\\S+) state=(\\S+).*\\bretry_streak=(\\d+)(?:\\s|$)").matcher(detail);
+        if (!legacy.find()) return detail;
+        String explanation;
+        switch (legacy.group(1)) {
+            case "not_evaluated": explanation = "等待评估"; break;
+            case "not_disconnected": explanation = "未确认断联，暂不恢复"; break;
+            case "sample_unavailable": explanation = "内核连接证据不可用，暂不恢复"; break;
+            case "disabled": explanation = "自动恢复已关闭"; break;
+            case "network_gate": explanation = "当前网络条件不满足，暂不恢复"; break;
+            case "cooldown": explanation = "等待上次请求的退避间隔结束"; break;
+            case "requested": explanation = "系统已接受请求，等待复采"; break;
+            case "request_failed": explanation = "系统未接受恢复请求"; break;
+            case "recovery_exhausted": explanation = "本轮已结束，复采未确认恢复"; break;
+            case "confirmation_unavailable": explanation = "复采证据不可用，暂不恢复"; break;
+            case "waiting_duration": explanation = "尚未达到断联等待时长"; break;
+            case "waiting_confirmation": explanation = "等待二次采样确认"; break;
+            case "confirmation_changed": explanation = "二次采样结果变化，本轮暂不恢复"; break;
+            case "confirmation_recovered": explanation = "复采已观察到长连接建立"; break;
+            case "keepalive_nudged": explanation = "已请求保活心跳，连接状态仍未知"; break;
+            case "state_save_failed": explanation = "恢复状态保存失败"; break;
+            default: explanation = "恢复结果未知";
+        }
+        return explanation + "。连接状态：" + connectionLabel(legacy.group(2))
+                + "。连续恢复尝试：" + legacy.group(3) + " 次。";
+    }
+
     static String eventText(String[] lines, int maximum) {
         StringBuilder result = new StringBuilder();
         for (int i = lines.length - 1; i >= Math.max(0, lines.length - maximum); i--) {
@@ -348,7 +377,7 @@ public final class MonitorActivity extends Ui {
                     : parts[1].equals("rescue_failed") ? "空档后恢复失败"
                     : "诊断事件（" + parts[1] + "）";
             result.append(stamp).append("  ").append(label).append("\n")
-                    .append(parts[2]).append("\n\n");
+                    .append(eventDetail(parts[1], parts[2])).append("\n\n");
         }
         return result.length() == 0 ? "暂无监控事件" : result.toString().trim();
     }
