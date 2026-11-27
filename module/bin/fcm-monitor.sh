@@ -230,7 +230,7 @@ refresh_learned_ips() {
     learned_tmp="$LEARNED_IPS.tmp"
     {
         [ ! -f "$LEARNED_IPS" ] || cat "$LEARNED_IPS"
-        printf '%s\n' "$1" | awk -v u="$2" -v now="$learned_now" '
+        awk -v u="$2" -v now="$learned_now" '
           ($1=="ESTAB" || $1=="ESTABLISHED") {
             if (!match($0,/uid:[0-9]+/)) next
             owner=substr($0,RSTART+4,RLENGTH-4)+0; if(owner!=u+0) next
@@ -239,7 +239,9 @@ refresh_learned_ips() {
               ip=peer; sub(/:[0-9]+$/, "", ip); gsub(/^\[|\]$/, "", ip)
               sub(/^::ffff:/, "", ip); print tolower(ip) "|" now
             }
-          }'
+          }' <<EOF_RAW
+$1
+EOF_RAW
     } | awk -F'|' -v now="$learned_now" -v ttl=120 '
       function valid_ip(ip, a,n,i) {
         if(length(ip)<3 || length(ip)>45 || ip !~ /^[0-9a-f:.]+$/) return 0

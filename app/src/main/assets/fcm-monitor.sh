@@ -168,25 +168,33 @@ scan_ss() {
     command -v "$SS_BIN" >/dev/null 2>&1 || { printf 'unknown||||ss_unavailable\n'; return; }
     # -i adds TCP_INFO (unacked/retrans/lastrcv) where the ss build supports it.
     raw="$("$SS_BIN" -tinpe 2>/dev/null)" || raw=
-    if [ -z "$raw" ] || ! printf '%s\n' "$raw" | grep -Eq 'uid:[0-9]+'; then
+    if [ -z "$raw" ] || ! grep -Eq 'uid:[0-9]+' <<EOF_RAW
+$raw
+EOF_RAW
+    then
         raw="$("$SS_BIN" -tnpe 2>/dev/null)" || { printf 'unknown||||ss_failed\n'; return; }
     fi
 
     # Some ADB shells receive redacted ss output with no UID ownership.
     # Never classify that as absence of GMS/FCM: ownership is unobservable.
-    if ! printf '%s\n' "$raw" | grep -Eq 'uid:[0-9]+'; then
+    if ! grep -Eq 'uid:[0-9]+' <<EOF_RAW
+$raw
+EOF_RAW
+    then
         printf 'unknown||||ss_uid_metadata_unavailable\n'
         return
     fi
 
     # Learn peer IPs observed on the dedicated MCS ports during this boot.
-    printf '%s\n' "$raw" | awk -v u="$uid" '
+    awk -v u="$uid" '
       ($1=="ESTAB" || $1=="ESTABLISHED") {
         if (!match($0,/uid:[0-9]+/)) next
         owner=substr($0,RSTART+4,RLENGTH-4)+0; if(owner!=u+0) next
         peer=$5; port=peer; sub(/^.*:/,"",port)
         if(port==5228 || port==5229 || port==5230){ip=peer;sub(/:[0-9]+$/,"",ip);gsub(/^\[|\]$/,"",ip);sub(/^::ffff:/,"",ip);print tolower(ip)}
-      }' >> "$LEARNED_IPS"
+      }' >> "$LEARNED_IPS" <<EOF_RAW
+$raw
+EOF_RAW
     [ -s "$LEARNED_IPS" ] && sort -u "$LEARNED_IPS" > "$LEARNED_IPS.tmp" && mv -f "$LEARNED_IPS.tmp" "$LEARNED_IPS"
     ips="$(cat "$DNS_IPS" "$LEARNED_IPS" 2>/dev/null | awk 'NF && !seen[$0]++ {printf "%s%s",sep,$0;sep="|"}')"
     ip_count="$(printf '%s' "$ips" | awk -F'|' '{print NF}')"
@@ -195,10 +203,12 @@ scan_ss() {
     # socket is meaningful only when this snapshot proves ownership is visible,
     # i.e. at least one socket owned by the GMS UID is listed.
     gms_visible=0
-    printf '%s\n' "$raw" | grep -Eq "uid:${uid}([^0-9]|\$)" && gms_visible=1
+    grep -Eq "uid:${uid}([^0-9]|\$)" <<EOF_RAW && gms_visible=1
+$raw
+EOF_RAW
     # A socket is stalled when it has unacked data with >=3 retransmissions, or
     # no data was received for 30 minutes (TCP_INFO). Missing fields never fake it.
-    result="$(printf '%s\n' "$raw" | awk -v u="$uid" -v ips="|$ips|" -v ip_count="$ip_count" '
+    result="$(awk -v u="$uid" -v ips="|$ips|" -v ip_count="$ip_count" '
       function normip(v){sub(/:[0-9]+$/, "", v);gsub(/^\[|\]$/, "", v);sub(/^::ffff:/, "", v);return tolower(v)}
       function known(v){return index(ips,"|" normip(v) "|")>0}
       function field_number(name, text, value) {
@@ -247,7 +257,10 @@ scan_ss() {
         else if(rank==2) printf "stalled|%s|%s|%s|tcp_info_unacked_retrans\n",transport,remote,bestkey
         else if(untrusted) print "unknown||||unverified_443_no_mtalk_dns"
         else print "absent||||no_fcm_socket_observed"
-      }')"
+      }' <<EOF_RAW
+$raw
+EOF_RAW
+    )"
     case "$result" in
       absent\|*)
         if [ "$(id -u 2>/dev/null)" != 0 ] && [ "$gms_visible" != 1 ]; then

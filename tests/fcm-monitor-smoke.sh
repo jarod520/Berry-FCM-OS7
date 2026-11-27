@@ -35,6 +35,11 @@ cat > "$TMP/bin/ss" <<'MOCK'
 #!/bin/sh
 mode="$(cat "$MCS_MODE_FILE")"
 case "$mode" in
+  large_*) awk 'BEGIN {for (row=0; row<3000; row++) print "ESTAB 0 0 192.0.2.1:40000 192.0.2.2:443 uid:1000 ino:1"}';;
+esac
+case "$mode" in
+  large_connected) echo 'ESTAB 0 0 192.0.2.1:45000 192.0.2.3:5228 uid:10200 ino:100';;
+  large_learned443) echo 'ESTAB 0 0 192.0.2.1:45000 192.0.2.3:443 uid:10200 ino:101';;
   connected) echo 'ESTAB 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:100';;
   connecting) echo 'SYN-SENT 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:101';;
   absent) echo 'TIME-WAIT 0 0 192.168.1.8:45000 142.250.157.188:5228 uid:10200 ino:102';;
@@ -115,6 +120,7 @@ settime() {
     printf '%s\n' "$((1700010000+$1-10000))" > "$TMP/epoch"
 }
 run() { sh "$MON" "$1"; }
+run_with_external_printf() { sh -c 'printf() { env printf "$@"; }; . "$0"' "$MON" "$1"; }
 requests() { [ "$(wc -l < "$TMP/am.log" | tr -d ' ')" = "$1" ] || fail "expected $1 recovery commands"; }
 assert_json() {
     python3 - "$1" "$2" <<'PY'
@@ -253,6 +259,17 @@ j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=gms_socket
 assert_json "$j" fcm_tcp_hint=established
+requests 18
+
+echo large_connected > "$TMP/mode"
+settime 10319
+j="$(run_with_external_printf status)"
+assert_json "$j" fcm_transport=tcp5228
+grep -q '^192\.0\.2\.3|' "$TMP/data/mcs-mtalk-learned-ips.txt" || fail "large socket table did not teach the peer"
+echo large_learned443 > "$TMP/mode"
+j="$(run_with_external_printf status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_transport=tcp443
 requests 18
 
 # A GMS-owned HTTPS socket to an unrelated peer must remain unknown even when

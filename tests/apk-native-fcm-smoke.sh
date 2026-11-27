@@ -25,6 +25,11 @@ MOCK
 cat > "$TMP/bin/ss" <<'MOCK'
 #!/bin/sh
 case "${MCS_SS_MODE:-absent}" in
+  large_*) awk 'BEGIN {for (row=0; row<3000; row++) print "ESTAB 0 0 192.0.2.1:40000 192.0.2.2:443 uid:1000 ino:1"}';;
+esac
+case "${MCS_SS_MODE:-absent}" in
+  large_connected) echo 'ESTAB 0 0 192.0.2.1:45000 192.0.2.3:5228 uid:10200 ino:100';;
+  large_learned443) echo 'ESTAB 0 0 192.0.2.1:45000 192.0.2.3:443 uid:10200 ino:101';;
   connected) echo 'ESTAB 0 0 10.0.0.2:45000 142.250.157.188:5228 uid:10200 ino:101';;
   connecting) echo 'SYN-SENT 0 1 10.0.0.2:45000 142.250.157.188:5228 uid:10200 ino:102';;
   gms_other) echo 'ESTAB 0 0 10.0.0.2:45000 1.1.1.1:8080 uid:10200 ino:105';;
@@ -79,6 +84,7 @@ export MCS_AM_LOG="$TMP/am.log" MCS_DUMP_LOG="$TMP/dumpsys.log" MCS_CLOCK="$TMP/
 export BERRY_FCM_AUTO=1 BERRY_AUTO_GATE=ready
 settime() { printf '%s\n' "$1" > "$TMP/uptime"; printf '%s\n' "$((1700000000+$1))" > "$MCS_CLOCK"; }
 run() { sh "$MON" "$1"; }
+run_with_external_printf() { sh -c 'printf() { env printf "$@"; }; . "$0"' "$MON" "$1"; }
 requests() { [ "$(wc -l < "$MCS_AM_LOG" | tr -d ' ')" = "$1" ]; }
 assert_json() {
     python3 - "$1" "$2" <<'PY'
@@ -130,6 +136,16 @@ if run status >/dev/null 2>&1; then echo 'evidence rename failure was ignored' >
 test -z "$(find "$TMP/data" -name 'mcs-evidence.*' -print -quit)"
 unset MCS_EVIDENCE_MV_FAIL
 rm -f "$TMP/data/mcs-monitor.state" "$TMP/data/mcs-evidence"
+
+export MCS_SS_MODE=large_connected
+j="$(run_with_external_printf status)"
+assert_json "$j" fcm_transport=tcp5228
+grep -Fxq '192.0.2.3' "$TMP/data/mtalk-learned-ips.txt"
+export MCS_SS_MODE=large_learned443
+j="$(run_with_external_printf status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_transport=tcp443
+requests 0
 
 # Unrelated GMS HTTPS and redacted UID ownership remain unknown, never down.
 export MCS_SS_MODE=untrusted443
