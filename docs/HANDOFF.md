@@ -1,5 +1,13 @@
 # Berry-FCM-OS7 交接（现状快照）
 
+## 2026-11-27 SU rc.17 实测与修正
+
+- V2505A 的 rc.17 在约 15 小时 21 分内记录 169 次看门狗超时、47 次监控锁占用，最长两次正常巡检结束之间隔了 16 分 41 秒。定时器按已保存的 1 分钟间隔正常触发，日志在 08:00 左右正常轮转。
+- SU rc.19 为进行中的巡检记录启动时间和独立截止时间。已有采样过期时，仅允许在有效期内已经启动的巡检用完本轮时限。默认预算 98 秒，含监控命令、结束宽限、前后快照和状态处理。看门狗准备中止巡检时记录对应的启动和截止时间。进程身份检查和清理确认继续生效。
+- SU 和 APK 都移除 `GMS_INITIALIZE`，恢复序列减为 4 个动作。V2505A 当前没有该广播的接收器，系统保留的两条该广播历史均未派发。SU 日志明确区分命令提交、实际投递和 TCP 复采结果。
+- SU WebUI 将手动恢复交给后台进程，并轮询结果。恢复期间可继续滚动和查看页面，重复点击由按钮状态和后台锁拦截。
+- 在 V2505A 的隔离目录中通过 SU 和 APK 恢复脚本回归、48 小时归档边界、看门狗提前中止复现及手动恢复后台启动、去重和结果回传测试。模块待覆盖安装后检查实际 WebUI 滚动和熄屏长跑表现。
+
 ## 2026-11-26 恢复命令与诊断日志
 
 从 SU 1.0-rc.18 起，新恢复决策事件直接记录中文原因、连接状态和连续恢复尝试次数，APK 源码也已同步。WebUI 和 APK 监控页可将旧版 `decision=… state=…` 事件显示为中文，已有日志文件及供脚本读取的状态代码保留原格式。
@@ -43,13 +51,13 @@ APK 调试构建和 KernelSU ARM64 定时器构建通过。V2505A 已安装并�
   （`confirm_recovery()`，间隔 2 秒）仍保持断联/连接中才进入恢复。
 - **采样空档**：超过 90 秒未成功采样，重置连续性锚点，不把空档当作连续断联证据
   （`observe()` 的 `sample_gap_age` 检查）。
-- **恢复序列**（`recovery_actions()`，共 5 个动作）：
-  - Root（UID 0）：`GCM_RECONNECT → MCS_HEARTBEAT → ACTION_HEARTBEAT_NOW → GMS_INITIALIZE → GCM_SERVICE_START`
+- **恢复序列**（`recovery_actions()`，共 4 个动作）：
+  - Root（UID 0）：`GCM_RECONNECT → MCS_HEARTBEAT → ACTION_HEARTBEAT_NOW → GCM_SERVICE_START`
   - ADB shell（UID 2000）：顺序不同，`GCM_RECONNECT` 挪到倒数第二位（因为该广播在
     OriginOS 7 上对 UID 2000 可能不导出；对 Root 广播已实测确认可被系统接受，见下）。
   - 每个动作被系统接受后等待最多 5 秒复采（`settle_wait`），`connected` 立即停止整个序列；
     `connecting`/`disconnected` 继续下一动作；`unknown`（证据暂不可用）不当断联也不当恢复，
-    同样继续下一动作。全部 5 个动作执行完仍未恢复才记为 `recovery_exhausted`，按退避重试。
+    同样继续下一动作。全部 4 个动作执行完仍未恢复才记为 `recovery_exhausted`，按退避重试。
   - 退避间隔由 `retry_streak` 驱动：第 1-2 次 30 秒，第 3 次 45 秒，第 4 次 60 秒，之后
     固定 90 秒；恢复后清零。
 - **`ctl.sh`**：仍调用 `dumpsys` 读取应用 `stopped`/`suspended`/`hidden` 状态和广播接收者

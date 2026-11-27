@@ -581,7 +581,7 @@ prepare_patrol_start() {
     return 0
 }
 start_patrol() {
-    rm -f "$DATA/patrol.heartbeat" "$DATA/patrol.sample.heartbeat"
+    rm -f "$DATA/patrol.heartbeat" "$DATA/patrol.sample.heartbeat" "$DATA/patrol.check"
     sh "$MODDIR/bin/patrol.sh" </dev/null >> "$DATA/patrol.log" 2>&1 &
     patrol_pid=$!
     patrol_stamp=
@@ -655,6 +655,18 @@ refresh_mode() {
     fi
 }
 on_timer() { [ -z "$patrol_pid" ] || kill -USR2 "$patrol_pid" 2>/dev/null || :; }
+patrol_check_in_budget() {
+    check_pid= check_start= check_deadline=
+    [ -r "$DATA/patrol.check" ] || return 1
+    read -r check_pid check_start check_deadline 2>/dev/null < "$DATA/patrol.check" || return 1
+    [ "$check_pid" = "$patrol_pid" ] || return 1
+    case "$check_start:$check_deadline" in :*|*:|*[!0-9:]*) return 1;; esac
+    sample_anchor="$sample_hb"
+    [ "$sample_anchor" -gt 0 ] || sample_anchor="$patrol_sample_started"
+    [ "$sample_anchor" -gt 0 ] && [ "$check_start" -gt 0 ] &&
+        [ "$check_start" -le "$now_up" ] && [ "$check_start" -le "$((sample_anchor + 90))" ] &&
+        [ "$now_up" -lt "$check_deadline" ]
+}
 trap service_cleanup EXIT
 trap stop_service HUP INT TERM
 trap refresh_mode USR1
@@ -706,11 +718,21 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ]; do
             fi
         fi
         if [ "$patrol_stale" = 1 ] || [ "$sample_stale" = 1 ]; then
+            if patrol_check_in_budget; then
+                patrol_stale=0
+                sample_stale=0
+            fi
+        fi
+        if [ "$patrol_stale" = 1 ] || [ "$sample_stale" = 1 ]; then
             watchdog_reason=patrol_heartbeat
             [ "$sample_stale" = 1 ] && watchdog_reason=monitor_sample
             [ "$patrol_stale" = 1 ] && [ "$sample_stale" = 1 ] && watchdog_reason=patrol_and_monitor
             printf '[%s] patrol_watchdog_stale reason=%s pid=%s heartbeat=%s sample=%s started=%s uptime=%s  看门狗发现巡检或有效采样超时\n' \
                 "$(date '+%F %T')" "$watchdog_reason" "$patrol_pid" "$hb" "$sample_hb" "$patrol_started" "$now_up" >> "$DATA/guard.log"
+            if [ "$check_pid" = "$patrol_pid" ] && [ -n "$check_deadline" ]; then
+                printf '[%s] fcm_check_interrupted pid=%s check_uptime=%s deadline_uptime=%s  看门狗准备中止本轮巡检\n' \
+                    "$(date '+%F %T')" "$patrol_pid" "$check_start" "$check_deadline" >> "$DATA/guard.log"
+            fi
             # Stop patrol first so it cannot publish a monitor owner after cleanup.
             watchdog_cleanup_ok=1
             watchdog_cleanup_reason=

@@ -408,8 +408,8 @@ retry_interval() {
 # Never force-stops/restarts GMS and never alters DNS/VPN/proxy/routing.
 recovery_actions() {
     case "$(id -u 2>/dev/null)" in
-      0) echo "GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GMS_INITIALIZE GCM_SERVICE_START";;
-      2000) echo "MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GMS_INITIALIZE GCM_RECONNECT GCM_SERVICE_START";;
+      0) echo "GCM_RECONNECT MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GCM_SERVICE_START";;
+      2000) echo "MCS_HEARTBEAT ACTION_HEARTBEAT_NOW GCM_RECONNECT GCM_SERVICE_START";;
       *) return 1;;
     esac
 }
@@ -433,7 +433,6 @@ send_recovery_action() {
       GCM_RECONNECT) trigger_action=com.google.android.intent.action.GCM_RECONNECT;;
       MCS_HEARTBEAT) trigger_action=com.google.android.intent.action.MCS_HEARTBEAT;;
       ACTION_HEARTBEAT_NOW) trigger_action=com.google.android.gms.gcm.ACTION_HEARTBEAT_NOW;;
-      GMS_INITIALIZE) trigger_action=com.google.android.gms.INITIALIZE;;
       GCM_SERVICE_START) trigger_action=;;
       *) return 1;;
     esac
@@ -496,7 +495,7 @@ request_reconnect() {
         if send_recovery_action "$action_label"; then
             sequence_requested=1
             last_result=requested
-            record_event reconnect_requested "$reason UID=0 $action_label 已被系统接受（序列 $sequence_index）；等待内核复采确认"
+            record_event reconnect_requested "$reason UID=0 $action_label 已提交给系统（序列 $sequence_index），投递尚未确认，等待内核复采"
             save_state || return $?
             settle_wait
             if observe; then

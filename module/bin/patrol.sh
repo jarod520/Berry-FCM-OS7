@@ -212,6 +212,10 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
         # backward after time correction and must not stall the patrol watchdog.
         check_started_uptime="$(awk '{print int($1)}' /proc/uptime 2>/dev/null)"
         case "$check_started_uptime" in ''|*[!0-9]*) check_started_uptime=0;; esac
+        if [ "$check_started_uptime" -gt 0 ]; then
+            printf '%s %s %s\n' "$$" "$check_started_uptime" "$((check_started_uptime + MONITOR_TIMEOUT + MONITOR_KILL_GRACE + 15))" > "$DATA/patrol.check.tmp" &&
+                mv -f "$DATA/patrol.check.tmp" "$DATA/patrol.check"
+        fi
         previous_sample="$(run_bounded 5 sh "$MODDIR/bin/fcm-monitor.sh" snapshot 2>/dev/null)"
         previous_sample_uptime="$(printf '%s\n' "$previous_sample" | sed -n 's/.*"fcm_sample_uptime":\([0-9]*\).*/\1/p')"
         previous_sample_snapshot_valid=1
@@ -266,6 +270,7 @@ while [ -e "$MODDIR/module.prop" ] && [ ! -e "$MODDIR/disable" ] && parent_alive
         fi
         printf '[%s] fcm_check_end rc=%s elapsed_s=%s %s  本次 FCM 巡检结束\n' \
             "$(date '+%F %T')" "$monitor_rc" "$check_elapsed" "${summary:-snapshot=unavailable}" >> "$DATA/guard.log"
+        rm -f "$DATA/patrol.check"
         [ -z "$result" ] || printf '[%s] %s\n' "$(date '+%F %T')" "$result" >> "$DATA/guard.log"
         if [ "$last_fix" = 0 ] || [ "$now" -lt "$last_fix" ] || [ $((now - last_fix)) -ge 300 ]; then
             maintenance_busy=0

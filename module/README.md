@@ -8,7 +8,7 @@ KernelSU Root（UID 0）模块。模块 ID 仍为 `berry_fcm_ksu`，升级保留
 - 后台每轮巡检都读取精确 GMS UID 的 MCS TCP Socket；`GcmService` 原生 dumpsys 默认每 60 秒刷新一次，手动恢复及原生状态的二次确认会立即强制刷新。原生状态采样优先于同轮 Socket 结果；两次原生采样之间，最近一次有效 connected 状态不会因 Socket 缺失/所有权不可读而被误判断联，最近一次有效断开/连接中状态也不会因 Socket 缺失/不可读或暂时 ESTABLISHED 而被覆盖；须等下一次原生采样或独立 Socket 缺失阈值确认状态变化。两次原生刷新之间，Socket 用于提供实时传输层证据。TCP ESTABLISHED 不等同于心跳 ACK，因此仍定期刷新原生状态；原生字段缺失时，连续 30 秒未看到精确 MCS TCP 并经二次采样后才按断联恢复，持续缺失超过 15 分钟不会清零计时，只有超过 90 秒的采样空档才重置连续性。持续 SYN-SENT 保留首次观察时间。Socket 所有权不可读时，最近 Close 事件（30–900 秒、且没有更新的 Connected 事件）仅作为有限期辅助证据。普通或不可见的 443 Socket 不作正向连接证据。
 - 明确断开通常等 15 秒，连接中通常等 60 秒。达到条件后在同一执行窗口二次确认。跨采样空档仅将此前断联当作复查线索。
 - 若 GMS 原生仍报告已连接，但精确原生连接时长连续 5 分钟不增长，自动守护会再采样确认，然后定向请求一次 `GCM_RECONNECT`；连接时长恢复增长后取消。此操作请求 GMS 重建 MCS 连接，不会强制停止 Google Play 服务。
-- 二次确认断联后，同一轮依次尝试 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、`GMS_INITIALIZE`、`GCM_SERVICE_START`。每次命令被系统接受后复采 Socket，观察到连接恢复就结束本轮。自动重试退避按连续轮次为 30 / 45 / 60 / 90 秒，手动请求至少间隔 60 秒。
+- 二次确认断联后，同一轮依次尝试 `GCM_RECONNECT`、`MCS_HEARTBEAT`、`ACTION_HEARTBEAT_NOW`、`GCM_SERVICE_START`。每次命令提交成功后复采 Socket，观察到连接恢复就结束本轮。自动重试退避按连续轮次为 30 / 45 / 60 / 90 秒，手动请求至少间隔 60 秒。
 - 广播完成只记为已请求。WebUI 用后续 GMS 原生采样确认连接，实际推送送达需单测。
 - GMS UID Socket 缺失期间若 mtalk DNS 解析失败，失败结果缓存 10 分钟，避免每轮巡检重复执行最长 6 秒的 DNS 等待。
 - 每轮巡检有 25 秒上限，优先使用 Toybox / KernelSU BusyBox / 系统 `timeout`。若系统没有 `timeout` applet，则使用 watchdog；可用 `setsid` 与 `kill` applet 时按进程组清理 monitor 及其子进程。超时记为 `rc=124`，不刷新成功样本心跳，下一轮仍继续巡检。

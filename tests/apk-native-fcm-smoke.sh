@@ -183,9 +183,9 @@ assert_json "$j" fcm_state=disconnected
 settime 11075
 run monitor
 # Staged recovery: first trigger is GCM_RECONNECT; kernel stays disconnected so later triggers follow.
-test "$(grep -Ec '^(broadcast|startservice)' "$MCS_AM_LOG")" -eq 5
+test "$(grep -Ec '^(broadcast|startservice)' "$MCS_AM_LOG")" -eq 4
 test "$(grep '^broadcast' "$MCS_AM_LOG" | head -n 1)" = 'broadcast --user 0 -a com.google.android.intent.action.GCM_RECONNECT -p com.google.android.gms'
-grep -q 'broadcast --user 0 -a com.google.android.gms.INITIALIZE -p com.google.android.gms' "$MCS_AM_LOG"
+if grep -q 'com.google.android.gms.INITIALIZE' "$MCS_AM_LOG"; then exit 1; fi
 if grep -q 'GTALK_' "$MCS_AM_LOG"; then exit 1; fi
 grep -q '本轮复采均未观察到已建立的 FCM 长连接' "$TMP/data/mcs-monitor-events.log"
 grep -q 'set-standby-bucket --user 0 com.google.android.gms active' "$MCS_AM_LOG"
@@ -220,7 +220,6 @@ settime 12610
 run monitor
 test "$(grep -E '^(broadcast|startservice)' "$MCS_AM_LOG" | sed -E 's/^broadcast.*[.]([A-Z_]+) -p .*/\1/;s/^startservice.*/GCM_SERVICE_START/')" = 'MCS_HEARTBEAT
 ACTION_HEARTBEAT_NOW
-INITIALIZE
 GCM_RECONNECT
 GCM_SERVICE_START'
 export MCS_SS_MODE=absent

@@ -169,7 +169,7 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
 (function(){'use strict';
  const MOD='/data/adb/modules/berry_fcm_ksu/bin/ctl.sh';
  const MON='/data/adb/modules/berry_fcm_ksu/bin/fcm-monitor.sh';
- const $=id=>document.getElementById(id); let busy=false,seq=0,policySnapshot=null;
+ const $=id=>document.getElementById(id); let busy=false,seq=0,policySnapshot=null,manualRunning=false;
  let allApps=[],targetPackages=[],appLabels=new Map(),shownApps=[],visibleApps=70;
  const systemTheme=matchMedia('(prefers-color-scheme: dark)');
  const themeOptions=document.querySelectorAll('input[name="theme"]');
@@ -203,7 +203,7 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
  };
  const buttons=['check','monitorCheck','reconnect','fix','watch','add','reset','autostart','notif','loadlog','loadEvents','dozeAction','netAction','chooseApp','netdiag','fcmDiag'];
  for(let minutes=1;minutes<=10;minutes++)$('wakeMinutes').add(new Option(minutes+' 分钟',String(minutes)));
- const setBusy=v=>{busy=v;buttons.forEach(id=>$(id).disabled=v);$('wakeMode').disabled=$('wakeMinutes').disabled=v||!policySnapshot;if(!v)refreshPolicyButtons();};
+ const setBusy=v=>{busy=v;buttons.forEach(id=>$(id).disabled=v||(id==='reconnect'&&manualRunning));$('wakeMode').disabled=$('wakeMinutes').disabled=v||!policySnapshot;if(!v)refreshPolicyButtons();};
  const append=s=>{const el=$('log');if(el.textContent==='等待操作…')el.textContent='';el.textContent+='\n'+String(s);el.scrollTop=el.scrollHeight;};
  const q=s=>{if(!/^[a-zA-Z][\w]*(\.[\w]+)+$/.test(s))throw Error('包名不合法');return s;};
  function exec(command){return new Promise((resolve,reject)=>{
@@ -503,7 +503,43 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
  $('netAction').onclick=()=>job(async()=>{await run('policy net '+(policySnapshot&&policySnapshot.net_owned?'undo':'add'));await check()});
  $('check').onclick=$('monitorCheck').onclick=()=>job(check);
  $('fix').onclick=()=>job(async()=>{await run('fix');await check()});
- $('reconnect').onclick=()=>job(async()=>{const r=await exec('/system/bin/sh '+MON+' reconnect');const result=r.stdout.trim()||r.stderr.trim();$('manualResult').hidden=!result;$('manualResult').textContent=result;if(result)append(result);await check()});
+ function showManualResult(message){
+   $('manualResult').hidden=!message;
+   $('manualResult').textContent=message;
+ }
+ async function readManualReconnect(){
+   try{
+     const result=await exec('/system/bin/sh '+MOD+' reconnect-status');
+     if(result.code!==0)throw Error(result.stderr.trim()||'读取手动恢复结果失败');
+     const [status,...lines]=result.stdout.trim().split('\n');
+     if(status==='running'){
+       setTimeout(readManualReconnect,2000);
+       return;
+     }
+     const message=status==='done'?lines.join('\n'):'未能读取手动恢复结果，请查看恢复记录。';
+     showManualResult(message);
+     append(message);
+   }catch(error){showManualResult(error.message);}
+   manualRunning=false;
+   $('reconnect').disabled=busy;
+   refreshLive();
+ }
+ $('reconnect').onclick=async()=>{
+   if(busy||manualRunning)return;
+   manualRunning=true;
+   $('reconnect').disabled=true;
+   showManualResult('正在后台尝试恢复连接…');
+   try{
+     await new Promise(resolve=>setTimeout(resolve,0));
+     const result=await exec('/system/bin/sh '+MOD+' reconnect-start');
+     if(result.code!==0||result.stdout.trim()!=='running')throw Error(result.stderr.trim()||'启动手动恢复失败');
+     setTimeout(readManualReconnect,1000);
+   }catch(error){
+     showManualResult(error.message);
+     manualRunning=false;
+     $('reconnect').disabled=busy;
+   }
+ };
  $('watch').onclick=()=>job(async()=>{append('开始 90 秒监视，结束后更新状态');await run('watch');await check()});
  $('add').onclick=()=>job(async()=>{const p=q($('pkg').value.trim());await run('targets add '+p);$('pkg').value='';await loadTargets()});
  $('reset').onclick=()=>job(async()=>{await run('targets reset');await loadTargets()});
@@ -537,7 +573,7 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
  // Refresh compact connection snapshot while the WebUI is visible; manual checks
  // additionally refresh the target list. Avoid log spam and extra app discovery.
  async function refreshLive(){
-   if(busy||document.visibilityState==='hidden')return;
+   if(busy||manualRunning||document.visibilityState==='hidden')return;
    try{const r=await exec('/system/bin/sh '+MOD+' check');if(r.code===0){const j=JSON.parse(r.stdout.trim());render(j);}else showCheckError(r.stderr.trim()||('后端退出码 '+r.code));}
    catch(e){/* keep last snapshot; manual detection reports errors in the log */}
  }

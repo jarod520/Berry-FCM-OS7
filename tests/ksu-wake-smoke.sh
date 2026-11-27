@@ -1,6 +1,28 @@
 #!/bin/sh
 set -eu
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
+(
+    DATA="$(mktemp -d)"
+    trap 'rm -rf "$DATA"' EXIT
+    eval "$(sed -n '/^patrol_check_in_budget() {/,/^}/p' "$ROOT/module/service.sh")"
+    patrol_pid=23628
+    patrol_sample_started=29104
+    sample_hb=29107
+    now_up=29199
+    printf '%s\n' '23628 29142 29240' > "$DATA/patrol.check"
+    patrol_check_in_budget
+    now_up=29240
+    if patrol_check_in_budget; then exit 1; fi
+    now_up=29225
+    printf '%s\n' '23628 29210 29308' > "$DATA/patrol.check"
+    if patrol_check_in_budget; then exit 1; fi
+    printf '%s\n' '12345 29142 29240' > "$DATA/patrol.check"
+    if patrol_check_in_budget; then exit 1; fi
+    sample_hb=0
+    printf '%s\n' '23628 29142 29240' > "$DATA/patrol.check"
+    patrol_check_in_budget
+)
+echo 'PASS: watchdog allows an active check within its budget and rejects expired, late or foreign checks'
 grep -q 'MODULE_HOT_INSTALL_REQUEST=true' "$ROOT/module/customize.sh"
 grep -q 'MODULE_HOT_RUN_SCRIPT=hotinstall.sh' "$ROOT/module/customize.sh"
 test -f "$ROOT/module/hotinstall.sh"
