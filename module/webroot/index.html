@@ -160,7 +160,7 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
 <article class="card"><h2><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-device"></use></svg>系统设置与快捷功能</h2><div class="button-row section-gap"><button id="autostart"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-device"></use></svg><span data-label>自启动管理</span></button><button id="notif"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-alert"></use></svg><span data-label>GMS 通知设置</span></button></div></article>
 <section class="card"><div class="head"><h2><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-history"></use></svg>检查日志</h2><div class="logtools"><button id="loadlog"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-history"></use></svg><span data-label>后台日志</span></button><button id="copy"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-code"></use></svg><span data-label>复制</span></button></div></div><pre id="log">等待操作…</pre></section>
 
-<footer>BerryFCM · KernelSU v1.0-rc.4</footer>
+<footer>BerryFCM · KernelSU <span id="moduleVersion">版本未知</span></footer>
 </section></main>
 <nav class="bottom-nav" aria-label="主导航"><div class="nav-inner"><button data-page="overview" aria-current="page"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-home"></use></svg><span data-label>概览</span></button><button data-page="monitor"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-fcm"></use></svg><span data-label>监控</span></button><button data-page="guard"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-guard"></use></svg><span data-label>守护</span></button><button data-page="settings"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-settings"></use></svg><span data-label>设置</span></button></div></nav>
 <div class="picker" id="appPicker" hidden><div class="picker-card" role="dialog" aria-modal="true" aria-label="选择守护应用"><div class="head"><h2 style="margin:0">选择守护应用 · 可多选</h2><button id="closePicker"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-guard"></use></svg><span data-label>完成</span></button></div><div class="picker-tools"><input id="appSearch" placeholder="搜索应用名称或包名" autocomplete="off"></div><label class="small"><input id="includeSystem" type="checkbox" style="min-width:auto;flex:none"> 包含系统应用</label><div class="hint" id="appCount" style="margin:6px 0">正在读取应用列表…</div><div class="picker-results" id="appResults"></div></div></div>
@@ -565,9 +565,18 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
  });
  $('loadEvents').onclick=()=>job(loadEvents);
  $('copy').onclick=async()=>{const s=$('log').textContent;try{await navigator.clipboard.writeText(s);append('日志已复制')}catch(e){const ta=document.createElement('textarea');ta.value=s;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');append('已尝试复制日志')}catch(_){}ta.remove()}};
+ async function loadModuleVersion(){
+   const moduleProp=MOD.replace(/\/bin\/ctl\.sh$/, '/module.prop');
+   try{
+     const result=await exec("sed -n 's/^version=//p' "+moduleProp);
+     const version=result.stdout.trim();
+     if(result.code===0&&version)$('moduleVersion').textContent=version;
+   }catch(_){ $('moduleVersion').textContent='版本未知'; }
+ }
  async function init(){
    if(!window.ksu||typeof window.ksu.exec!=='function'){showCheckError('请从 KernelSU 管理器的模块页面打开。');return;}
    $('guard').disabled=false;
+   await loadModuleVersion();
    await job(async()=>{await check()});
  }
  // Refresh compact connection snapshot while the WebUI is visible; manual checks
