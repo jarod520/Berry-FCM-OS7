@@ -271,46 +271,50 @@ link() {
       *) echo 'invalid link'; return 1 ;;
     esac
 }
-start_manual_reconnect() (
+start_webui_job() (
     if ! flock -n 8; then
         echo running
         exit 0
     fi
-    rm -f "$DATA/manual-reconnect.result" || exit 1
-    /system/bin/toybox setsid sh "$MODDIR/bin/ctl.sh" reconnect-worker </dev/null >/dev/null 2>&1 &
+    rm -f "$DATA/$1.result" || exit 1
+    /system/bin/toybox setsid sh "$MODDIR/bin/ctl.sh" "$1-worker" </dev/null >/dev/null 2>&1 &
     echo running
-) 8>"$DATA/manual-reconnect.lock"
+) 8>"$DATA/$1.lock"
 
-manual_reconnect_worker() {
+webui_job_worker() {
     flock -n 8 || return 1
-    result=$(/system/bin/toybox timeout -k 3 95 sh "$MODDIR/bin/fcm-monitor.sh" reconnect 8>&- 2>&1)
-    reconnect_rc=$?
-    case "$reconnect_rc" in
-        124|137|143) result='手动恢复超时，请查看恢复记录或稍后重试。';;
+    case "$1" in
+        reconnect) result=$(/system/bin/toybox timeout -k 3 95 sh "$MODDIR/bin/fcm-monitor.sh" reconnect 8>&- 2>&1);;
+        netdiag) result=$(/system/bin/toybox timeout -k 3 35 sh "$MODDIR/bin/ctl.sh" netdiag 8>&- 2>&1);;
     esac
-    if [ -z "$result" ]; then result="手动恢复已结束，返回码 $reconnect_rc。"; fi
-    printf 'done\n%s\n' "$result" > "$DATA/manual-reconnect.tmp" &&
-        mv -f "$DATA/manual-reconnect.tmp" "$DATA/manual-reconnect.result"
+    job_rc=$?
+    case "$job_rc" in
+        124|137|143) result="操作超时，请稍后重试。
+$result";;
+    esac
+    if [ -z "$result" ]; then result="操作已结束，返回码 $job_rc。"; fi
+    printf 'done\n%s\n' "$result" > "$DATA/$1.tmp" &&
+        mv -f "$DATA/$1.tmp" "$DATA/$1.result"
 }
 
-manual_reconnect_status() (
+webui_job_status() (
     if ! flock -n 8; then
         echo running
-    elif [ -s "$DATA/manual-reconnect.result" ]; then
-        cat "$DATA/manual-reconnect.result"
+    elif [ -s "$DATA/$1.result" ]; then
+        cat "$DATA/$1.result"
     else
         echo idle
     fi
-) 8>"$DATA/manual-reconnect.lock"
+) 8>"$DATA/$1.lock"
 
 case "${1:-}" in
     check) check ;;
     netdiag) network_test ;;
     fcm-monitor) sh "$MODDIR/bin/fcm-monitor.sh" monitor ;;
     reconnect) sh "$MODDIR/bin/fcm-monitor.sh" reconnect ;;
-    reconnect-start) start_manual_reconnect ;;
-    reconnect-status) manual_reconnect_status ;;
-    reconnect-worker) manual_reconnect_worker ;;
+    reconnect-start|netdiag-start) start_webui_job "${1%-start}" ;;
+    reconnect-status|netdiag-status) webui_job_status "${1%-status}" ;;
+    reconnect-worker|netdiag-worker) webui_job_worker "${1%-worker}" ;;
     fix) fix ;;
     watch) watch ;;
     targets)

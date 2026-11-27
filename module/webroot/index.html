@@ -171,9 +171,16 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
     <button id="fcmDiag"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-diagnostics"></use></svg><span data-label>推送诊断</span></button>
   </div>
   <p class="hint">连接测试检查 mtalk.google.com 的 TCP 可达性。推送以实际收信为准。</p>
+  <pre id="networkResult" aria-live="polite" hidden></pre>
 </article>
 <article class="card"><h2><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-device"></use></svg>系统设置与快捷功能</h2><div class="button-row section-gap"><button id="autostart"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-device"></use></svg><span data-label>自启动管理</span></button><button id="notif"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-alert"></use></svg><span data-label>GMS 通知设置</span></button></div></article>
-<section class="card"><div class="head"><h2><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-history"></use></svg>检查日志</h2><div class="logtools"><button id="loadlog"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-history"></use></svg><span data-label>后台日志</span></button><button id="copy"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-code"></use></svg><span data-label>复制</span></button></div></div><pre id="log">等待操作…</pre></section>
+<section class="card">
+  <div class="head"><h2><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#bf-history"></use></svg>日志</h2></div>
+  <div class="button-row logtools"><button id="showOperations" aria-pressed="true">操作记录</button><button id="loadlog" aria-pressed="false">后台日志</button><button id="copy">复制</button></div>
+  <pre id="log">暂无操作记录</pre>
+  <pre id="backgroundLog" hidden></pre>
+  <p class="hint" id="copyStatus" aria-live="polite" hidden></p>
+</section>
 
 <footer>BerryFCM · KernelSU <span id="moduleVersion">版本未知</span></footer>
 </section></main>
@@ -218,8 +225,9 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
  };
  const buttons=['check','monitorCheck','reconnect','fix','watch','add','reset','autostart','notif','loadlog','loadEvents','dozeAction','netAction','chooseApp','netdiag','fcmDiag'];
  for(let minutes=1;minutes<=10;minutes++)$('wakeMinutes').add(new Option(minutes+' 分钟',String(minutes)));
- const setBusy=v=>{busy=v;buttons.forEach(id=>$(id).disabled=v||(id==='reconnect'&&manualRunning));$('wakeMode').disabled=$('wakeMinutes').disabled=v||!policySnapshot;if(!v)refreshPolicyButtons();};
- const append=s=>{const el=$('log');if(el.textContent==='等待操作…')el.textContent='';el.textContent+='\n'+String(s);el.scrollTop=el.scrollHeight;};
+ let networkRunning=false;
+ const setBusy=v=>{busy=v;buttons.forEach(id=>$(id).disabled=v||(id==='reconnect'&&manualRunning)||(id==='netdiag'&&networkRunning));$('wakeMode').disabled=$('wakeMinutes').disabled=v||!policySnapshot;if(!v)refreshPolicyButtons();};
+ const append=s=>{const el=$('log');el.textContent=(el.textContent==='暂无操作记录'?'':el.textContent+'\n')+String(s);el.scrollTop=el.scrollHeight;};
  const q=s=>{if(!/^[a-zA-Z][\w]*(\.[\w]+)+$/.test(s))throw Error('包名不合法');return s;};
  function exec(command){return new Promise((resolve,reject)=>{
    if(!window.ksu||typeof window.ksu.exec!=='function')return reject(Error('KernelSU WebUI 命令桥不可用'));
@@ -227,10 +235,10 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
    window[cb]=(errno,stdout,stderr)=>{delete window[cb];resolve({code:Number(errno),stdout:String(stdout||''),stderr:String(stderr||'')});};
    try{window.ksu.exec(command,'{}',cb)}catch(e){delete window[cb];reject(e)}
  });}
- async function run(args){
+ async function run(args,showOutput=true){
    const cmd='/system/bin/sh '+MOD+' '+args;
    const r=await exec(cmd);
-   if(r.stdout.trim())append(r.stdout.trim());
+   if(r.stdout.trim()&&(showOutput||r.code!==0))append(r.stdout.trim());
    if(r.stderr.trim())append('错误: '+r.stderr.trim());
    if(r.code!==0)append('退出码: '+r.code);
    return r;
@@ -383,7 +391,7 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
    }catch(error){showCheckError(error.message);append("连接检查失败："+error.message)}
  }
  async function loadTargets(){
-   const r=await run('targets list');if(r.code!==0)return;
+   const r=await run('targets list',false);if(r.code!==0)return;
    targetPackages=r.stdout.split(/\r?\n/).filter(Boolean);
    await updateLabels(targetPackages);
    const target=$('targets');target.textContent='';
@@ -399,7 +407,7 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
      details.onclick=()=>job(()=>run('links appdetails '+q(p)));actions.appendChild(details);
      if(p!=='com.google.android.gms'){
        const remove=document.createElement('button');remove.textContent='移除';
-       remove.onclick=()=>job(async()=>{const r=await run('targets remove '+q(p));if(r.code===0)await loadTargets();});
+     remove.onclick=()=>job(async()=>{const r=await run('targets remove '+q(p),false);if(r.code===0)await loadTargets();});
        actions.appendChild(remove);
      }
      row.appendChild(actions);target.appendChild(row);
@@ -556,8 +564,8 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
    }
  };
  $('watch').onclick=()=>job(async()=>{append('开始 90 秒监视，结束后更新状态');await run('watch');await check()});
- $('add').onclick=()=>job(async()=>{const p=q($('pkg').value.trim());await run('targets add '+p);$('pkg').value='';await loadTargets()});
- $('reset').onclick=()=>job(async()=>{await run('targets reset');await loadTargets()});
+ $('add').onclick=()=>job(async()=>{const p=q($('pkg').value.trim());await run('targets add '+p,false);$('pkg').value='';await loadTargets()});
+ $('reset').onclick=()=>job(async()=>{await run('targets reset',false);await loadTargets()});
  $('wakeMinutes').onchange=()=>job(async()=>{
    const minutes=$('wakeMinutes').value;
    if(/^(?:[1-9]|10)$/.test(minutes))await run('wake-minutes '+minutes);
@@ -569,17 +577,74 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
    await check();
  });
  $('guard').onchange=()=>job(async()=>{const on=$('guard').checked;const r=await run('guard '+(on?'on':'off'));if(r.code!==0)$('guard').checked=!on;await check()});
- $('netdiag').onclick=()=>job(()=>run('netdiag'));
+ async function readNetworkResult(){
+   const output=$('networkResult');
+   try{
+     const result=await exec('/system/bin/sh '+MOD+' netdiag-status');
+     if(result.code!==0)throw Error(result.stderr.trim()||'读取连接测试结果失败');
+     const [status,...lines]=result.stdout.trim().split(/\r?\n/);
+     if(status==='running'){
+       setTimeout(readNetworkResult,1000);
+       return;
+     }
+     output.textContent=status==='done'?lines.join('\n'):'连接测试结果不可用，请重试。';
+   }catch(error){output.textContent=error.message;}
+   networkRunning=false;
+   $('netdiag').disabled=busy;
+ }
+ $('netdiag').onclick=async()=>{
+   if(busy||networkRunning)return;
+   const output=$('networkResult');
+   networkRunning=true;
+   $('netdiag').disabled=true;
+   output.hidden=false;
+   output.textContent='正在测试连接…';
+   try{
+     const result=await exec('/system/bin/sh '+MOD+' netdiag-start');
+     if(result.code!==0||result.stdout.trim()!=='running')throw Error(result.stderr.trim()||'启动连接测试失败');
+     setTimeout(readNetworkResult,1000);
+   }catch(error){
+     output.textContent=error.message;
+     networkRunning=false;
+     $('netdiag').disabled=busy;
+   }
+ };
  $('fcmDiag').onclick=()=>job(()=>run('links gcmdiag'));
  $('autostart').onclick=()=>job(()=>run('links autostart'));
  $('notif').onclick=()=>job(()=>run('links gmsnotif'));
+ function showLog(background){
+   $('log').hidden=background;
+   $('backgroundLog').hidden=!background;
+   $('showOperations').setAttribute('aria-pressed',String(!background));
+   $('loadlog').setAttribute('aria-pressed',String(background));
+   $('copyStatus').hidden=true;
+ }
+ $('showOperations').onclick=()=>showLog(false);
  $('loadlog').onclick=()=>job(async()=>{
-   const r=await exec('/system/bin/sh '+MOD+' log');
-   if(r.code!==0)throw Error(r.stderr.trim()||'读取后台日志失败');
-   $('log').textContent=r.stdout.trim()||'暂无守护日志';
+   showLog(true);
+   $('backgroundLog').textContent='正在读取后台日志…';
+   try{
+     const r=await exec('/system/bin/sh '+MOD+' log');
+     if(r.code!==0)throw Error(r.stderr.trim()||'读取后台日志失败');
+     $('backgroundLog').textContent=r.stdout.trim()||'暂无守护日志';
+   }catch(error){$('backgroundLog').textContent=error.message;}
  });
  $('loadEvents').onclick=()=>job(loadEvents);
- $('copy').onclick=async()=>{const s=$('log').textContent;try{await navigator.clipboard.writeText(s);append('日志已复制')}catch(e){const ta=document.createElement('textarea');ta.value=s;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');append('已尝试复制日志')}catch(_){}ta.remove()}};
+ $('copy').onclick=async()=>{
+   const status=$('copyStatus');
+   const text=($('log').hidden?$('backgroundLog'):$('log')).textContent;
+   try{await navigator.clipboard.writeText(text);status.textContent='日志已复制';}
+   catch(error){
+     const field=document.createElement('textarea');
+     field.value=text;
+     document.body.appendChild(field);
+     field.select();
+     try{status.textContent=document.execCommand('copy')?'日志已复制':'复制失败';}
+     catch(_){status.textContent='复制失败';}
+     finally{field.remove();}
+   }
+   status.hidden=false;
+ };
  async function loadModuleVersion(){
    const moduleProp=MOD.replace(/\/bin\/ctl\.sh$/, '/module.prop');
    try{
