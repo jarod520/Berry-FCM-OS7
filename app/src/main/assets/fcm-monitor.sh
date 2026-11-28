@@ -223,11 +223,12 @@ EOF_RAW
         established=(socket_state=="ESTAB" || socket_state=="ESTABLISHED")
         relevant=(port==5228 || port==5229 || port==5230 || (port==443 && known(peer)))
         if (established && relevant) {
-          stalled=((unacked>0 && retrans>=3) || last_recv_ms>=1800000)
+          stalled=(unacked>0 && retrans>=3)
           if (stalled) {
             if (rank<2) {rank=2;kind="stalled";transport="tcp" port;remote=ip ":" port;bestkey=key}
           } else if (rank<4) {
             rank=4;kind="connected";transport=(port==443?"tcp443":"tcp" port);remote=ip ":" port;bestkey=key
+            quiet=(last_recv_ms>=1800000)
           }
         } else if (!established && relevant && (socket_state=="SYN-SENT" || socket_state=="SYN_SENT")) {
           if (rank<3) {rank=3;kind="connecting";transport="tcp" port;remote=ip ":" port;bestkey=key}
@@ -252,7 +253,7 @@ EOF_RAW
       }
       END {
         emit()
-        if(rank==4) printf "connected|%s|%s|%s|\n",transport,remote,bestkey
+        if(rank==4) printf "connected|%s|%s|%s|%s\n",transport,remote,bestkey,(quiet?"tcp_receive_idle":"")
         else if(rank==3) printf "connecting|%s|%s|%s|\n",transport,remote,bestkey
         else if(rank==2) printf "stalled|%s|%s|%s|tcp_info_unacked_retrans\n",transport,remote,bestkey
         else if(untrusted) print "unknown||||unverified_443_no_mtalk_dns"
@@ -553,7 +554,10 @@ EOF_SOCKET
     observed=unknown; source=unavailable; new_transport=; new_remote=
     duration=-1; close_code=; native_reason=not_used; parse_detail="$socket_reason"
     tcp_hint="$socket_state"
-    [ "$tcp_hint" = connected ] && tcp_hint=established
+    if [ "$tcp_hint" = connected ]; then
+        tcp_hint=established
+        [ "$socket_reason" != tcp_receive_idle ] || tcp_hint=established_idle
+    fi
     socket_now="$nowm"
     case "$socket_state" in
       connected)
@@ -577,7 +581,7 @@ EOF_SOCKET
         new_transport="$socket_transport"; new_remote="$socket_remote"
         if [ "$previous_down_state" != disconnected ] || [ "$outage_hint_mono" -le 0 ]; then
             outage_hint_mono="$socket_now"
-            record_event tcp_stalled "内核 TCP_INFO 显示 MCS socket 有未确认数据且连续重传，或超过 30 分钟未收到数据"
+            record_event tcp_stalled "内核 TCP_INFO 显示 MCS socket 有未确认数据且连续重传达到阈值"
         fi
         previous_down_observed="$outage_hint_mono"
         ;;
@@ -676,14 +680,19 @@ auto_recovery() {
     observed_age=0
     [ "$down_observed" -gt 0 ] && [ "$nowm" -ge "$down_observed" ] && observed_age=$((nowm-down_observed))
     if [ "$observed_age" -lt "$required" ]; then decision=waiting_duration; return 0; fi
-    first_state="$state"; first_tcp_hint="$tcp_hint"
+    first_state="$state"; first_tcp_hint="$tcp_hint"; first_socket_key="$socket_key"
     [ "${BERRY_FCM_TEST_MODE:-0}" = 1 ] || sleep 2
     observe || return $?
     if [ "$state" = connected ]; then
         decision=confirmation_recovered
         record_event recovery_confirmation_recovered "二次内核 Socket 采样已观察到 MCS TCP 建立；取消恢复"
-    elif { [ "$state" = connecting ] || [ "$state" = disconnected ]; } && [ "$state" = "$first_state" ]; then
-        record_event recovery_confirmed "两次内核 Socket 采样均确认 $state，进入分阶段恢复"
+    elif { [ "$state" = connecting ] || [ "$state" = disconnected ]; } && [ "$state" = "$first_state" ] &&
+         { [ "$tcp_hint" != stalled ] || { [ "$first_tcp_hint" = stalled ] && [ -n "$socket_key" ] && [ "$socket_key" = "$first_socket_key" ]; }; }; then
+        if [ "$tcp_hint" = stalled ]; then
+            record_event recovery_confirmed "两次内核采样都发现同一条 MCS 连接有未确认数据且重传达到阈值，开始恢复"
+        else
+            record_event recovery_confirmed "两次内核采样均发现 FCM 连接缺失或仍在建立，开始恢复"
+        fi
         request_reconnect auto
     else
         decision=confirmation_changed

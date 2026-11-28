@@ -31,6 +31,9 @@ case "${MCS_SS_MODE:-absent}" in
   large_connected) echo 'ESTAB 0 0 192.0.2.1:45000 192.0.2.3:5228 uid:10200 ino:100';;
   large_learned443) echo 'ESTAB 0 0 192.0.2.1:45000 192.0.2.3:443 uid:10200 ino:101';;
   connected) echo 'ESTAB 0 0 10.0.0.2:45000 142.250.157.188:5228 uid:10200 ino:101';;
+  quiet)
+    echo 'ESTAB 0 0 10.0.0.2:45000 142.250.157.188:5228 uid:10200 ino:101'
+    echo ' cubic unacked:0 retrans:0/57 lastrcv:1800001';;
   connecting) echo 'SYN-SENT 0 1 10.0.0.2:45000 142.250.157.188:5228 uid:10200 ino:102';;
   gms_other) echo 'ESTAB 0 0 10.0.0.2:45000 1.1.1.1:8080 uid:10200 ino:105';;
   untrusted443) echo 'ESTAB 0 0 10.0.0.2:45000 1.1.1.1:443 uid:10200 ino:103';;
@@ -145,6 +148,13 @@ export MCS_SS_MODE=large_learned443
 j="$(run_with_external_printf status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_transport=tcp443
+requests 0
+
+export MCS_SS_MODE=quiet
+j="$(run status)"
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_tcp_hint=established_idle
+run monitor >/dev/null
 requests 0
 
 # Unrelated GMS HTTPS and redacted UID ownership remain unknown, never down.

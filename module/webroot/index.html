@@ -365,7 +365,7 @@ button>.ui-icon{margin-right:5px}.fcm-link>.ui-icon{color:var(--accent)}
    const background=j.guard===1?'后台监控已开启':'后台监控未开启';
    const detail=failed?$("bridgeNote").textContent
      :j.fcm_check_exit===13?"后台正在检查，当前显示最近采样。"
-     :connected?''
+     :connected?(j.fcm_tcp_hint==='established_idle'?'TCP 已建立，超过 30 分钟未收到数据。':'')
      :fstate==='stale'?'采样已过期。深睡期间巡检可能延迟。'
      :down?'退避剩余：'+durationText(j.fcm_retry_in)
      :(reasons[j.fcm_native_reason]||'等待 GMS 原生读数')+'。'+(hints[j.fcm_tcp_hint]||'');

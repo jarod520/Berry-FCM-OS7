@@ -224,6 +224,7 @@ public final class MonitorActivity extends Ui {
     private static String tcpHint(String value) {
         switch (value) {
             case "established": return "发现相关 TCP 连接";
+            case "established_idle": return "TCP 已建立，超过 30 分钟未收到数据";
             case "connecting": return "发现正在建立的 TCP 连接";
             case "absent": return "未发现匹配的 TCP 连接";
             case "none": case "unknown": default: return "未取得独立证据（以 GMS UID 内核 Socket 检测为准）";

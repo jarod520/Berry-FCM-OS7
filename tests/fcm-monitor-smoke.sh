@@ -207,41 +207,41 @@ j="$(run status)"
 assert_json "$j" fcm_state=connected
 requests 10
 
-# A connected socket with no TCP data received for 30 minutes is also suspected stalled.
+# A quiet established socket is reported separately and does not trigger recovery.
 echo idle > "$TMP/mode"
 settime 10215
 j="$(run status)"
-assert_json "$j" fcm_state=disconnected
-assert_json "$j" fcm_tcp_hint=stalled
+assert_json "$j" fcm_state=connected
+assert_json "$j" fcm_tcp_hint=established_idle
 settime 10230
 run monitor >/dev/null
-requests 14
+requests 10
 echo connected > "$TMP/mode"
 settime 10231
 run monitor >/dev/null
 j="$(run status)"
 assert_json "$j" fcm_state=connected
-requests 14
+requests 10
 
 # Continuous, successfully-readable absence is timed; one absent sample is not enough.
 echo absent > "$TMP/mode"
 settime 10257
 j="$(run status)"
 assert_json "$j" fcm_state=disconnected
-requests 14
+requests 10
 settime 10302
 j="$(run status)"
 assert_json "$j" fcm_state=disconnected
 settime 10317
 run monitor >/dev/null
-requests 18
+requests 14
 
 # An unreadable ownership/source sample is unavailable, not falsely disconnected.
 echo unknown > "$TMP/mode"
 settime 10318
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
-requests 18
+requests 14
 
 # When ss cannot expose UID, the root-readable /proc TCP tables are the fallback.
 mkdir -p "$TMP/proc"
@@ -259,7 +259,7 @@ j="$(run status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_source=gms_socket
 assert_json "$j" fcm_tcp_hint=established
-requests 18
+requests 14
 
 echo large_connected > "$TMP/mode"
 settime 10319
@@ -270,7 +270,7 @@ echo large_learned443 > "$TMP/mode"
 j="$(run_with_external_printf status)"
 assert_json "$j" fcm_state=connected
 assert_json "$j" fcm_transport=tcp443
-requests 18
+requests 14
 
 # A GMS-owned HTTPS socket to an unrelated peer must remain unknown even when
 # mtalk DNS candidates are available; it must never age into false absence.
@@ -281,7 +281,7 @@ settime 10320
 j="$(run status)"
 assert_json "$j" fcm_state=unknown
 assert_json "$j" fcm_source=unavailable
-requests 18
+requests 14
 
 # If a recovery follow-up cannot atomically publish evidence, it must not
 # save the in-memory sample state and create a false state/evidence generation.
@@ -307,7 +307,7 @@ echo 0 > "$TMP/data/evidence-mv-count"
 export MCS_FAIL_EVIDENCE_MV=1 MCS_FAIL_EVIDENCE_MV_AT=6 MCS_AM_INCREMENT_UPTIME=1
 run monitor >/dev/null
 unset MCS_FAIL_EVIDENCE_MV MCS_FAIL_EVIDENCE_MV_AT MCS_AM_INCREMENT_UPTIME
-requests 22
+requests 18
 test "$(cat "$TMP/data/evidence-mv-count")" = 7
 state_sample_uptime="$(awk -F'|' '{print $28}' "$TMP/data/mcs-monitor.state")"
 evidence_sample_uptime="$(awk -F'|' '{print $7}' "$TMP/data/mcs-evidence")"
